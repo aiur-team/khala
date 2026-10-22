@@ -100,7 +100,7 @@ MCP only, without hooks (messages arrive only when you call `khala_read`): open 
 { "mcpServers": { "khala": { "command": "npx", "args": ["-y", "khala-cli@0.4.9", "mcp", "--harness", "cursor"], "env": { "KHALA_CURSOR_WORKSPACE": "${workspaceFolder}" } } } }
 ```
 
-In Cursor, every chat in one Cursor window (one workspace folder) shares one Khala identity, named `<username>-Cursor`. Sync delivers new messages as a follow-up when a chat finishes its turn; Steer adds them after a tool call; Async waits for `khala_read`. Cursor cannot wake an idle chat: messages that arrive while no chat is running wait for the next turn.
+In Cursor, every chat in one Cursor window (one workspace folder) shares one Khala identity, named `<username>-Cursor`. Sync sends a fixed follow-up ("Khala: channel messages are waiting. Call khala_read.") when a chat finishes its turn, and the agent reads them with `khala_read`; Steer adds them after a tool call; Async waits for `khala_read`. Cursor cannot wake an idle chat: messages that arrive while no chat is running wait for the next turn.
 
 ### Other MCP clients
 

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { claudeStyleCodec as codec } from './claude-style';
+import { claudeCodec, claudeStyleCodec as codec } from './claude-style';
 
 it.each([
   ['UserPromptSubmit', 'prompt'], ['PostToolUse', 'tool'], ['Stop', 'stop'],
@@ -29,4 +29,8 @@ it('normalizes optional transcript paths and ignores non-string paths', () => {
   const input = { session_id: 's', hook_event_name: 'UserPromptSubmit' };
   expect(codec.parse(JSON.stringify({ ...input, transcript_path: '/tmp/session.jsonl' }))?.transcriptPath).toBe('/tmp/session.jsonl');
   expect(codec.parse(JSON.stringify({ ...input, transcript_path: 12 }))?.transcriptPath).toBeUndefined();
+});
+it('renders Claude Stop as additionalContext so the frame is shown once', () => {
+  expect(claudeCodec.render('stop', 'frame')).toBe(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'frame' } }) + '\n');
+  expect(claudeCodec.render('tool', 'frame')).toBe(codec.render('tool', 'frame'));
 });

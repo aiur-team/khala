@@ -143,3 +143,27 @@ it('does not spend a delivery budget or fail a nonce when transport is skipped',
   expect(await settleAttempts(ctx.files.dir, { now: at + 120_000, activity: await readActivity(ctx.files) })).toEqual([]);
   expect(await readWakeState(ctx.files.dir)).toEqual({});
 });
+it('in Sync wakes only for a person or a message that names the agent; Steer wakes for any peer', async () => {
+  await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
+  await writeJsonAtomic(ctx.files.status, { state: 'connected', displayName: 'Scout', updatedAt: 'now' });
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 1));
+  const peer = (eventId: string, body: string) => ({ eventId, roomId: 'room', ts: 'now', sender: 'bot', senderLabel: 'Bot', senderKind: 'agent' as const, body, kind: 'message' as const });
+  await appendEntries(ctx.files, [peer('quiet', 'CI is green')]);
+  const wake = vi.fn();
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env, drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  loop.notify(); await new Promise(resolve => setTimeout(resolve, 70));
+  expect(wake).not.toHaveBeenCalled();
+  await appendEntries(ctx.files, [peer('named', '@scout please review')]);
+  loop.notify();
+  await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
+});
+it('in Steer still wakes for an agent message that does not name it', async () => {
+  await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
+  await writeJsonAtomic(ctx.files.mode, { mode: 'steer' });
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 1));
+  await appendEntries(ctx.files, [{ eventId: 'quiet', roomId: 'room', ts: 'now', sender: 'bot', senderLabel: 'Bot', senderKind: 'agent', body: 'CI is green', kind: 'message' }]);
+  const wake = vi.fn();
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env, drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  loop.notify();
+  await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
+});

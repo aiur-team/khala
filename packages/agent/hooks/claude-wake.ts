@@ -2,7 +2,9 @@ import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { driverAllowed } from '../src/wake/shared/settings';
-import { filesForDir, stateRoot, resolveStateDir } from '../src/state';
+import { filesForDir, stateRoot, resolveStateDir, readJson as readState, type StatusFile } from '../src/state';
+import { readListeningMode } from '../src/mode';
+import { wakesAgent } from '../src/events/receive';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
@@ -22,6 +24,9 @@ async function readJson(file: string): Promise<{ nonce?: string; mode?: string; 
 
 /** Match inbox unreadCount: ignore corrupt records and incomplete trailing writes. */
 async function unreadChannelMessages(dir: string): Promise<number> {
+  const files = filesForDir(dir);
+  const mode = await readListeningMode(files);
+  const you = (await readState<StatusFile>(files.status))?.displayName;
   const cursor = await readJson(path.join(dir, 'cursor.json'));
   const delivered = cursor && (cursor.lastDeliveredEventId === null || typeof cursor.lastDeliveredEventId === 'string')
     && Number.isSafeInteger(cursor.deliveredCount) && typeof cursor.deliveredCount === 'number' && cursor.deliveredCount >= 0 ? cursor.deliveredCount : 0;
@@ -34,7 +39,7 @@ async function unreadChannelMessages(dir: string): Promise<number> {
     try { entry = JSON.parse(line); } catch { continue; }
     if (!entry || !['eventId', 'roomId', 'ts', 'sender', 'senderLabel', 'body'].every(key => typeof entry[key] === 'string')
       || !['human', 'agent', 'unknown'].includes(entry.senderKind) || !['message', 'event'].includes(entry.kind)) continue;
-    if (index++ >= delivered && entry.kind === 'message') messages++;
+    if (index++ >= delivered && wakesAgent(entry, mode, you)) messages++;
   }
   return messages;
 }

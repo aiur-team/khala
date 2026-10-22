@@ -8,10 +8,9 @@ import { encodeChannelEvent, foldCoordination } from '@khala/contracts/m1/channe
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
-import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
+import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
-import { mentions } from './watch';
 import { appendInbox, readCursor, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';

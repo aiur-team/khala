@@ -499,3 +499,11 @@ it('exits when the last restorable channel is removed', async () => {
   await fs.rm(target.dir, { recursive: true });
   expect(await running.result).toEqual({ code: 0, stdout: '', stderr: '' });
 });
+it('counts only Sync messages from people or naming the agent, but every Steer message', async () => {
+  const agent = (id: number, body: string): InboxEntry => ({ ...entry(id), senderKind: 'agent', body });
+  await seed('idle', [agent(1, 'CI is green'), agent(2, 'over to you, scout'), entry(3)]);
+  await writeStatus(files, 'connected', undefined, undefined, 'Ops', 'Scout');
+  expect(await unreadMessages(files.dir)).toBe(2);
+  await channel('b', 'steer', [agent(4, 'CI is green')]);
+  expect(await unreadMessages(files.dir)).toBe(3);
+});
