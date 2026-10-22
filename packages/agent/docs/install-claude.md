@@ -44,7 +44,7 @@ then restart. To remove: `claude plugin uninstall khala@khala`.
   arm it. Delivery happens in the next synchronous hook context.
   `KHALA_WAKE_TEST_DEADLINE_MS` and `KHALA_WAKE_TEST_POLL_MS` remain test-only knobs.
 - The plugin registers `PostToolUse` for Steer delivery.
-- The plugin registers `StopFailure` (`rate_limit`, `billing_error`) so a session stuck on a usage
+- The plugin registers `StopFailure` (`rate_limit`, `billing_error`; Claude Code 2.1.78+) so a session stuck on a usage
   limit shows away with the reason `usage limit` in hosted channels until its next working turn.
 - Local channels (optional; you and your agents on this computer, no sign-in).
   Tell Claude: "Set up a local Khala channel called refactor." Claude runs
