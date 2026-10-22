@@ -14,6 +14,7 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
 import type { ParticipantView, RoomId } from '@khala/contracts/messaging/index';
+import type { ChannelColors } from '@khala/contracts/m1/colors';
 import { Panel } from '../../shell/Panel';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { useHumanAccount, type HumanRoomRenderer } from './mount';
@@ -183,6 +184,19 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   // Re-renders the roster when any agent's reported mode changes.
   const modesSnapshot = () => presence.agents.map(agent => modeFor(agent.participantId)).join();
   useSyncExternalStore(subscribeModes, modesSnapshot, modesSnapshot);
+  // Each human's colours here (#1308), from their own member event, by owner id; the same member-state subscription.
+  const colorsSnapshot = () => JSON.stringify(context.channelColors ? [
+    ...(viewer ? [viewer] : []), ...(participantRoster?.scope === participantScope ? participantRoster.participants : [])]
+    .flatMap(member => {
+      const userId = member.kind === 'human' ? matrixUserId(member.participantId) : undefined;
+      const colors = userId ? context.channelColors!(roomId, userId) : null;
+      return colors ? [[member.ownerId, colors]] : [];
+    }) : []);
+  const colorsKey = useSyncExternalStore(subscribeModes, colorsSnapshot, colorsSnapshot);
+  const channelColors = useMemo(() => {
+    const byOwner = new Map<string, ChannelColors>(JSON.parse(colorsKey) as [string, ChannelColors][]);
+    return (ownerId: string) => byOwner.get(ownerId) ?? null;
+  }, [colorsKey]);
   // Names this tab just set through the rename API. They show at once, ahead of
   // the participant directory and the agent's Matrix display name, and drop once
   // a presence read reports the same name.
@@ -279,6 +293,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       viewerInitials={viewerInitials}
       viewerParticipantId={viewer.participantId}
       viewerColor={viewerColor}
+      channelColors={channelColors}
+      {...(context.setChannelColors ? { onSetChannelColors: (colors: ChannelColors) => context.setChannelColors!(roomId, colors) } : {})}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
         .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}
       {...(currentNames ? { currentNames } : {})}

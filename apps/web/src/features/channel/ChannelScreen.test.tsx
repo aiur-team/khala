@@ -242,3 +242,28 @@ describe('ChannelScreen roster presence', () => {
     expect(awayLabel({ ...agent('a', mira), connection: 'connected' })).toBeNull();
   });
 });
+
+describe('per-channel colours (#1308)', () => {
+  const describe_ = (participantId: string): Participant | undefined => participantId.startsWith('agent_')
+    ? { kind: 'agent', participantId, matrixUserId: `@${participantId}:hs`, ownerId: mira, displayName: participantId, ownerLabel: 'Mira', harness: 'codex' }
+    : undefined;
+  const rosterHue = (html: string, participantId: string) =>
+    Number(new RegExp(`data-kh-human="${participantId}"[^>]*><span class="kh-av kh-hav" style="--oh:(\\d+)`).exec(html)?.[1]);
+  const agentFill = (html: string, participantId: string) =>
+    new RegExp(`data-kh-agent="${participantId}"><span class="kh-av kh-aav" style="[^"]*--hc:(#[0-9a-f]{6})`).exec(html)?.[1];
+
+  it('draws the viewer in their channel colour and each agent in its own variant, honouring a stored choice', () => {
+    const channelColors = (ownerId: string) => ownerId === mira ? { color: 'teal' as const, agents: { '@agent_b:hs': 1 } } : null;
+    const html = render({ phase: 'ready', agents: [agent('agent_a', mira), agent('agent_b', mira), agent('agent_c', mira)] },
+      { viewerColor: 'blue', describeParticipant: describe_, channelColors });
+    expect(rosterHue(html, 'p_mira')).toBe(182);
+    const fills = ['agent_a', 'agent_b', 'agent_c'].map(id => agentFill(html, id));
+    expect(new Set(fills).size).toBe(3);
+    expect(fills.every(Boolean)).toBe(true);
+  });
+
+  it('shows the Colors button only with a save handler', () => {
+    expect(render({ phase: 'ready', agents: [] })).not.toContain('Colors in this channel');
+    expect(render({ phase: 'ready', agents: [] }, { onSetChannelColors: async () => 'sent' })).toContain('aria-label="Colors in this channel"');
+  });
+});

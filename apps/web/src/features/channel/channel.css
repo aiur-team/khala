@@ -31,3 +31,11 @@
 
 .kh-owner-tag { display: inline-block; margin-left: .4rem; padding: .1rem .3rem; border: 1px solid var(--line-strong); border-radius: 4px; font-size: .55rem; letter-spacing: .05em; color: var(--faint); vertical-align: middle; }
 .kh-remove-agents { color: var(--faint); font-size: .75rem; overflow-wrap: anywhere; }
+
+/* Per-channel colours (#1308). */
+.kh-colors { display: flex; flex-direction: column; gap: .6rem; }
+.kh-colors .kh-swatches { grid-template-columns: repeat(5, 1fr); }
+.kh-colors-sec { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.kh-colors-sec > .kh-prof-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kh-swatch[aria-disabled="true"] { cursor: not-allowed; }
+.kh-swatch[aria-disabled="true"] > span { opacity: .3; transform: none; }

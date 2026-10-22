@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HUMAN_PALETTE, colorSwatch, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, type ResolvedHumanColor } from './human-colors';
+import { AGENT_VARIANT_COUNT, HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
+import { HUMAN_PALETTE, assignAgentVariants, colorVariants, colorSwatch, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, variantColor, type ResolvedHumanColor } from './human-colors';
 
 const slot = (color: ResolvedHumanColor | undefined) => color ? `${color.id}@${color.tier}` : undefined;
 const slots = (map: ReadonlyMap<string, ResolvedHumanColor>) => Object.fromEntries([...map].map(([ownerId, color]) => [ownerId, slot(color)]));
@@ -142,5 +142,51 @@ describe('palette contrast (WCAG 2.x)', () => {
   it('keeps white initials >= 4.5:1 on the hue-only fallback for every hue', () => {
     const worst = Math.min(...Array.from({ length: 360 }, (_, hue) => ratio(white, hsl(hue, 0.65, 0.29))));
     expect(worst).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe('agent variants (#1308)', () => {
+  const rgb = (hex: string) => [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16));
+  const luminance = (hex: string) => {
+    const [r, g, b] = rgb(hex).map(value => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const cases = HUMAN_COLOR_IDS.flatMap(id => ([0, 1, 2] as const).map(tier => [id, tier] as [HumanColorId, 0 | 1 | 2]));
+
+  it.each(cases)('%s tier %i: every variant keeps white text >= 4.5:1 and differs from its siblings', (id, tier) => {
+    const base = resolvedColor(id, tier);
+    expect(variantColor(base, 0)).toBe(base);
+    const tints = colorVariants(base).map(variant => variant.tint);
+    expect(tints).toHaveLength(AGENT_VARIANT_COUNT);
+    expect(variantColor(base, 3).tint).toBe(tints[3]);
+    for (const tint of tints) expect(1.05 / (luminance(tint) + 0.05)).toBeGreaterThanOrEqual(4.5);
+    // The agent bubble: color-mix(in srgb, tint 30%/28%, surface) under body text, dark and light themes.
+    const mix = (tint: string, p: number, surface: string) => `#${rgb(tint).map((value, index) => Math.round(value * p + rgb(surface)[index]! * (1 - p)).toString(16).padStart(2, '0')).join('')}`;
+    const ratio = (a: string, b: string) => { const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (high! + 0.05) / (low! + 0.05); };
+    for (const tint of tints) {
+      expect(ratio('#edeef0', mix(tint, 0.30, '#292d34'))).toBeGreaterThanOrEqual(4.5);
+      expect(ratio('#2a2520', mix(tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
+    }
+    for (let a = 0; a < tints.length; a++) for (let b = a + 1; b < tints.length; b++) {
+      const distance = rgb(tints[a]!).reduce((sum, value, index) => sum + Math.abs(value - rgb(tints[b]!)[index]!), 0);
+      expect(distance, `${tints[a]} vs ${tints[b]}`).toBeGreaterThanOrEqual(30);
+    }
+  });
+
+  const agent = (participantId: string, ownerId = 'kevin') => ({ participantId, ownerId, matrixUserId: `@${participantId}:x` });
+  it('gives each of a human\'s agents a different default, by participant id', () => {
+    expect([...assignAgentVariants([agent('c'), agent('a'), agent('b')], () => null)]).toEqual([['a', 1], ['b', 2], ['c', 3]]);
+  });
+  it('honours a stored choice and fills the lowest free index around it', () => {
+    const stored = { agents: { '@b:x': 1, '@a:x': 3 } };
+    expect(Object.fromEntries(assignAgentVariants([agent('a'), agent('b'), agent('c')], () => stored))).toEqual({ a: 3, b: 1, c: 2 });
+  });
+  it('keeps the lower participant id on a duplicate stored index', () => {
+    const stored = { agents: { '@a:x': 2, '@b:x': 2 } };
+    expect(Object.fromEntries(assignAgentVariants([agent('b'), agent('a')], () => stored))).toEqual({ a: 2, b: 1 });
+  });
+  it('ignores another human\'s entry for an agent they do not own', () => {
+    const records: Record<string, { agents: Record<string, number> }> = { maya: { agents: { '@a:x': 5 } } };
+    expect(Object.fromEntries(assignAgentVariants([agent('a'), agent('m', 'maya')], owner => records[owner]))).toEqual({ a: 1, m: 1 });
   });
 });

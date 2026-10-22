@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { HUMAN_COLOR_IDS, decodeHumanColorRecord, defaultHumanColor, fnv1a, humanColorRecordKey, isHumanColorId } from './colors';
+import { CHANNEL_COLORS_MEMBER_KEY, AGENT_VARIANT_COUNT, HUMAN_COLOR_IDS, decodeHumanColorRecord, defaultHumanColor, fnv1a, humanColorRecordKey, isAgentVariant, isHumanColorId, memberChannelColors } from './colors';
 
 it('defines ten stable colour ids in palette order', () => {
   expect(HUMAN_COLOR_IDS).toEqual(['red', 'orange', 'amber', 'lime', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
@@ -25,4 +25,14 @@ it('decodes exact colour records and encodes owner keys', () => {
   for (const patch of [{ extra: true }, { color: 'chartreuse' }, { v: 2 }, { ownerId: '' }]) {
     expect(decodeHumanColorRecord({ ...record, ...patch }).ok).toBe(false);
   }
+});
+it('reads a member event\'s channel colours, dropping invalid parts', () => {
+  expect(memberChannelColors({ membership: 'join', [CHANNEL_COLORS_MEMBER_KEY]: { color: 'teal', agents: { '@a:x': 2 } } }))
+    .toEqual({ color: 'teal', agents: { '@a:x': 2 } });
+  expect(memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: { color: '#fff', agents: { '@a:x': 0, '@b:x': 9, '@c:x': 1.5, d: 3, '@e:x': 8 } } }))
+    .toEqual({ agents: { '@e:x': 8 } });
+  expect(memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: { agents: [1] } })).toEqual({ agents: {} });
+  expect(memberChannelColors({ membership: 'join' })).toBeNull();
+  expect(memberChannelColors(null)).toBeNull();
+  expect(isAgentVariant(AGENT_VARIANT_COUNT - 1)).toBe(true);
 });

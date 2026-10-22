@@ -38,6 +38,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
+import { CHANNEL_COLORS_MEMBER_KEY, memberChannelColors, type ChannelColors } from '@khala/contracts/m1/colors';
 import type { ChannelNameResult, ChannelNamesPort, MemberPresence } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
@@ -766,6 +767,29 @@ export async function setOwnChannelName(client: Pick<MatrixClient, 'getRoom' | '
   } catch { return { kind: 'error', code: 'unavailable' }; }
 }
 
+/** A member's colours in `roomId` (#1308), from their own member event. */
+export function readChannelColors(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): ChannelColors | null {
+  return memberChannelColors(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
+}
+
+/**
+ * Sets the viewer's own colours in one channel, in their member event, keeping
+ * its other content. Only the member can send it; others' clients honour agent
+ * entries only for agents this member owns.
+ */
+export async function setOwnChannelColors(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
+  colors: ChannelColors): Promise<'sent' | 'failed'> {
+  try {
+    const userId = client.getUserId();
+    const own = userId ? client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
+    const checked = memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: colors });
+    if (!userId || !own || own.getContent().membership !== 'join' || !checked) return 'failed';
+    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
+    await send.call(client, roomId, EventType.RoomMember, { ...own.getContent(), membership: 'join', [CHANNEL_COLORS_MEMBER_KEY]: checked }, userId);
+    return 'sent';
+  } catch { return 'failed'; }
+}
+
 /** When `userId` took its current name in `roomId`: the time of its latest membership event. */
 export function memberSince(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): number | null {
   return client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getTs() ?? null;
@@ -814,6 +838,8 @@ export type MatrixBrowserPorts = Readonly<{
   participant(): ParticipantView | null;
   channelNames: ChannelNamesPort;
   memberSince(roomId: RoomId, userId: string): number | null;
+  channelColors(roomId: RoomId, userId: string): ChannelColors | null;
+  setChannelColors(roomId: RoomId, colors: ChannelColors): Promise<'sent' | 'failed'>;
   presence(userId: string): MemberPresence | null;
   hasRead(roomId: RoomId, userId: string, eventId: string): boolean;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
@@ -948,6 +974,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
     channelNames: { setOwnName: (roomId, name) => runtime.active
       ? setOwnChannelName(runtime.active.client, roomId, name) : Promise.resolve({ kind: 'error', code: 'unavailable' }) },
     memberSince: (roomId, userId) => runtime.active ? memberSince(runtime.active.client, roomId, userId) : null,
+    channelColors: (roomId, userId) => runtime.active ? readChannelColors(runtime.active.client, roomId, userId) : null,
+    setChannelColors: (roomId, colors) => runtime.active ? setOwnChannelColors(runtime.active.client, roomId, colors) : Promise.resolve('failed'),
     presence: userId => runtime.active ? memberPresence(runtime.active.client, userId) : null,
     hasRead: (roomId, userId, eventId) => !!runtime.active && hasReadEvent(runtime.active.client, roomId, userId, eventId),
     async roomParticipants(roomId, signal) {

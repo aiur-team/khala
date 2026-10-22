@@ -71,6 +71,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     roomParticipants: matrix.roomParticipants,
     channelNames: matrix.channelNames,
     memberSince: matrix.memberSince,
+    channelColors: matrix.channelColors,
+    setChannelColors: matrix.setChannelColors,
     presence: matrix.presence,
     hasRead: matrix.hasRead,
     limits: decodedLimits.value,

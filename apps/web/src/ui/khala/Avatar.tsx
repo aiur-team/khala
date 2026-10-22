@@ -22,6 +22,8 @@ export type AvatarProps =
     ownerInitials: string;
     /** The owner's variant colour (tiers 1-2), which `ownerHue` alone cannot draw. */
     ownerSwatch?: string | undefined;
+    /** The agent's own fill, a variant of its owner's colour (#1308); `ownerSwatch` without it. */
+    swatch?: string | undefined;
     ownerHost?: string;
     /** Harness logo URL; `null` renders the agent's initials instead. */
     logo: string | null;
@@ -43,9 +45,10 @@ export function Avatar(props: AvatarProps) {
   if (props.kind === 'more') return <span className="kh-av kh-more">+{props.count}</span>;
 
   const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ' kh-aav'}${props.ghost ? ' ghost' : ''}`;
-  // An agent's fill is its owner's swatch, exactly as on the owner's own avatar, under a white harness glyph.
+  // An agent's fill is its own variant of its owner's colour (else the owner's swatch), under a white harness glyph.
+  const fill = props.kind === 'agent' ? props.swatch ?? props.ownerSwatch : undefined;
   const style = props.kind === 'agent'
-    ? { '--h': props.hue, '--oh': props.ownerHue, ...(props.ownerSwatch ? { '--hc': props.ownerSwatch } : {}) } as CSSProperties
+    ? { '--h': props.hue, '--oh': props.ownerHue, ...(fill ? { '--hc': fill } : {}) } as CSSProperties
     : { '--oh': props.hue, ...(props.swatch ? { '--hc': props.swatch } : {}) } as CSSProperties;
   const tier = props.kind === 'human' && props.tier ? { 'data-kh-tier': String(props.tier) } : {};
   const content = props.kind === 'agent' ? <>
