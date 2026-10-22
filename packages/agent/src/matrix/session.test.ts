@@ -12,7 +12,7 @@ vi.mock('matrix-js-sdk', () => ({
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
   MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
-  Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' },
+  Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' }, SetPresence: { Offline: 'offline' },
 }));
 import { createAgentMatrixSession } from './session';
 
@@ -47,7 +47,7 @@ function fake() {
     sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$state' }),
     sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
-    setPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn((_id: string) => null as unknown),
+    setPresence: vi.fn().mockResolvedValue(undefined), setSyncPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn((_id: string) => null as unknown),
     setRoomReadMarkersHttpRequest: vi.fn().mockResolvedValue({}),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
   });
@@ -620,6 +620,21 @@ describe('presence and read receipts', () => {
     await session.stop();
     expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'session ended' });
     expect(client.setPresence.mock.invocationCallOrder.at(-1)).toBeLessThan(client.stopClient.mock.invocationCallOrder[0]!);
+  });
+  it('stays away with a reason while connected, through heartbeats and syncs, until cleared', async () => {
+    vi.useFakeTimers();
+    session = await createAgentMatrixSession(creds);
+    session.setAway!('usage limit');
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'usage limit' });
+    expect(client.setSyncPresence).toHaveBeenLastCalledWith('offline');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'usage limit' });
+    const calls = client.setPresence.mock.calls.length;
+    session.setAway!('usage limit');
+    expect(client.setPresence).toHaveBeenCalledTimes(calls);
+    session.setAway!(undefined);
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'online', status_msg: '' });
+    expect(client.setSyncPresence).toHaveBeenLastCalledWith(undefined);
   });
   it('reports other members as online, away since their last heartbeat, or unknown', async () => {
     const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@idle:hs', name: 'Idle' }, { userId: '@new:hs', name: 'New' }];

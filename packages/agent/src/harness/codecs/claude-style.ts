@@ -1,6 +1,8 @@
 import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
-const events = { SessionStart: 'start', UserPromptSubmit: 'prompt', PostToolUse: 'tool', Stop: 'stop' } as const;
+const events = { SessionStart: 'start', UserPromptSubmit: 'prompt', PostToolUse: 'tool', Stop: 'stop', StopFailure: 'limit' } as const;
+/** StopFailure error types that leave the agent unable to work until the limit resets. */
+const LIMIT_ERRORS = ['rate_limit', 'billing_error'];
 const names = { prompt: 'UserPromptSubmit', tool: 'PostToolUse', stop: 'Stop' } as const;
 
 /** Claude and Codex share the same hook payload and envelopes. */
@@ -13,7 +15,8 @@ export const claudeStyleCodec: DeliverCodec = {
       const input = JSON.parse(stdin);
       if (!input || typeof input.session_id !== 'string'
         || typeof input.hook_event_name !== 'string' || !Object.hasOwn(events, input.hook_event_name)
-        || (input.stop_hook_active !== undefined && typeof input.stop_hook_active !== 'boolean')) return null;
+        || (input.stop_hook_active !== undefined && typeof input.stop_hook_active !== 'boolean')
+        || (input.hook_event_name === 'StopFailure' && !LIMIT_ERRORS.includes(input.error))) return null;
       return { sessionId: input.session_id, event: events[input.hook_event_name as keyof typeof events],
         continuation: input.stop_hook_active === true,
         ...(typeof input.cwd === 'string' ? { workspace: input.cwd } : {}),

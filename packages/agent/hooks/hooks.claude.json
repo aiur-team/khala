@@ -10,6 +10,9 @@
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 }] }
     ],
+    "StopFailure": [
+      { "matcher": "rate_limit|billing_error", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 }] }
+    ],
     "Stop": [
       { "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 },

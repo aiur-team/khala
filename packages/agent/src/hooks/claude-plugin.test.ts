@@ -34,6 +34,7 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   ] }]);
   expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
   expect(hooks.PostToolUse).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
+  expect(hooks.StopFailure).toEqual([{ matcher: 'rate_limit|billing_error', hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
   expect(hooks.Stop).toEqual([{ hooks: [
     { type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 },
     { type: 'command', command: `${khala} hook claude-wake`, asyncRewake: true, timeout: 86700 },

@@ -33,6 +33,8 @@ export interface ChannelSession {
   /** Names of other members whose read receipt (or later message) covers `eventId`. */
   seenBy?(roomId: string, eventId: string): string[];
   markRead?(roomId: string, eventId: string): Promise<void>;
+  /** Show the agent away with this reason while it stays connected (a usage limit); undefined returns it online. */
+  setAway?(reason: string | undefined): void;
   stop(): Promise<void>;
 }
 

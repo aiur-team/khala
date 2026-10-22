@@ -203,6 +203,20 @@ it('sends a read receipt for what delivery hooks showed, once per cursor move, n
     expect(session.markRead).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
 });
+it('shows the agent away while a usage limit is recorded and online once it clears', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  try {
+    await connected();
+    Object.assign(session, { setAway: vi.fn() });
+    const marker = path.join(dir, 'usage-limit.json');
+    await fs.writeFile(marker, JSON.stringify({ at: now().toISOString() }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(session.setAway).toHaveBeenLastCalledWith('usage limit'));
+    await fs.rm(marker);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(session.setAway).toHaveBeenLastCalledWith(undefined));
+  } finally { vi.useRealTimers(); }
+});
 it('guards read/send and recovers from sanitized send failures', async () => {
   await expect(client.send('x')).rejects.toMatchObject({ code: 'not_connected' });
   await expect(client.read(1)).rejects.toMatchObject({ code: 'not_connected' });

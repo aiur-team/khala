@@ -4,7 +4,7 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { sessionFiles, readStatus, readJson, TERMINAL_SESSION_DETAILS, StateError, type StatusFile, type SessionFiles } from '../state';
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
-import { readActivity, writeActivity } from '../activity';
+import { readActivity, writeActivity, markUsageLimit, clearUsageLimit } from '../activity';
 import { wakeDisableNotice } from '../wake/status';
 import { settleAttempts } from '../wake/shared/nonce';
 import { capturePane } from '../wake/terminal/capture';
@@ -193,6 +193,9 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     }
     if (files) {
       try {
+        // A limited turn delivers nothing; any later tool call or Stop proves the agent works again.
+        if (input.event === 'limit') { await markUsageLimit(files, io.now); return 0; }
+        if (input.event === 'tool' || input.event === 'stop') await clearUsageLimit(files);
         if (adapter.verifyWake) {
           try { await adapter.verifyWake(stdin, files, io.now().getTime()); }
           catch { diagnostic(io, 'wake_verification_failed'); }
