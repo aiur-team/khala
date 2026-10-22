@@ -9,7 +9,6 @@ export const cursorCodec: DeliverCodec = {
   promptAcceptsContext: false,
   suppressOutputErrors: true,
   fallbackSession: CURSOR_DEFAULT_SESSION,
-  stopNudgeOnly: true,
   parse(stdin) {
     try {
       const input = JSON.parse(stdin.replace(/^\uFEFF/u, ''));

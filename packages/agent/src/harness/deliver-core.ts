@@ -253,15 +253,16 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
               if (!wake) return 0;
               if (input.replay) { io.stdout.write(wake); return 0; }
             }
+            const stopContext = input.event === 'stop' && codec.stopContextFloor !== undefined
+              && versionAtLeast(await claudeTranscriptVersion(input.transcriptPath), codec.stopContextFloor);
             const frame = await channelFrames(files, steerOnly,
               input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io, input.event === 'stop',
-              // A fixed nudge consumes the batch without showing it, so it earns no read receipt.
-              !(input.event === 'stop' && codec.stopNudgeOnly));
+              // Stop shows the frame only as verified Claude context; every other Stop is a fixed nudge,
+              // which consumes the batch without showing it and so earns no read receipt.
+              input.event !== 'stop' || stopContext);
             if (frame) {
               if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);
-              const stopContext = input.event === 'stop' && codec.stopContextFloor !== undefined
-                && versionAtLeast(await claudeTranscriptVersion(input.transcriptPath), codec.stopContextFloor);
               output = (wake ? wake + '\n' : '') + codec.render(input.event, frame + (notice ? '\n' + notice : ''), stopContext);
             } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
           }

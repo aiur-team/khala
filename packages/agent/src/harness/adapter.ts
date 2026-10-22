@@ -25,8 +25,6 @@ export type DeliverCodec = Readonly<{
   suppressOutputErrors: boolean;
   promptDeliversWithoutWake: boolean;
   fallbackSession?: string;
-  /** Stop output is a fixed nudge that never carries the frame (Cursor submits it as a user turn). */
-  stopNudgeOnly?: boolean;
 }>;
 
 export type HarnessAdapter = Readonly<{

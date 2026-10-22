@@ -170,6 +170,8 @@ it.each([['2.1.306'], ['garbage'], [undefined]])('keeps decision:block, with onl
   await seed([message()]);
   try {
     expect((await hook('Stop', 'claude', { transcript_path: old })).stdout).toBe(JSON.stringify({ decision: 'block', reason: STOP_NUDGE }) + '\n');
+    // A nudge shows no content, so it earns no read receipt.
+    expect((await readCursor(files)).shownEventId).toBeUndefined();
     await seed([message(2)]);
     expect(JSON.parse((await hook('Stop', 'claude', { transcript_path: path.join(root, 'missing.jsonl') })).stdout).decision).toBe('block');
   } finally { await fs.rm(old, { force: true }); }
@@ -247,6 +249,8 @@ it('recomputes once after a cursor conflict', async () => {
   expect(advance).toHaveBeenCalledTimes(2);
   expect(stdout.write).toHaveBeenCalledWith(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: exactFrame } }) + '\n');
   expect((await readCursor(files)).deliveredCount).toBe(1);
+  // Verified Claude saw the frame as context, so it earns a read receipt.
+  expect((await readCursor(files)).shownEventId).toBeDefined();
 });
 it('stays silent after two cursor conflicts and preserves unread messages', async () => {
   await seed([message()]);
