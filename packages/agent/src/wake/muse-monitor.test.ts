@@ -11,6 +11,7 @@ import { watchSession, monitorArmed } from '../watch';
 import { recordAttempt, readWakeState, writeWakeSettings, settleAttempts } from './shared';
 import { deliverCore } from '../harness/deliver-core';
 import { muse } from '../harness/muse';
+import { STOP_NUDGE } from '../harness/adapter';
 import { createMuseMonitorDriver, museWatchCommand, MUSE_WAKE_REQUEST, museJournalPath, museStopWakeText } from './muse-monitor';
 
 const sessionId = '01a10fee-e403-7390-b3a0-dd772e9d2ef7';
@@ -110,8 +111,10 @@ it.each(['sync', 'steer'])('delivers an idle wake through %s hooks once without 
   await deliverCore(stop(), muse, io);
   await deliverCore(JSON.stringify({ session_id: sessionId, hook_event_name: 'Stop', turn_id: 'run', stop_hook_active: true }), muse, io);
   await deliverCore(stop(), muse, io);
-  expect(outputs.filter(text => text.includes('BODYMARK'))).toHaveLength(1);
-  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$mention', deliveredCount: 1 });
+  // #1303/#1304: a Stop continuation is the constant nudge and earns no receipt; only steer's tool frame shows content.
+  expect(outputs.filter(text => text.includes('BODYMARK'))).toHaveLength(mode === 'steer' ? 1 : 0);
+  expect(outputs.filter(text => text.includes(STOP_NUDGE))).toHaveLength(mode === 'steer' ? 0 : 1);
+  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$mention', deliveredCount: 1, ...(mode === 'steer' ? { shownEventId: '$mention' } : {}) });
   expect((await readWakeState(files.dir)).monitor).toEqual({ failures: 0 });
 });
 it.each(['wrong-run', 'wrong-session', 'queued', 'foreign-source', 'wrong-nonce', 'stale'])('rejects %s evidence', async kind => {

@@ -8,6 +8,8 @@ import { writeActivity } from '../activity';
 import { channelFiles, ensureStateDir, openSessionDir, readStatus, writeStateFile } from '../state';
 import type { ChannelSession, SessionMessage } from '../transport';
 import { createCodexWaker } from '../wake/codex';
+import { STOP_NUDGE } from '../harness/adapter';
+import { readCursor } from '../inbox';
 import { createRealClientFactory } from './wiring';
 import { runMcpCommand } from './main';
 import { PassThrough } from 'node:stream';
@@ -191,9 +193,12 @@ it.each(['session-start', 'idle'])('restores both OpenCode channels from a late 
     await vi.waitFor(async () => {
       for (const roomId of rooms) expect(await readStatus(channelFiles(files, roomId))).toMatchObject({ state: 'connected' });
     }, { timeout: 4_000 });
+    // #1303: an idle wake is a user turn, so it carries only the constant nudge (the agent reads the gap with khala_read).
     await deliver(JSON.stringify({ session_id: 'ses_resumed', event: 'idle' }), ['--harness', 'opencode'], io);
     expect(frame).toMatch(/^Khala: channel messages are waiting/);
-    for (const roomId of rooms) expect(frame.split(`gap for ${roomId}`)).toHaveLength(2);
+    expect(frame).toContain(STOP_NUDGE);
+    expect(frame).not.toContain('gap for');
+    for (const roomId of rooms) expect(await readCursor(channelFiles(files, roomId))).toMatchObject({ lastDeliveredEventId: `$gap-${roomId}`, deliveredCount: 1 });
     frame = '';
     await deliver(JSON.stringify({ session_id: 'ses_resumed', event: 'idle' }), ['--harness', 'opencode'], io);
     expect(frame).toBe('');

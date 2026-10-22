@@ -8,7 +8,7 @@ import { harnessInfo } from '@khala/contracts/m1/harness';
 import { defaultAgentName } from '@khala/contracts/m1/names';
 import { ADAPTERS, adapterFor } from '../index';
 import { cursorSessionId } from '../../cursor';
-import { channelFiles, stateRoot } from '../../state';
+import { channelFiles, readStatus, stateRoot } from '../../state';
 import { readCursor, unread } from '../../inbox';
 import { writeActivity } from '../../activity';
 import { readWakeState, writeWakeSettings } from '../../wake/shared';
@@ -64,9 +64,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       let userId!: string;
       let transaction = 0;
       const status = async () => data(await agent.call('khala_status'));
+      // #1300: in sync, the peer agent's message wakes or re-opens a Stop only when it names the agent.
+      // The name comes from the status file: khala_status would add terminal probes to the wake-call log.
       const publish = async (text: string) => {
-        expect(data(await peer.call('khala_send', { text }))).toHaveProperty('eventId');
-        await eventually(async () => (await inbox(agent)).some(entry => entry.body === text));
+        expect(data(await peer.call('khala_send', { text: `@${(await readStatus(files()))?.displayName} ${text}` }))).toHaveProperty('eventId');
+        await eventually(async () => (await inbox(agent)).some(entry => entry.body.endsWith(' ' + text)));
       };
       const setMode = async (next: 'async' | 'sync' | 'steer') => {
         expect((await admin(world!, 'POST', `/api/local/channels/${encodeURIComponent(channel.roomId)}/mode`,
@@ -101,7 +103,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       await row('read', async () => {
         await publish('tier-b-read'); const before = await readCursor(files());
         const read = data(await agent.call('khala_read', { limit: 100 }));
-        expect(read.messages).toEqual(expect.arrayContaining([expect.objectContaining({ body: 'tier-b-read', senderLabel: 'kevin-Claude' })]));
+        expect(read.messages).toEqual(expect.arrayContaining([expect.objectContaining({ body: expect.stringMatching(/ tier-b-read$/), senderLabel: 'kevin-Claude' })]));
         expect(await readCursor(files())).toEqual(before);
       });
       await row('send', async () => {
@@ -136,7 +138,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const output = await hook(agent, 'tool');
         expect(output.kind).toBe(capabilities.steer ? 'context' : 'none');
         if (capabilities.steer) expect(output.frame).toContain('tier-b-steer');
-        else expect((await unread(files())).entries.some(entry => entry.body === 'tier-b-steer')).toBe(true);
+        else expect((await unread(files())).entries.some(entry => entry.body.endsWith(' tier-b-steer'))).toBe(true);
       }, !capabilities.steer);
       await row('sync', async () => {
         await setMode('sync'); await publish('tier-b-sync');
@@ -144,7 +146,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const output = await hook(agent, 'stop');
         if (!capabilities.sync) {
           expect(output.kind).toBe('none');
-          expect((await unread(files())).entries.some(entry => entry.body === 'tier-b-sync')).toBe(true);
+          expect((await unread(files())).entries.some(entry => entry.body.endsWith(' tier-b-sync'))).toBe(true);
           return;
         }
         expect(output.kind).toBe('continue'); expect(output.frame).toContain(driver.syncNudge ?? 'tier-b-sync');
@@ -249,7 +251,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           JSON.stringify({ source: 'USER_EXPLICIT', type: 'USER_INPUT', content: line }) + '\n');
         const prompt = await hook(agent, 'prompt', { promptText: line });
         if (adapter.codec?.promptAcceptsContext) expect(prompt.frame).toContain('tier-b-idle');
-        else expect((await hook(agent, 'stop')).frame).toContain('tier-b-idle');
+        else expect((await hook(agent, 'stop')).frame).toContain(wakeDriver.syncNudge ?? 'tier-b-idle');
         await eventually(async () => (await readWakeState(agent.files.dir))[harness === 'codex' ? 'queue' : 'terminal']?.failures === 0);
       }, harnessInfo(harness).idleWake === 'none');
     } finally {
