@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { colorVariants, resolvedColor } from '../../ui/khala/human-colors';
-import { ChannelColorsPicker, nextEnabled } from './ChannelColors';
+import { ChannelColorsPicker, colorsKey, nextEnabled } from './ChannelColors';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers } from './members';
 
@@ -57,5 +57,12 @@ describe('agent colours in the roster', () => {
       colorFor: () => base, agentColorFor: id => variants[id === 'a1' ? 1 : 2] });
     expect(members.agents.map(member => member.color?.tint)).toEqual([variants[1]!.tint, variants[2]!.tint]);
     expect(members.agents.map(member => member.ownerColor?.tint)).toEqual([base.tint, base.tint]);
+  });
+});
+
+describe('colorsKey', () => {
+  it('ignores agent order and tells colours apart', () => {
+    expect(colorsKey({ color: 'teal', agents: { '@b:hs': 2, '@a:hs': 1 } })).toBe(colorsKey({ color: 'teal', agents: { '@a:hs': 1, '@b:hs': 2 } }));
+    expect(colorsKey({ agents: {} })).not.toBe(colorsKey({ color: 'teal', agents: {} }));
   });
 });

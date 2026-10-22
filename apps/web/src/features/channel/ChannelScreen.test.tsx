@@ -6,6 +6,7 @@ import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { renderMessageContent } from '../timeline/message-renderer';
 import { ChannelScreen, Recent, type ChannelScreenProps } from './ChannelScreen';
 import { awayLabel } from './AgentPresencePanel';
+import { resolvedColor, variantColor } from '../../ui/khala/human-colors';
 import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
 
 const mira = 'owner_mira' as OwnerId;
@@ -260,6 +261,7 @@ describe('per-channel colours (#1308)', () => {
     const fills = ['agent_a', 'agent_b', 'agent_c'].map(id => agentFill(html, id));
     expect(new Set(fills).size).toBe(3);
     expect(fills.every(Boolean)).toBe(true);
+    expect(fills[1]).toBe(variantColor(resolvedColor('teal', 0), 1).tint);
   });
 
   it('shows the Colors button only with a save handler', () => {

@@ -50,6 +50,11 @@ function SwatchGroup({ label, options, value, onChange }: Readonly<{
   </div>;
 }
 
+const SAVE_DELAY_MS = 400;
+/** A key for `colors` that ignores agent order. */
+export const colorsKey = (colors: ChannelColors): string =>
+  JSON.stringify([colors.color ?? null, Object.entries(colors.agents).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)]);
+
 export type ColorAgent = Readonly<{ participantId: string; matrixUserId: string; name: string; variant: number }>;
 
 export function ChannelColorsPicker({ save, channelColor, profileColor, taken, agents }: Readonly<{
@@ -64,34 +69,46 @@ export function ChannelColorsPicker({ save, channelColor, profileColor, taken, a
 }>) {
   const saved: ChannelColors = { ...(channelColor ? { color: channelColor } : {}),
     agents: Object.fromEntries(agents.map(agent => [agent.matrixUserId, agent.variant])) };
-  // The last choice shows at once, until the member event comes back through sync.
+  // The last choice shows at once, until the member event carrying it comes back through sync.
   const [pending, setPending] = useState<ChannelColors | null>(null);
-  const savedKey = JSON.stringify(saved);
-  useEffect(() => setPending(null), [savedKey]);
+  const savedKey = colorsKey(saved);
+  useEffect(() => { setPending(current => current && colorsKey(current) === savedKey ? null : current); }, [savedKey]);
   const [error, setError] = useState('');
   const current = pending ?? saved;
   const color = current.color ?? profileColor;
   const variants = colorVariants(resolvedColor(color, 0));
 
-  async function apply(next: ChannelColors): Promise<void> {
+  // Each choice is one member event, so arrowing across swatches sends only the one it settles on.
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const queued = useRef<(() => void) | null>(null);
+  const latest = useRef(0);
+  const flush = () => { clearTimeout(timer.current); const send = queued.current; queued.current = null; send?.(); };
+  // Closing the popover sends a queued choice rather than dropping it.
+  useEffect(() => flush, []);
+  function apply(next: ChannelColors): void {
+    if (colorsKey(next) === colorsKey(current)) return;
     setPending(next);
     setError('');
+    clearTimeout(timer.current);
+    const request = ++latest.current;
     // Saving writes every agent's current variant, so a default becomes a stored choice.
-    const result = await save(next).catch(() => 'failed' as const);
-    if (result === 'failed') { setPending(null); setError('Couldn’t save. Try again.'); }
+    queued.current = () => void save(next).catch(() => 'failed' as const).then(result => {
+      if (result === 'failed' && request === latest.current) { setPending(null); setError('Couldn’t save. Try again.'); }
+    });
+    timer.current = setTimeout(flush, SAVE_DELAY_MS);
   }
   const withColor = (id: HumanColorId | undefined): ChannelColors => ({ ...(id ? { color: id } : {}), agents: current.agents });
 
   return <div className="kh-colors" role="dialog" aria-label="Colors in this channel">
-    <SwatchGroup label="Your color here" value={color} onChange={id => void apply(withColor(id as HumanColorId))}
+    <SwatchGroup label="Your color here" value={color} onChange={id => apply(withColor(id as HumanColorId))}
       options={HUMAN_COLOR_IDS.map(id => ({ key: id, label: HUMAN_PALETTE[id].label, fill: HUMAN_PALETTE[id].solid,
         disabled: id !== color && taken.has(id) }))} />
-    {current.color ? <button type="button" className="kh-btn" onClick={() => void apply(withColor(undefined))}>Use profile color</button> : null}
+    {current.color ? <button type="button" className="kh-btn" onClick={() => apply(withColor(undefined))}>Use profile color</button> : null}
     {agents.map(agent => {
       const variant = current.agents[agent.matrixUserId] ?? agent.variant;
       const siblings = new Set(agents.filter(other => other !== agent).map(other => current.agents[other.matrixUserId] ?? other.variant));
       return <SwatchGroup key={agent.participantId} label={agent.name} value={String(variant)}
-        onChange={key => void apply({ ...current, agents: { ...current.agents, [agent.matrixUserId]: Number(key) } })}
+        onChange={key => apply({ ...current, agents: { ...current.agents, [agent.matrixUserId]: Number(key) } })}
         options={variants.slice(1).map((shade, index) => ({ key: String(index + 1), label: `${HUMAN_PALETTE[color].label} shade ${index + 1}`,
           fill: shade.tint, disabled: index + 1 !== variant && siblings.has(index + 1) }))} />;
     })}
