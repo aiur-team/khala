@@ -14,7 +14,7 @@ import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ProcessReader } from './proc';
 import { recordHookSession } from './session-sources';
 import type { HarnessAdapter } from './adapter';
-import { claudeTranscriptInterrupted } from './claude-transcript';
+import { claudeTranscriptInterrupted, claudeTranscriptVersion, versionAtLeast } from './claude-transcript';
 
 const MAX_FRAME_BYTES = 64 * 1024;
 const CLAUDE_STALE_BUSY_MS = 120_000;
@@ -258,7 +258,9 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
             if (frame) {
               if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);
-              output = (wake ? wake + '\n' : '') + codec.render(input.event, frame + (notice ? '\n' + notice : ''));
+              const stopContext = input.event === 'stop' && codec.stopContextFloor !== undefined
+                && versionAtLeast(await claudeTranscriptVersion(input.transcriptPath), codec.stopContextFloor);
+              output = (wake ? wake + '\n' : '') + codec.render(input.event, frame + (notice ? '\n' + notice : ''), stopContext);
             } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
           }
         }

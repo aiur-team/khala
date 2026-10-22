@@ -22,18 +22,14 @@ export const claudeStyleCodec: DeliverCodec = {
     } catch { return null; }
   },
   noop: () => '',
-  render(kind, frame) {
-    return JSON.stringify(kind === 'stop'
+  render(kind, frame, stopContext = false) {
+    return JSON.stringify(kind === 'stop' && !stopContext
       ? { decision: 'block', reason: frame }
       : { hookSpecificOutput: { hookEventName: names[kind], additionalContext: frame } }) + '\n';
   },
 };
 
-/** Claude shows a Stop block reason twice (as a user turn and as a system note), so the frame
- * goes in Stop additionalContext: delivered once, as context, and the turn still continues. */
-export const claudeCodec: DeliverCodec = {
-  ...claudeStyleCodec,
-  render: (kind, frame) => kind === 'stop'
-    ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: frame } }) + '\n'
-    : claudeStyleCodec.render(kind, frame),
-};
+/** Claude shows a Stop block reason twice (as a user turn and as a system note). Stop additionalContext
+ * arrives once and the turn continues, but that is verified only from this version (live, 2.1.307);
+ * older or unknown versions keep the documented decision:block, which is always shown. */
+export const claudeCodec: DeliverCodec = { ...claudeStyleCodec, stopContextFloor: '2.1.307' };

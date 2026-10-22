@@ -305,7 +305,7 @@ it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', a
   expect(stdout).toBe('');
   expect((await readCursor(files)).deliveredCount).toBe(0);
   await hook('Stop');
-  expect(JSON.parse(stdout)).toMatchObject({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: expect.stringContaining('sync-msg-1') } });
+  expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
   expect((await readCursor(files)).deliveredCount).toBe(1);
   stdout = '';
   await hook('Stop');

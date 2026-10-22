@@ -226,7 +226,7 @@ it.each(['sync', 'steer', 'async'] as const)('preserves %s delivery boundaries w
   stdout = '';
   await hook('Stop');
   if (mode === 'sync') {
-    expect(JSON.parse(stdout)).toMatchObject({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: expect.stringContaining('sync-msg-1') } });
+    expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
     expect(stdout).toContain('second note');
     expect((await readCursor(active)).deliveredCount).toBe(2);
     stdout = '';
