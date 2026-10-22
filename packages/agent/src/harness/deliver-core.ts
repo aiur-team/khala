@@ -102,7 +102,7 @@ export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_B
   return selected;
 }
 
-async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWake: boolean, io: HookIO, quiet = false): Promise<string | null> {
+async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWake: boolean, io: HookIO, quiet: boolean, shown: boolean): Promise<string | null> {
   // A quiet (Stop) delivery re-opens the turn only for what wakesAgent allows; other batches wait.
   const wakes = (group: FrameGroup & { consumed: readonly InboxEntry[] }) =>
     group.consumed.some(entry => quiet ? wakesAgent(entry, group.mode, group.you) : isWakeEntry(entry));
@@ -130,7 +130,7 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
       let current = group;
       for (let attempt = 0; attempt < 2; attempt++) {
         if (!current.frame || (requireWake && !hasWake && !wakes(current))) break;
-        if (await advanceCursor(current.channel.files, current.cursor, current.consumed) === 'conflict') {
+        if (await advanceCursor(current.channel.files, current.cursor, current.consumed, shown) === 'conflict') {
           if (attempt === 0) {
             const pending = await unread(current.channel.files);
             const retry = selectFrame(current.channel.channelName ?? current.channel.roomId, pending.entries, current.you,
@@ -254,7 +254,9 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
               if (input.replay) { io.stdout.write(wake); return 0; }
             }
             const frame = await channelFrames(files, steerOnly,
-              input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io, input.event === 'stop');
+              input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io, input.event === 'stop',
+              // A fixed nudge consumes the batch without showing it, so it earns no read receipt.
+              !(input.event === 'stop' && codec.stopNudgeOnly));
             if (frame) {
               if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);

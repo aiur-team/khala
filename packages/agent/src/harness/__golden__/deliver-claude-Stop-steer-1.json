@@ -4,7 +4,8 @@
   "stderr": "",
   "cursor": {
     "lastDeliveredEventId": "$message-1",
-    "deliveredCount": 1
+    "deliveredCount": 1,
+    "shownEventId": "$message-1"
   },
   "activity": {
     "state": "busy",
