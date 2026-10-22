@@ -10,8 +10,10 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
-import { defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HumanColorsProvider, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, colorSwatch } from '../../ui/khala/human-colors';
+import { defaultHumanColor, type ChannelColors, type HumanColorId } from '@khala/contracts/m1/colors';
+import { HumanColorsProvider, assignAgentVariants, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, colorSwatch, variantColor,
+  type ResolvedHumanColor } from '../../ui/khala/human-colors';
+import { ChannelColorsPicker } from './ChannelColors';
 import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
@@ -47,6 +49,10 @@ export interface ChannelScreenProps {
   viewerParticipantId?: ParticipantId;
   /** The viewer's chosen colour; `null`/absent (profile loading or errored) uses their default colour. */
   viewerColor?: HumanColorId | null;
+  /** A human's colours in this channel (#1308), from their own member event, by owner id. */
+  channelColors?: (ownerId: string) => ChannelColors | null;
+  /** Saves the viewer's own colours in this channel; without it the roster has no Colours button. */
+  onSetChannelColors?: (colors: ChannelColors) => Promise<'sent' | 'failed'>;
   /** Other humans in member order. */
   humanParticipants?: readonly Readonly<{ participantId: ParticipantId; displayName: string; ownerId?: OwnerId }>[];
   currentNames?: ReadonlyMap<ParticipantId, string>;
@@ -164,24 +170,38 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
   humanParticipants, currentNames, renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
-  renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1 }: ChannelScreenProps) {
+  renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
+  onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
-  const humanColors = useMemo(() => {
+  const { humanColors, variants, takenColors } = useMemo(() => {
     const viewerOwner = viewerOwnerId ?? '';
+    // A colour the human chose for this channel (#1308) outranks their profile colour.
     const humans = (humanParticipants ?? []).map(human => ({ ownerId: human.ownerId ?? human.participantId,
-      color: humanColorOf(describeParticipant?.(human.participantId)) }));
+      color: channelColors?.(human.ownerId ?? human.participantId)?.color ?? humanColorOf(describeParticipant?.(human.participantId)) }));
     const humanOwners = new Set(humans.map(human => human.ownerId));
     const agentOwners = view.agents.flatMap(agent => agent.ownerId && !humanOwners.has(agent.ownerId)
       ? [{ ownerId: agent.ownerId, color: ownerColorOf(describeParticipant?.(agent.participantId)) }] : []);
-    return resolveHumanColors({ viewer: { ownerId: viewerOwner, color: viewerColor ?? defaultHumanColor(viewerOwner) },
-      others: [...humans, ...agentOwners] });
-  }, [describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);
+    const owners = resolveHumanColors({ viewer: { ownerId: viewerOwner,
+      color: channelColors?.(viewerOwner)?.color ?? viewerColor ?? defaultHumanColor(viewerOwner) }, others: [...humans, ...agentOwners] });
+    // Each agent's variant of its owner's colour, keyed by participant id beside the owners.
+    const owned = view.agents.flatMap(agent => agent.ownerId ? [{ participantId: agent.participantId, ownerId: agent.ownerId,
+      matrixUserId: describeParticipant?.(agent.participantId)?.matrixUserId }] : []);
+    const variants = assignAgentVariants(owned, ownerId => channelColors?.(ownerId));
+    return {
+      humanColors: new Map<string, ResolvedHumanColor>([...owners, ...owned.map(agent => [agent.participantId,
+        variantColor(owners.get(agent.ownerId) ?? resolvedColor(defaultHumanColor(agent.ownerId), 0), variants.get(agent.participantId) ?? 0)] as const)]),
+      variants,
+      // Other humans' chosen colours here, which the viewer's channel colour picker disables.
+      takenColors: new Set(humans.map(human => human.color ?? defaultHumanColor(human.ownerId))),
+    };
+  }, [channelColors, describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
       ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}), initials: viewerInitials },
     humans: humanParticipants ?? [], agents: view.agents, currentNames, describeParticipant,
     colorFor: ownerId => humanColors.get(ownerId) ?? resolvedColor(defaultHumanColor(ownerId), 0),
+    agentColorFor: participantId => humanColors.get(participantId),
   }), [describeParticipant, currentNames, humanColors, humanParticipants, view.agents, viewerEmail, viewerInitials, viewerName, viewerOwnerId,
     viewerParticipantId]);
 
@@ -302,7 +322,14 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
         onScroll={event => { const list = event.currentTarget; setMore(list.scrollHeight - list.scrollTop - list.clientHeight >= 4); }}>
         <ChannelRoster creatorOwnerId={creatorOwnerId} onRemoveHuman={onRemoveHuman} members={members} phase={view.phase} onOpen={openFromRoster}
           {...(renameAgent ? { onRename: renameFromRoster } : {})}
-          {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})} />
+          {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})}
+          {...(onSetChannelColors && viewerOwnerId ? { renderColors: () => <ChannelColorsPicker save={onSetChannelColors}
+            channelColor={channelColors?.(viewerOwnerId)?.color} profileColor={viewerColor ?? defaultHumanColor(viewerOwnerId)}
+            taken={takenColors} agents={members.agents.flatMap(agent => {
+              const matrixUserId = agent.isViewerOwned ? describeParticipant?.(agent.participantId)?.matrixUserId : undefined;
+              const variant = variants.get(agent.participantId);
+              return matrixUserId && variant !== undefined ? [{ participantId: agent.participantId, matrixUserId, name: agent.name, variant }] : [];
+            })} /> } : {})} />
       </div>
     </div>
     <div className="kh-channel-thread" onPointerDown={() => { if (rosterOpen) closeRoster(false); }}>

@@ -9,7 +9,7 @@ import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/n
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
 import { harnessDisplayName, harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, AsyncIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
+import { AgentIcon, AsyncIcon, PaletteIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
@@ -116,6 +116,7 @@ export function MemberAvatar({ member, interactive = false, onClick, showStatus 
       swatch={colorSwatch(member.color)} tier={member.color?.tier} {...shared} />;
   }
   return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue} ownerSwatch={colorSwatch(member.ownerColor)}
+    swatch={colorSwatch(member.color)}
     ownerInitials={member.ownerInitials} logo={member.harness ? harnessLogo(member.harness) : null}
     initials={initials(member.name)} status={showStatus ? statusDot(member.agent.connection) : undefined} {...shared} />;
 }
@@ -286,13 +287,14 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   </div>;
 }
 
-function AddAgent({ renderAddAgent }: Readonly<{ renderAddAgent: () => ReactNode }>) {
+/** A viewer-row button that opens `render` in a popover: Add agent, Colours. */
+function RowPopover({ label, icon, render }: Readonly<{ label: string; icon: ReactNode; render: () => ReactNode }>) {
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   return <span className="kh-racts">
-    <button ref={anchor} type="button" className="kh-ib sm" data-tip="Add agent" aria-label="Add agent" aria-expanded={open}
-      onClick={() => setOpen(current => !current)}><AgentIcon /></button>
-    <Popover anchor={anchor} open={open} onClose={() => setOpen(false)}>{renderAddAgent()}</Popover>
+    <button ref={anchor} type="button" className="kh-ib sm" data-tip={label} aria-label={label} aria-expanded={open}
+      onClick={() => setOpen(current => !current)}>{icon}</button>
+    <Popover anchor={anchor} open={open} onClose={() => setOpen(false)}>{render()}</Popover>
   </span>;
 }
 
@@ -340,6 +342,8 @@ export type ChannelRosterProps = Readonly<{
   onRename?: ((participantId: string) => void) | undefined;
   /** The Add agent popover body on the viewer's row. */
   renderAddAgent?: (() => ReactNode) | undefined;
+  /** The Colours popover body on the viewer's row (#1308). */
+  renderColors?: (() => ReactNode) | undefined;
   /** An agent's reported listening mode; `sync` when absent. */
   modeFor?: ((participantId: string) => ListeningMode) | undefined;
   /** Makes the viewer's agents' mode controls live. */
@@ -347,7 +351,7 @@ export type ChannelRosterProps = Readonly<{
 }>;
 
 /** The roster tree: one group per human, each with the agents it owns. */
-export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, modeFor, onSetMode, creatorOwnerId, onRemoveHuman }: ChannelRosterProps) {
+export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, renderColors, modeFor, onSetMode, creatorOwnerId, onRemoveHuman }: ChannelRosterProps) {
   const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
   const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
   return <>
@@ -369,7 +373,8 @@ export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent
           </div>}
           {human && creatorOwnerId === members.viewer.ownerId && human.ownerId !== creatorOwnerId && onRemoveHuman
             ? <RemoveHuman human={human} agents={agents} remove={onRemoveHuman} /> : null}
-          {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
+          {human?.isViewer && renderColors ? <RowPopover label="Colors in this channel" icon={<PaletteIcon />} render={renderColors} /> : null}
+          {human?.isViewer && renderAddAgent ? <RowPopover label="Add agent" icon={<AgentIcon />} render={renderAddAgent} /> : null}
         </div>
         {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent}
           mode={modeFor?.(agent.participantId) ?? 'sync'} onOpen={onOpen} onRename={onRename} onSetMode={onSetMode} />)}</div> : null}

@@ -5,7 +5,7 @@
 // colour, then to a vivid (tier 1) and a muted (tier 2) variant.
 
 import { createContext, createElement, useCallback, useContext, type CSSProperties, type ReactNode } from 'react';
-import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
+import { AGENT_VARIANT_COUNT, HUMAN_COLOR_IDS, defaultHumanColor, type ChannelColors, type HumanColorId } from '@khala/contracts/m1/colors';
 import type { Participant } from '@khala/contracts/m1/participants';
 
 export type HumanColorTier = 0 | 1 | 2;
@@ -114,6 +114,98 @@ function freeSlot(preferred: HumanColorId, taken: ReadonlySet<string>): { id: Hu
   return null;
 }
 
+// Agent variants (#1308): variant 0 is the human's own colour; each agent takes
+// another. Candidates are [hue offset in degrees, fraction of the lightest
+// lightness that keeps white text >= 4.5:1], tried in order; one is kept only
+// if it is clearly apart from every colour already kept.
+const VARIANT_CANDIDATES: readonly (readonly [number, number])[] = [
+  [0, 0.75], [20, 1], [-20, 1], [0, 0.55], [20, 0.75], [-20, 0.75], [40, 1], [-40, 1], [20, 0.55], [-20, 0.55],
+  [40, 0.75], [-40, 0.75], [0, 1], [40, 0.55], [-40, 0.55], [60, 1], [-60, 1]];
+/** Minimum summed RGB channel distance between two variants of one human. */
+const VARIANT_MIN_DISTANCE = 30;
+
+const channel = (value: number) => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const rgbOf = (hex: string) => [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16));
+/** WCAG contrast of white text on `hex`. */
+function whiteContrast(hex: string): number {
+  const [r, g, b] = rgbOf(hex).map(channel);
+  return 1.05 / (0.2126 * r! + 0.7152 * g! + 0.0722 * b! + 0.05);
+}
+function toHsl(hex: string): [number, number, number] {
+  const [r, g, b] = rgbOf(hex).map(value => value / 255) as [number, number, number];
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (d === 0) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s, l];
+}
+function toHex(h: number, s: number, l: number): string {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => { const k = (n + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return `#${[f(0), f(8), f(4)].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+const distance = (a: string, b: string) => { const right = rgbOf(b); return rgbOf(a).reduce((sum, value, index) => sum + Math.abs(value - right[index]!), 0); };
+
+const variantCache = new Map<string, readonly ResolvedHumanColor[]>();
+/** `color`'s AGENT_VARIANT_COUNT variants, `color` itself first. */
+export function colorVariants(color: ResolvedHumanColor): readonly ResolvedHumanColor[] {
+  const key = `${color.id}@${color.tier}`;
+  const cached = variantCache.get(key);
+  if (cached) return cached;
+  const [h, s] = toHsl(color.tint);
+  const variants: ResolvedHumanColor[] = [color];
+  for (const [offset, fraction] of VARIANT_CANDIDATES) {
+    if (variants.length === AGENT_VARIANT_COUNT) break;
+    const hue = (h + offset + 360) % 360, saturation = Math.max(s, 0.5);
+    let ceiling = 0.9;
+    while (whiteContrast(toHex(hue, saturation, ceiling)) < 4.5) ceiling -= 0.01;
+    const tint = toHex(hue, saturation, ceiling * fraction);
+    if (variants.every(kept => distance(kept.tint, tint) >= VARIANT_MIN_DISTANCE)) {
+      variants.push({ ...color, hue: Math.round((color.hue + offset + 360) % 360), tint });
+    }
+  }
+  variantCache.set(key, variants);
+  return variants;
+}
+
+/** `color`'s agent variant `index` (0 is `color`). */
+export const variantColor = (color: ResolvedHumanColor, index: number): ResolvedHumanColor => colorVariants(color)[index] ?? color;
+
+export type ColoredAgent = Readonly<{ participantId: string; ownerId: string; matrixUserId?: string | undefined }>;
+
+/**
+ * Each agent's variant index, the same on every client: a stored index its
+ * owner chose (`channelColors(ownerId).agents[matrixUserId]`) wins when no
+ * sibling holds it; the rest, by participant id, take the lowest free index.
+ * Only the owner's own record counts, so no one can recolour another's agent.
+ */
+export function assignAgentVariants(agents: readonly ColoredAgent[],
+  channelColors: (ownerId: string) => ChannelColors | null | undefined): ReadonlyMap<string, number> {
+  const byOwner = new Map<string, ColoredAgent[]>();
+  for (const agent of agents) byOwner.set(agent.ownerId, [...byOwner.get(agent.ownerId) ?? [], agent]);
+  const result = new Map<string, number>();
+  for (const [ownerId, owned] of byOwner) {
+    const sorted = [...owned].sort((a, b) => a.participantId < b.participantId ? -1 : a.participantId > b.participantId ? 1 : 0);
+    const stored = channelColors(ownerId)?.agents ?? {};
+    const used = new Set<number>([0]);
+    let overflow = 0;
+    for (const agent of sorted) {
+      const index = agent.matrixUserId === undefined ? undefined : stored[agent.matrixUserId];
+      if (index !== undefined && !used.has(index)) { used.add(index); result.set(agent.participantId, index); }
+    }
+    for (const agent of sorted) {
+      if (result.has(agent.participantId)) continue;
+      let index = 1;
+      while (used.has(index) && index < AGENT_VARIANT_COUNT) index++;
+      // ponytail: past AGENT_VARIANT_COUNT-1 agents per human, variants repeat; add steps if that happens.
+      if (index >= AGENT_VARIANT_COUNT) index = 1 + overflow++ % (AGENT_VARIANT_COUNT - 1);
+      used.add(index);
+      result.set(agent.participantId, index);
+    }
+  }
+  return result;
+}
+
 /** A human participant's chosen colour; absent from responses older than the colour field. */
 export const humanColorOf = (detail: Participant | undefined): HumanColorId | undefined =>
   detail?.kind === 'human' ? detail.color : undefined;
@@ -146,12 +238,13 @@ export function HumanColorsProvider({ value, children }: Readonly<{ value: Reado
 }
 
 /**
- * A lookup into the nearest `HumanColorsProvider`. An owner it does not know
+ * A lookup into the nearest `HumanColorsProvider`, by agent participant id (its
+ * variant) first when given, then owner id. An owner it does not know
  * (e.g. a human who has left but is still in the timeline), or any owner
  * outside a provider, gets `fallback` (else their default colour) at tier 0.
  */
-export function useHumanColor(): (ownerId: string, fallback?: HumanColorId) => ResolvedHumanColor {
+export function useHumanColor(): (ownerId: string, fallback?: HumanColorId, agentId?: string) => ResolvedHumanColor {
   const colors = useContext(HumanColors);
-  return useCallback((ownerId: string, fallback?: HumanColorId) =>
-    colors?.get(ownerId) ?? resolvedColor(fallback ?? defaultHumanColor(ownerId), 0), [colors]);
+  return useCallback((ownerId: string, fallback?: HumanColorId, agentId?: string) =>
+    (agentId === undefined ? undefined : colors?.get(agentId)) ?? colors?.get(ownerId) ?? resolvedColor(fallback ?? defaultHumanColor(ownerId), 0), [colors]);
 }

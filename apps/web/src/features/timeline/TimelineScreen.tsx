@@ -198,7 +198,9 @@ type Identity = Readonly<{
   idBadge: string | undefined;
   ownerLabel: string | null;
   ownerHue: number;
-  /** As the viewer sees them: a human's own colour, an agent's owner's colour; `null` for an unknown participant. */
+  /** The owner's swatch, for an agent's owner badge. */
+  ownerSwatch: string | undefined;
+  /** As the viewer sees them: a human's own colour, an agent's variant of its owner's colour (#1308); `null` for an unknown participant. */
   color: ResolvedHumanColor | null;
   harness: Extract<Participant, { kind: 'agent' }>['harness'] | undefined;
   isViewerOwned: boolean;
@@ -560,8 +562,9 @@ export function TimelineScreen({
     const detail = describeParticipant?.(participant.participantId);
     const isViewerOwned = participant.ownerId === viewer.ownerId;
     // The human's colour as this viewer sees it (operator request 2026-10-02: per-human colours); for an agent, its owner's.
-    const color = colorFor(participant.ownerId, participant.kind === 'agent' ? ownerColorOf(detail) : humanColorOf(detail));
-    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: color.hue, isViewerOwned,
+    const ownerColor = colorFor(participant.ownerId, participant.kind === 'agent' ? ownerColorOf(detail) : humanColorOf(detail));
+    const color = participant.kind === 'agent' ? colorFor(participant.ownerId, ownerColorOf(detail), participant.participantId) : ownerColor;
+    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: ownerColor.hue, ownerSwatch: ownerColor.tint, isViewerOwned,
       chosenInitials: participant.kind === 'human' ? chosenInitialsOf(participant) : null,
       ownerChosenInitials: detail?.kind === 'agent' ? detail.ownerInitials ?? null : null };
     if (detail?.kind === 'unknown') {
@@ -601,7 +604,7 @@ export function TimelineScreen({
       return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={humanInitials(identity.label, identity.chosenInitials)} ghost={ghost}
         swatch={colorSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
     }
-    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={colorSwatch(identity.color)}
+    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={identity.ownerSwatch} swatch={colorSwatch(identity.color)}
       ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}
       initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
   }
@@ -615,7 +618,8 @@ export function TimelineScreen({
     return [{
       id: identity.participantId, kind: identity.kind, label, display: identity.idBadge ? `${label} ${identity.idBadge}` : label,
       hue: identity.hue, ownerHue: identity.kind === 'agent' ? identity.ownerHue : identity.hue,
-      ...(identity.color ? { swatch: identity.color.tint } : {}),
+      // An agent chip's swatch fills its owner badge.
+      ...(identity.kind === 'agent' ? identity.ownerSwatch ? { swatch: identity.ownerSwatch } : {} : identity.color ? { swatch: identity.color.tint } : {}),
       ownerInitials: ownerBadge(identity),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
     }];
@@ -688,7 +692,7 @@ export function TimelineScreen({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
       render: run => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
-        {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.ownerHue, tint: identity.color?.tint } }
+        {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.hue, tint: identity.color?.tint } }
           : { humanColor: identity.color })}
         time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"

@@ -32,3 +32,25 @@ export function decodeHumanColorRecord(input: unknown): Decoded<HumanColorRecord
       color: readHumanColorId(r.field('color'), r.at('color')) };
   });
 }
+
+/**
+ * A human's colours in one channel, in their own `m.room.member` content (only
+ * that member can send it): an optional channel colour that overrides their
+ * profile colour there, and a variant index per agent Matrix user id. Clients
+ * honour an agent entry only for an agent that human owns.
+ */
+export const CHANNEL_COLORS_MEMBER_KEY = 'com.khala.colors' as const;
+/** Variant 0 is the human's own colour; agents take 1..AGENT_VARIANT_COUNT-1. */
+export const AGENT_VARIANT_COUNT = 9;
+export type ChannelColors = Readonly<{ color?: HumanColorId; agents: Readonly<Record<string, number>> }>;
+export const isAgentVariant = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) >= 1 && (value as number) < AGENT_VARIANT_COUNT;
+/** The colours in a member event's content; invalid parts are dropped, `null` when absent. */
+export function memberChannelColors(content: unknown): ChannelColors | null {
+  const raw = typeof content === 'object' && content !== null ? (content as Record<string, unknown>)[CHANNEL_COLORS_MEMBER_KEY] : undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const { color, agents } = raw as Record<string, unknown>;
+  const entries = typeof agents === 'object' && agents !== null && !Array.isArray(agents)
+    ? Object.entries(agents).filter(([userId, index]) => userId.startsWith('@') && isAgentVariant(index)) : [];
+  return { ...(isHumanColorId(color) ? { color } : {}), agents: Object.fromEntries(entries) as Record<string, number> };
+}

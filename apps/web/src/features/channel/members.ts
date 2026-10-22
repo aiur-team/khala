@@ -37,6 +37,8 @@ export type AgentMember = Readonly<{
   ownerHue: number;
   /** The colour the viewer sees the owner in; `null` without `MemberInput.colorFor`. */
   ownerColor: ResolvedHumanColor | null;
+  /** The agent's own colour, a variant of its owner's (#1308); `null` without `MemberInput.agentColorFor`. */
+  color: ResolvedHumanColor | null;
   ownerName: string;
   ownerInitials: string;
   harness: HarnessId | null;
@@ -67,11 +69,13 @@ export type MemberInput = Readonly<{
   describeParticipant?: ((participantId: string) => Participant | undefined) | undefined;
   /** The channel's per-viewer human colours (`resolveHumanColors`); without it, hues hash as before. */
   colorFor?: ((ownerId: string) => ResolvedHumanColor) | undefined;
+  /** An agent's own colour (`variantColor`), by participant id. */
+  agentColorFor?: ((participantId: string) => ResolvedHumanColor | undefined) | undefined;
 }>;
 
 const firstName = (name: string) => name.trim().split(/\s+/u)[0] ?? name;
 
-export function resolveMembers({ viewer, humans, agents, currentNames, describeParticipant, colorFor }: MemberInput): ChannelMembers {
+export function resolveMembers({ viewer, humans, agents, currentNames, describeParticipant, colorFor, agentColorFor }: MemberInput): ChannelMembers {
   const emailOf = (participantId: string | undefined): string | null => {
     const detail = participantId === undefined ? undefined : describeParticipant?.(participantId);
     return detail?.kind === 'human' ? detail.email ?? null : null;
@@ -121,12 +125,13 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     const ownerId = agent.ownerId ?? null;
     const name = baseNames[index]!;
     const ownerColor = colorFor?.(ownerId ?? agent.participantId) ?? null;
-    // An agent wears its owner's colour (operator request 2026-10-04): name, avatar and bubble all match the owner.
+    // An agent wears a variant of its owner's colour (#1308; the owner's own before that, operator request 2026-10-04).
     const ownerHue = ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId });
+    const color = agentColorFor?.(agent.participantId) ?? ownerColor;
     return {
       kind: 'agent', participantId: agent.participantId, ownerId, name,
       idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
-      hue: ownerHue, ownerHue, ownerColor,
+      hue: color?.hue ?? ownerHue, ownerHue, ownerColor, color,
       // Own-agent badges use the agent name until the viewer chooses initials.
       // Another owner's member initials already carry their choice.
       ownerName, ownerInitials: owner?.isViewer ? viewer.initials ?? initials(name) : described?.ownerInitials ?? owner?.initials ?? initials(ownerName), harness: described?.harness ?? null,

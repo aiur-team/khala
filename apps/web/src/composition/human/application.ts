@@ -1,3 +1,4 @@
+import type { ChannelColors } from '@khala/contracts/m1/colors';
 import type { AgentNamesPort, ChannelNamesPort, MemberPresence } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
@@ -38,6 +39,10 @@ export interface HumanApplicationPorts {
   readonly channelNames?: ChannelNamesPort;
   /** When `matrixUserId` took its current name in `roomId` (its latest membership event), if known. */
   readonly memberSince?: (roomId: RoomId, matrixUserId: string) => number | null;
+  /** A member's colours in one channel (#1308), from their own member event; `null` when unset. */
+  readonly channelColors?: (roomId: RoomId, matrixUserId: string) => ChannelColors | null;
+  /** Sets the viewer's own colours in one channel. */
+  readonly setChannelColors?: (roomId: RoomId, colors: ChannelColors) => Promise<'sent' | 'failed'>;
   /** Hosted Matrix presence; absent (local) or `null` (not yet known) hides the roster dot. */
   readonly presence?: (matrixUserId: string) => MemberPresence | null;
   /** Whether `matrixUserId` has read a loaded event in `roomId`. */

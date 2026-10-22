@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, memberSince, readChannelColors, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -392,6 +392,34 @@ describe('setOwnChannelName', () => {
   it('reports unavailable when the homeserver refuses', async () => {
     const sdk = client(); sdk.sendStateEvent.mockRejectedValue(new Error('M_FORBIDDEN'));
     expect(await setOwnChannelName(sdk as unknown as MatrixClient, '!r', 'alice2')).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+});
+
+describe('setOwnChannelColors (#1308)', () => {
+  const me = '@me:hs';
+  function client(content: Record<string, unknown> | null = { membership: 'join', displayname: 'alice', 'com.khala.listening_mode': 'sync' }) {
+    return {
+      getUserId: () => me,
+      getRoom: vi.fn(() => ({ currentState: { getStateEvents: (type: string, key: string) => type === EventType.RoomMember && key === me && content
+        ? { getContent: () => content } : null } } as unknown as Room)),
+      sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
+    };
+  }
+  it('writes the viewer\'s own member event, keeping its other content, and reads it back', async () => {
+    const sdk = client();
+    expect(await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'teal', agents: { '@a:hs': 2 } })).toBe('sent');
+    expect(sdk.sendStateEvent).toHaveBeenCalledExactlyOnceWith('!r', EventType.RoomMember, { membership: 'join', displayname: 'alice',
+      'com.khala.listening_mode': 'sync', 'com.khala.colors': { color: 'teal', agents: { '@a:hs': 2 } } }, me);
+    const saved = client({ membership: 'join', 'com.khala.colors': { agents: { '@a:hs': 4 } } });
+    expect(readChannelColors(saved as unknown as MatrixClient, '!r', me)).toEqual({ agents: { '@a:hs': 4 } });
+  });
+  it('drops invalid parts and refuses when not joined', async () => {
+    const sdk = client();
+    await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'nope' as never, agents: { '@a:hs': 0 } });
+    expect(sdk.sendStateEvent.mock.calls[0]![2]).toMatchObject({ 'com.khala.colors': { agents: {} } });
+    const left = client({ membership: 'leave' });
+    expect(await setOwnChannelColors(left as unknown as MatrixClient, '!r', { agents: {} })).toBe('failed');
+    expect(left.sendStateEvent).not.toHaveBeenCalled();
   });
 });
 
