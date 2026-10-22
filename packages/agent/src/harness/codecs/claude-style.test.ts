@@ -38,3 +38,10 @@ it('renders Claude Stop as additionalContext only for a verified Claude version'
   expect(claudeCodec.render('tool', 'frame')).toBe(codec.render('tool', 'frame'));
   expect(codec.stopContextFloor).toBeUndefined();
 });
+it('parses a usage-limited StopFailure and ignores transient API failures', () => {
+  const failure = (error: string) => codec.parse(JSON.stringify({ session_id: 's', hook_event_name: 'StopFailure', error }));
+  expect(failure('rate_limit')).toMatchObject({ sessionId: 's', event: 'limit' });
+  expect(failure('billing_error')).toMatchObject({ event: 'limit' });
+  expect(failure('overloaded')).toBeNull();
+  expect(failure('server_error')).toBeNull();
+});

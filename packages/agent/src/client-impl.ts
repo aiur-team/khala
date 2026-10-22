@@ -11,6 +11,7 @@ import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
+import { usageLimited } from './activity';
 import { appendInbox, readCursor, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
@@ -78,10 +79,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     if (heartbeatTimer || closed) return;
     heartbeatTimer = setInterval(() => {
       heartbeatTask = heartbeatTask.catch(() => {}).then(async () => {
+        // A usage limit keeps this process and its sync alive, so presence alone would still say online.
+        const away = await usageLimited(dir).catch(() => false) ? 'usage limit' : undefined;
         for (const attempt of channels.values()) {
           if (current(attempt) && ['connected', 'send_failed'].includes(attempt.status.state)) {
             await setStatus(attempt, attempt.status.state, attempt.status.detail);
             await markDelivered(attempt);
+            attempt.session?.setAway?.(away);
           }
         }
       });

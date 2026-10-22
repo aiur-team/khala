@@ -8,7 +8,7 @@ import { hookMapSource } from './session-sources';
 import type { DeliverCodec } from './adapter';
 import { openSessionDir, type SessionFiles } from '../state';
 import { appendEntries, readCursor } from '../inbox';
-import { readActivity, writeActivity } from '../activity';
+import { readActivity, writeActivity, usageLimited } from '../activity';
 import { STOP_NUDGE } from './adapter';
 
 let root: string, files: SessionFiles, io: HookIO;
@@ -251,4 +251,23 @@ it('delivers Sync on an idle Claude Monitor mention and at the next idle user pr
     expect((await readActivity(active)).state).toBe('busy');
   }
   expect((await readCursor(active)).deliveredCount).toBe(2);
+});
+it('records a usage limit without delivering, and clears it on the next working turn', async () => {
+  const hook = (name: string, extra = {}) => deliverCore(JSON.stringify({ session_id: 'session', hook_event_name: name, ...extra }), adapterFor('claude')!, io);
+  files = await openSessionDir('claude', 'session', { XDG_STATE_HOME: root });
+  await appendEntries(files, [{ eventId: '$m', roomId: '!room', ts: instant.toISOString(),
+    sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'are you there?' }]);
+  await hook('StopFailure', { error: 'rate_limit' });
+  expect(stdout).toBe('');
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+  expect(await usageLimited(files.dir)).toBe(true);
+  // A retried prompt may hit the limit again, so only a tool call or Stop clears it.
+  await hook('UserPromptSubmit');
+  expect(await usageLimited(files.dir)).toBe(true);
+  await hook('PostToolUse');
+  expect(await usageLimited(files.dir)).toBe(false);
+  await hook('StopFailure', { error: 'rate_limit' });
+  await hook('Stop', { stop_hook_active: true });
+  expect(await usageLimited(files.dir)).toBe(false);
+  expect(stderr).toBe('');
 });
