@@ -89,6 +89,17 @@ it('returns promptly, persists private join state and coalesces simultaneous req
   expect((await fs.stat(joinFilePath(filesForDir(dir), stateKey(link)))).mode & 0o777).toBe(0o600);
   expect(await statusFile()).toEqual({ state: 'joining', updatedAt: now().toISOString() });
 });
+it('reports confirmed_syncing after the human confirms, until connected (Aiur #5)', async () => {
+  const invite = deferred<void>();
+  session.waitForInvite = vi.fn(() => invite.promise);
+  await client.join(link, 'Codex');
+  expect(await client.status()).not.toHaveProperty('detail');
+  poll.resolve(credentials);
+  await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'joining', detail: 'confirmed_syncing' }));
+  invite.resolve();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(await client.status()).not.toHaveProperty('detail');
+});
 it('runs the handshake in order and exposes a connected client', async () => {
   await connected();
   expect(await client.status()).toMatchObject({ state: 'connected', channelName: 'Release room', agentUserId: credentials.userId, unread: 0, listeningMode: 'sync' });

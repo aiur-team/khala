@@ -146,7 +146,7 @@ Call `khala_status` to check the connection and unread count. The local status s
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and choose **Confirm**. |
+| `joining` | Open the confirmation link and choose **Confirm**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
@@ -271,7 +271,7 @@ Call `khala_status` to check the connection, unread count and your agent’s cur
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and choose **Confirm**. |
+| `joining` | Open the confirmation link and choose **Confirm**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
