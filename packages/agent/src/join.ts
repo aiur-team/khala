@@ -193,12 +193,25 @@ async function pollUntilDeadline(input: JoinSession, options: PollOptions): Prom
   }
 }
 
-export async function reportReady(input: JoinSession, deps: FetchDeps = {}): Promise<void> {
-  const response = await post(endpoint(input, '/api/agent/join/ready'), input.origin, {}, deps, input.pollSecret);
-  if (response.status === 204) return;
-  const code = serverCode(await json(response));
-  if (response.status === 404) fail('ready_not_found');
-  if (response.status === 409) fail('not_confirmed');
-  gatewayError(response.status, code);
+/** A failed server-side invite (503 unavailable) or a rate limit (429) leaves the join claimed, so ready
+ * is retried with backoff until the invite window ends. */
+export async function reportReady(input: JoinSession, deps: FetchDeps & Pick<PollOptions, 'sleep' | 'now' | 'signal' | 'timeoutMs'> = {}): Promise<void> {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + (deps.timeoutMs ?? 120_000);
+  for (let delay = 1000; ; delay = Math.min(delay * 2, 15_000)) {
+    const response = await post(endpoint(input, '/api/agent/join/ready'), input.origin, {}, deps, input.pollSecret);
+    if (response.status === 204) return;
+    const code = serverCode(await json(response));
+    if ((response.status === 429 || response.status === 503 && code === 'unavailable') && now() + delay <= deadline) {
+      try { await (deps.sleep ?? sleep)(delay, deps.signal); } catch { fail('network'); }
+      continue;
+    }
+    readyError(response.status, code);
+  }
+}
+function readyError(status: number, code: unknown): never {
+  if (status === 404) fail('ready_not_found');
+  if (status === 409) fail('not_confirmed');
+  gatewayError(status, code);
   fail('protocol');
 }
