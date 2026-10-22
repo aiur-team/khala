@@ -1,4 +1,4 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
 const events = { SessionStart: 'start', UserPromptSubmit: 'prompt', PostToolUse: 'tool', Stop: 'stop' } as const;
 const names = { prompt: 'UserPromptSubmit', tool: 'PostToolUse', stop: 'Stop' } as const;
@@ -24,12 +24,13 @@ export const claudeStyleCodec: DeliverCodec = {
   noop: () => '',
   render(kind, frame, stopContext = false) {
     return JSON.stringify(kind === 'stop' && !stopContext
-      ? { decision: 'block', reason: frame }
+      ? { decision: 'block', reason: STOP_NUDGE }
       : { hookSpecificOutput: { hookEventName: names[kind], additionalContext: frame } }) + '\n';
   },
 };
 
 /** Claude shows a Stop block reason twice (as a user turn and as a system note). Stop additionalContext
  * arrives once and the turn continues, but that is verified only from this version (live, 2.1.307);
- * older or unknown versions keep the documented decision:block, which is always shown. */
+ * older or unknown versions keep the documented decision:block, which is always shown. A block reason is a
+ * user turn, so it carries only STOP_NUDGE. */
 export const claudeCodec: DeliverCodec = { ...claudeStyleCodec, stopContextFloor: '2.1.307' };

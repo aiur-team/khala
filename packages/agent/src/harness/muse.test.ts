@@ -8,6 +8,7 @@ import { deliver } from '../../hooks/deliver';
 import { deliverCore } from './deliver-core';
 import { resolveSources, recordHookSession } from './session-sources';
 import { openSessionDir, writeStatus } from '../state';
+import { STOP_NUDGE } from './adapter';
 
 const fixtures = new URL('../../../../docs/build/multi-harness/spikes/muse-fixtures/hooks/', import.meta.url);
 it('reuses the codec for all captured Muse hooks, with nested context and continuation protection', async () => {
@@ -17,7 +18,7 @@ it('reuses the codec for all captured Muse hooks, with nested context and contin
     expect(muse.codec!.parse(text)).toMatchObject({ sessionId: input.session_id, continuation: input.stop_hook_active === true });
   }
   expect(JSON.parse(muse.codec!.render('tool', 'frame'))).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'frame' } });
-  expect(JSON.parse(muse.codec!.render('stop', 'frame'))).toEqual({ decision: 'block', reason: 'frame' });
+  expect(JSON.parse(muse.codec!.render('stop', 'frame'))).toEqual({ decision: 'block', reason: STOP_NUDGE });
   expect(harnessInfo('muse')).toMatchObject({ steer: true, sync: true, idleWake: 'default' });
   expect(muse.wakeLadder?.map(driver => driver.id)).toEqual(['monitor']);
 });

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { copilotCodec, createCopilotCodec } from './copilot';
+import { STOP_NUDGE } from '../adapter';
 
 it.each(['sessionStart', 'userPromptSubmitted', 'postToolUse', 'agentStop'])('parses camelCase %s with argv event', event => {
   expect(createCopilotCodec(event).parse(JSON.stringify({ sessionId: 'session', cwd: '/work', prompt: 'hello' })))
@@ -17,5 +18,5 @@ it('always emits JSON with Copilot delivery frames', () => {
   expect(copilotCodec.noop()).toBe('{}\n');
   expect(copilotCodec.render('prompt', 'frame')).toBe('{}\n');
   expect(JSON.parse(copilotCodec.render('tool', 'frame'))).toEqual({ additionalContext: 'frame' });
-  expect(JSON.parse(copilotCodec.render('stop', 'frame'))).toEqual({ decision: 'block', reason: 'frame' });
+  expect(JSON.parse(copilotCodec.render('stop', 'frame'))).toEqual({ decision: 'block', reason: STOP_NUDGE });
 });

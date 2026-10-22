@@ -1,9 +1,11 @@
 import path from 'node:path';
+import { STOP_NUDGE } from '../../adapter';
 import { writeJsonAtomic } from '../../../state';
 import { createTerminalWakeDriver } from '../../../wake/terminal/driver';
 import type { FakeHarnessDriver } from '../driver';
 
 export const copilotDriver: FakeHarnessDriver = {
+  syncNudge: STOP_NUDGE,
   newSession: () => ({ id: 'conformance-session', mcpEnv: { COPILOT_AGENT_SESSION_ID: 'conformance-session' }, workspace: '/conformance/workspace' }),
   hookStdin: (event, session) => JSON.stringify({ sessionId: session.id,
     hookEventName: { prompt: 'userPromptSubmitted', tool: 'postToolUse', stop: 'agentStop' }[event],

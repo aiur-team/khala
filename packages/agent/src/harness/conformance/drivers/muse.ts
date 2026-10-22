@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
+import { STOP_NUDGE } from '../../adapter';
 import { watchSession, monitorArmed } from '../../../watch';
 import { listChannels } from '../../../channels';
 import { writeStatus, readStatus, type SessionFiles } from '../../../state';
@@ -12,6 +13,7 @@ const turn = 'conformance-monitor-run';
 
 export const museDriver: FakeHarnessDriver = {
   ...claudeStyleDriver('MUSE_SESSION_ID'),
+  syncNudge: STOP_NUDGE,
   newSession: () => ({ id: MUSE_FIXTURE_SESSION, mcpEnv: { MUSE_SESSION_ID: MUSE_FIXTURE_SESSION } }),
   wakeHook: session => JSON.stringify({ session_id: session.id, hook_event_name: 'Stop', turn_id: turn, stop_hook_active: false }),
   wakeProbe(adapter, env) {

@@ -8,6 +8,9 @@ import type { SessionSource } from './session-sources';
 import type { HookIO } from './deliver-core';
 export type { SessionSource } from './session-sources';
 
+/** Stop continuations become user turns in most harnesses, so they never carry channel content. */
+export const STOP_NUDGE = 'Khala: channel messages are waiting. Call khala_read.';
+
 /** Hook dialect parsing and stdout, separate from shared delivery state. */
 export type DeliverCodec = Readonly<{
   parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string; replay?: boolean; transcriptPath?: string } | null;

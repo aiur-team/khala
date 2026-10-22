@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { cursorCodec as codec, CURSOR_STOP_NUDGE } from './cursor';
+import { cursorCodec as codec } from './cursor';
+import { STOP_NUDGE } from '../adapter';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../../cursor';
 
 it.each([
@@ -9,7 +10,7 @@ it.each([
     .toEqual({ sessionId: cursorSessionId('/work/project'), workspace: '/work/project', event, continuation: false });
   expect(codec.noop(event)).toBe(JSON.stringify(noop) + '\n');
   expect(codec.render(event, 'frame')).toBe(JSON.stringify(event === 'prompt' ? noop
-    : event === 'tool' ? { additional_context: 'frame' } : { followup_message: CURSOR_STOP_NUDGE }) + '\n');
+    : event === 'tool' ? { additional_context: 'frame' } : { followup_message: STOP_NUDGE }) + '\n');
 });
 it.each([1, 2, 0.5, 0, -1, '1', null])('retains loop_count semantics for %s', loop_count => {
   expect(codec.parse(JSON.stringify({ hook_event_name: 'stop', loop_count }))?.continuation)

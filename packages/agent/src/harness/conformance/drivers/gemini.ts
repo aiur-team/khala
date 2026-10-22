@@ -1,10 +1,12 @@
 import path from 'node:path';
+import { STOP_NUDGE } from '../../adapter';
 import { writeJsonAtomic } from '../../../state';
 import { createTerminalWakeDriver } from '../../../wake/terminal/driver';
 import type { FakeHarnessDriver } from '../driver';
 
 export const geminiDriver: FakeHarnessDriver = {
   syncGuard: 'cursor',
+  syncNudge: STOP_NUDGE,
   newSession: () => ({ id: 'conformance-session', mcpEnv: { GEMINI_SESSION_ID: 'conformance-session' } }),
   hookStdin: (event, session) => JSON.stringify({ session_id: session.id,
     hook_event_name: { prompt: 'BeforeAgent', tool: 'AfterTool', stop: 'AfterAgent' }[event],

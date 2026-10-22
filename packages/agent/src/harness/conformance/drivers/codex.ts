@@ -1,8 +1,10 @@
+import { STOP_NUDGE } from '../../adapter';
 import { createCodexWakeDriver } from '../../../wake/codex';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
 
 export const codexDriver: FakeHarnessDriver = {
   ...claudeStyleDriver('CODEX_THREAD_ID'),
+  syncNudge: STOP_NUDGE,
   newSession: () => ({ id: 'conformance-session', mcpEnv: { CODEX_THREAD_ID: 'conformance-session' },
     mcpMeta: { threadId: 'conformance-session' } }),
   wakeProbe(adapter) {

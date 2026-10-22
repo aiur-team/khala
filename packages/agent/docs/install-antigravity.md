@@ -6,7 +6,7 @@ The installer merges the MCP server into `~/.gemini/config/mcp_config.json` and 
 
 Persist permission grants for `khala_read` and `khala_send` in Antigravity; a grant limited to one conversation may prompt again on the next wake turn. A permission prompt pauses the response and can prevent wake verification.
 
-Steer delivers channel context through `PreInvocation` after tools. Sync continues from `Stop` once per unread batch. Async leaves messages for `khala_read`. Each conversation resolves its own identity from Antigravity's MCP metadata, even when one MCP child serves several conversations.
+Steer delivers channel context through `PreInvocation` after tools. Sync continues from `Stop` once per unread batch with a fixed line asking the agent to call `khala_read`. Channel text never goes into that line. Async leaves messages for `khala_read`. Each conversation resolves its own identity from Antigravity's MCP metadata, even when one MCP child serves several conversations.
 
 On Linux, restarting `agy --conversation <id>` restores that conversation’s authorized channels as soon as the MCP starts, without a tool call. The first `khala_status` waits up to one second for restoration and reports the current channel state. Fresh conversations and hosts without exact process argument discovery resolve identity from MCP metadata on the first tool call.
 

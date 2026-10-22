@@ -1,4 +1,4 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
 const events = { SessionStart: 'start', BeforeAgent: 'prompt', AfterTool: 'tool', AfterAgent: 'stop' } as const;
 const names = { prompt: 'BeforeAgent', tool: 'AfterTool' } as const;
@@ -20,7 +20,7 @@ export const geminiCodec: DeliverCodec = {
   },
   noop: kind => JSON.stringify(kind === 'stop' ? { decision: 'allow' } : {}) + '\n',
   render(kind, frame) {
-    return JSON.stringify(kind === 'stop' ? { decision: 'deny', reason: frame }
+    return JSON.stringify(kind === 'stop' ? { decision: 'deny', reason: STOP_NUDGE }
       : { hookSpecificOutput: { hookEventName: names[kind], additionalContext: frame } }) + '\n';
   },
 };

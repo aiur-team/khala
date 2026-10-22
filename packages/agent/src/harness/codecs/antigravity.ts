@@ -1,4 +1,4 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
 /** Event names come from the installed command, not Antigravity's stdin. */
 export const antigravityCodec: DeliverCodec = {
@@ -18,6 +18,6 @@ export const antigravityCodec: DeliverCodec = {
     } catch { return null; }
   },
   noop: kind => JSON.stringify(kind === 'stop' ? { decision: 'stop' } : {}) + '\n',
-  render: (kind, frame) => JSON.stringify(kind === 'stop' ? { decision: 'continue', reason: frame }
+  render: (kind, frame) => JSON.stringify(kind === 'stop' ? { decision: 'continue', reason: STOP_NUDGE }
     : { injectSteps: [{ ephemeralMessage: frame }] }) + '\n',
 };

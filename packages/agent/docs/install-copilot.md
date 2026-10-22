@@ -6,7 +6,7 @@ and four delivery hooks to `~/.copilot/mcp-config.json` and
 `~/.copilot/hooks/khala.json`. It honours `COPILOT_HOME` and preserves other MCP
 servers and hooks. Exact originals are recorded in Khala’s state directory.
 
-Tool hooks deliver Steer messages; stop hooks continue the turn for Sync messages.
+Tool hooks deliver Steer messages; stop hooks continue the turn for Sync messages with a fixed line asking the agent to call `khala_read`. Channel text never goes into that line.
 Idle wake uses the consented terminal fallback in a supported terminal, only
 when the session is idle and its prompt is empty. Terminal wake becomes available
 after the first prompt following a channel join. Each wake starts a Copilot
