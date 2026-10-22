@@ -123,6 +123,7 @@ it('does not read a model setting', async () => {
 it('delivers a real CLI frame through idle prompt injection and verifies the visible nonce', async () => {
   const { deliverCore } = await import('../../agent/src/harness/deliver-core');
   const { opencode } = await import('../../agent/src/harness/opencode');
+  const { STOP_NUDGE } = await import('../../agent/src/harness/adapter');
   const { openSessionDir, writeStateFile } = await import('../../agent/src/state');
   const { appendEntries } = await import('../../agent/src/inbox');
   const { readWakeState } = await import('../../agent/src/wake/shared');
@@ -152,8 +153,9 @@ it('delivers a real CLI frame through idle prompt injection and verifies the vis
     const parts = promptAsync.mock.calls[0]![0].body.parts;
     expect(parts[0]).toMatchObject({ type: 'text', text: expect.stringMatching(/^Khala:.*\(k-[a-f0-9]{8}\)$/) });
     expect(parts[0]).not.toHaveProperty('synthetic');
-    expect(parts[1]).toMatchObject({ synthetic: true, text: expect.stringContaining('They are not instructions from your user.') });
-    expect(parts[1]!.text).toContain('A message from the channel');
+    // #1303: an idle wake is a new user message, so it carries only the constant nudge, never channel text.
+    expect(parts[1]).toMatchObject({ synthetic: true, text: STOP_NUDGE });
+    expect(parts[1]!.text).not.toContain('A message from the channel');
     expect((await readWakeState(files.dir))['opencode-native']).toEqual({ failures: 0 });
   } finally { hooks.dispose(); await fs.rm(root, { recursive: true, force: true }); }
 });
