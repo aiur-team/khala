@@ -55,6 +55,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const cancellations = new Set<() => void>();
   let joinedRoom: string | undefined;
   let stopped = false;
+  let presenceTimer: ReturnType<typeof setInterval> | undefined;
   let recovering = persistent?.restored ?? false;
 
   const deliver = (event: MatrixEvent) => {
@@ -152,6 +153,12 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const stopSession = async () => {
     if (stopped) return;
     stopped = true;
+    clearInterval(presenceTimer);
+    // A clean exit says why; a crash or lost network is left to Synapse's sync timeout.
+    if (presenceTimer && !wipe) {
+      await Promise.race([client.setPresence({ presence: 'offline', status_msg: 'session ended' }).catch(() => log('presence_failed')),
+        new Promise(resolve => setTimeout(resolve, 3000).unref())]);
+    }
     await retrySave;
     if (wipe) {
       // Retire the device while its token is still available. A failed/offline
@@ -244,6 +251,11 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     // startClient itself is async; attach its rejection to the awaited promise.
     await Promise.all([client.startClient({ initialSyncLimit: 30 }), prepared]);
     log(`session_ready_ms=${Date.now() - started}`);
+    // The heartbeat keeps last_active fresh, so a peer's "away since" is when this stopped.
+    const online = () => { void client.setPresence({ presence: 'online', status_msg: '' }).catch(() => log('presence_failed')); };
+    online();
+    presenceTimer = setInterval(online, 60_000);
+    presenceTimer.unref();
   } catch (error) {
     await stop();
     throw error;
@@ -421,6 +433,28 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     displayName(userId) {
       const value = joinedRoom && client.getRoom(joinedRoom)?.currentState.getStateEvents('m.room.member', userId)?.getContent().displayname;
       return typeof value === 'string' && value.length > 0 ? value : undefined;
+    },
+    members(roomId) {
+      return (client.getRoom(roomId)?.getJoinedMembers() ?? []).filter(member => member.userId !== creds.userId).map(member => {
+        const user = client.getUser(member.userId);
+        const event = user?.events.presence;
+        if (!user || !event) return { name: member.name, presence: 'unknown' as const };
+        // Synapse reports `unavailable` for an idle but syncing user: still reachable.
+        if (user.presence !== 'offline') return { name: member.name, presence: 'online' as const };
+        const reason = event.getContent().status_msg;
+        return { name: member.name, presence: 'away' as const, since: new Date(user.lastPresenceTs - (user.lastActiveAgo ?? 0)).toISOString(),
+          ...(typeof reason === 'string' && reason ? { reason: reason.slice(0, 80) } : {}) };
+      });
+    },
+    seenBy(roomId, eventId) {
+      const room = client.getRoom(roomId);
+      // hasUserReadEvent needs the event in the live timeline; older history reports no readers.
+      if (!room?.findEventById(eventId)) return [];
+      return room.getJoinedMembers().filter(member => member.userId !== creds.userId && room.hasUserReadEvent(member.userId, eventId)).map(member => member.name);
+    },
+    async markRead(roomId, eventId) {
+      if (stopped) throw new Error('session_stopped');
+      await guarded(roomId, () => client.setRoomReadMarkersHttpRequest(roomId, eventId, eventId));
     },
     stop,
   };

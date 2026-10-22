@@ -26,6 +26,8 @@ export type AvatarProps =
     /** Harness logo URL; `null` renders the agent's initials instead. */
     logo: string | null;
     initials: string;
+    /** The `.kh-st` connection dot; omitted while unknown. */
+    status?: 'on' | 'off' | undefined;
   }>
   | Shared & Readonly<{
     kind: 'human'; label: string; hue: number; initials: string;
@@ -50,6 +52,7 @@ export function Avatar(props: AvatarProps) {
     {props.logo ? <img src={props.logo} alt="" /> : <span className="kh-ini">{props.initials}</span>}
     <span className="kh-own" style={{ '--oh': props.ownerHue, ...(props.ownerSwatch ? { '--hc': props.ownerSwatch } : {}) } as CSSProperties}
       {...(props.ownerHost ? { title: `Running on ${props.ownerHost}` } : {})}>{props.ownerInitials}</span>
+    {props.status ? <span className={`kh-st ${props.status}`} /> : null}
   </> : props.initials;
 
   if (props.static || props.ghost) {

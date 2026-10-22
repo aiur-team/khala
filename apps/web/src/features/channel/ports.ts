@@ -9,6 +9,9 @@ export type AgentPresenceReceipt = Readonly<{
   observedAt: string;
 }>;
 
+/** An offline member's `since` is its last heartbeat (ms); `reason` is what it said on a clean exit. */
+export type MemberPresence = Readonly<{ connection: 'connected' } | { connection: 'offline'; since: number; reason?: string }>;
+
 export type AgentPresence = Readonly<{
   participantId: ParticipantId;
   /** Server-attested owner binding; absent on older status sources, which cannot authorize edits. */
@@ -17,6 +20,9 @@ export type AgentPresence = Readonly<{
   ownerDisplayName: string;
   /** Current state after composition applies subscription liveness and receipt evidence, including bounded stale expiry. */
   connection: AgentConnectionState;
+  /** With `offline`: when the agent was last alive (ms) and why it left, when known. */
+  awaySince?: number;
+  awayReason?: string;
   /** Human-readable capability copy, including honest values such as "Unsupported". */
   routeLabel: string;
   lastReceipt: AgentPresenceReceipt | null;

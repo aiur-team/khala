@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -551,4 +551,24 @@ it.each(['leave', 'ban'])('publishes definite %s without waiting for revoked par
   expect(participants.resolve).not.toHaveBeenCalled();
   dispose();
   expect(client.off).toHaveBeenCalledWith(RoomEvent.MyMembership, expect.any(Function));
+});
+
+describe('member presence and read receipts', () => {
+  const user = (presence: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    presence, lastPresenceTs: 10_000_000, lastActiveAgo: 7_200_000, events: { presence: { getContent: () => content } }, ...extra });
+  it('maps Matrix presence to roster connection, away since the last heartbeat', () => {
+    const users: Record<string, unknown> = { '@off:hs': user('offline', { status_msg: 'session ended' }), '@idle:hs': user('unavailable', {}),
+      '@none:hs': { presence: 'offline', events: { presence: null } } };
+    const client = { getUser: (id: string) => users[id] ?? null } as unknown as MatrixClient;
+    expect(memberPresence(client, '@off:hs')).toEqual({ connection: 'offline', since: 2_800_000, reason: 'session ended' });
+    expect(memberPresence(client, '@idle:hs')).toEqual({ connection: 'connected' });
+    expect(memberPresence(client, '@none:hs')).toBeNull();
+    expect(memberPresence(client, '@missing:hs')).toBeNull();
+  });
+  it('reports a read only for loaded events', () => {
+    const room = { findEventById: (id: string) => id === '$loaded' ? {} : undefined, hasUserReadEvent: () => true };
+    const client = { getRoom: () => room } as unknown as MatrixClient;
+    expect(hasReadEvent(client, '!r', '@a:hs', '$loaded')).toBe(true);
+    expect(hasReadEvent(client, '!r', '@a:hs', '$old')).toBe(false);
+  });
 });

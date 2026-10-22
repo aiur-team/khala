@@ -5,6 +5,7 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { renderMessageContent } from '../timeline/message-renderer';
 import { ChannelScreen, Recent, type ChannelScreenProps } from './ChannelScreen';
+import { awayLabel } from './AgentPresencePanel';
 import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
 
 const mira = 'owner_mira' as OwnerId;
@@ -219,5 +220,25 @@ describe('ChannelScreen Recent in Khala', () => {
     let received: unknown;
     render({ phase: 'ready', agents: [] }, { renderTimeline: (_open, _invite, onMentionRoster) => { received = onMentionRoster; return null; } });
     expect(typeof received).toBe('function');
+  });
+});
+
+describe('ChannelScreen roster presence', () => {
+  it('dots online and offline agents, says how long one has been away, and omits the dot while unknown', () => {
+    const away = Date.now() - 2 * 3_600_000 - 60_000;
+    const html = render({ phase: 'ready', agents: [{ ...agent('agent_on', mira, 'Claude'), connection: 'connected' },
+      { ...agent('agent_off', theo, 'Codex'), connection: 'offline', awaySince: away, awayReason: 'session ended' }, agent('agent_new', theo, 'Muse')] });
+    const roster = html.slice(html.indexOf('id="kh-roster"'));
+    const row = (id: string) => roster.slice(roster.indexOf(`data-kh-agent="${id}"`)).split('</button>')[0]!;
+    expect(row('agent_on')).toContain('class="kh-st on"');
+    expect(row('agent_off')).toContain('class="kh-st off"');
+    expect(row('agent_off')).toContain('away 2h (session ended)');
+    expect(row('agent_new')).not.toContain('class="kh-st ');
+    expect(html.slice(0, html.indexOf('id="kh-roster"'))).not.toContain('class="kh-st ');
+  });
+  it('labels minutes, hours and days away', () => {
+    const at = (ms: number) => awayLabel({ ...agent('a', mira), connection: 'offline', awaySince: 0 }, ms);
+    expect([at(5 * 60_000), at(3 * 3_600_000), at(3 * 86_400_000)]).toEqual(['away 5m', 'away 3h', 'away 3d']);
+    expect(awayLabel({ ...agent('a', mira), connection: 'connected' })).toBeNull();
   });
 });

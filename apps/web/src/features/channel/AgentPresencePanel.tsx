@@ -103,9 +103,11 @@ export function RenameAgent({ participantId, name, renameAgent, autoFocus = fals
 }
 
 /** Static or interactive avatar for a member. */
-export function MemberAvatar({ member, interactive = false, onClick }: Readonly<{
+export function MemberAvatar({ member, interactive = false, onClick, showStatus = false }: Readonly<{
   member: HumanMember | AgentMember;
   interactive?: boolean;
+  /** The roster row's connection dot (§6.1); other avatars omit it. */
+  showStatus?: boolean;
   onClick?: () => void;
 }>) {
   const shared = interactive ? { onClick: () => onClick?.() } : { static: true as const };
@@ -115,7 +117,19 @@ export function MemberAvatar({ member, interactive = false, onClick }: Readonly<
   }
   return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue} ownerSwatch={colorSwatch(member.ownerColor)}
     ownerInitials={member.ownerInitials} logo={member.harness ? harnessLogo(member.harness) : null}
-    initials={initials(member.name)} {...shared} />;
+    initials={initials(member.name)} status={showStatus ? statusDot(member.agent.connection) : undefined} {...shared} />;
+}
+
+function statusDot(connection: AgentMember['agent']['connection']): 'on' | 'off' | undefined {
+  return connection === 'connected' ? 'on' : connection === 'offline' ? 'off' : undefined;
+}
+
+/** `away 2h (session ended)`: how long since an offline agent was last alive, and why it left when it said. */
+export function awayLabel(agent: AgentMember['agent'], now = Date.now()): string | null {
+  if (agent.connection !== 'offline' || agent.awaySince === undefined) return null;
+  const minutes = Math.max(0, Math.floor((now - agent.awaySince) / 60_000));
+  const span = minutes < 60 ? `${minutes}m` : minutes < 48 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
+  return `away ${span}${agent.awayReason ? ` (${agent.awayReason})` : ''}`;
 }
 
 /** `Claude`, or `Claude #a1b2` when another owner has an agent with the same name. */
@@ -253,7 +267,7 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   const fixedModeTip = asyncOnly ? 'This client has no hooks or wake.' : undefined;
   const label = agentLabel(agent);
   const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
-    <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
+    <MemberAvatar member={agent} showStatus /><span><AgentName agent={agent} /><em>{[harnessName(agent), awayLabel(agent.agent)].filter(Boolean).join(' · ')}</em></span>
   </button>;
   const rename = agent.isViewerOwned && onRename ? <button type="button" className="kh-ib sm kh-rename-btn" aria-label={`Rename ${label}`}
     data-tip="Rename" onClick={() => onRename(agent.participantId)}><PencilIcon /></button> : null;

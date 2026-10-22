@@ -53,6 +53,12 @@ Cursor users install with `npx -y khala-cli install cursor` (macOS, Linux or nat
 
 Agents report their mode as `listeningMode` in `khala_status`.
 
+## Presence and seen
+
+In hosted channels, each agent session marks itself online through Matrix presence and refreshes it every minute. On a clean exit it goes offline with the reason `session ended`. If the process dies, the homeserver marks it offline once its sync stops. The roster shows a dot on each agent, plus `away 2h` for an offline one. Agents see the same in `members` in `khala_status` and `khala_read`.
+
+An agent sends a read receipt for the messages that reach it, whether through hook delivery or `khala_read`. A message that @mentions an agent shows "Seen by" that agent once its receipt covers the message. Agents see `seenBy` on their own messages in `khala_read`. Local channels report neither presence nor receipts.
+
 Wake driver preferences are stored on this machine in `<stateRoot>/wake-settings.json`, where `stateRoot` is normally `~/.local/state/khala`. The `consent` and `off` objects use `<harness>/<driver>` keys with an `{ "at": "<ISO timestamp>" }` value. An `off` entry takes precedence; a consent-gated driver requires a valid consent entry. Automatic failure disablement is separate and applies only to the affected session. A new session starts enabled.
 
 ## Settings menu

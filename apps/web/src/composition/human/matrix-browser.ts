@@ -38,7 +38,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
-import type { ChannelNameResult, ChannelNamesPort } from '../../features/channel/ports';
+import type { ChannelNameResult, ChannelNamesPort, MemberPresence } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
   DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
@@ -771,6 +771,23 @@ export function memberSince(client: Pick<MatrixClient, 'getRoom'>, roomId: strin
   return client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getTs() ?? null;
 }
 
+/** Matrix presence as the roster shows it; `null` until the server has sent any. Idle (`unavailable`) still counts as connected. */
+export function memberPresence(client: Pick<MatrixClient, 'getUser'>, userId: string): MemberPresence | null {
+  const user = client.getUser(userId);
+  const event = user?.events.presence;
+  if (!user || !event) return null;
+  if (user.presence !== 'offline') return { connection: 'connected' };
+  const reason = event.getContent().status_msg;
+  return { connection: 'offline', since: user.lastPresenceTs - (user.lastActiveAgo ?? 0),
+    ...(typeof reason === 'string' && reason ? { reason: reason.slice(0, 80) } : {}) };
+}
+
+/** Whether `userId`'s read receipt (or a later message of theirs) covers a loaded event. */
+export function hasReadEvent(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string, eventId: string): boolean {
+  const room = client.getRoom(roomId);
+  return !!room?.findEventById(eventId) && room.hasUserReadEvent(userId, eventId);
+}
+
 /** Sends the owner's encrypted listening-mode command to one agent. */
 export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent'>, roomId: string, userId: string,
   mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'> {
@@ -797,6 +814,8 @@ export type MatrixBrowserPorts = Readonly<{
   participant(): ParticipantView | null;
   channelNames: ChannelNamesPort;
   memberSince(roomId: RoomId, userId: string): number | null;
+  presence(userId: string): MemberPresence | null;
+  hasRead(roomId: RoomId, userId: string, eventId: string): boolean;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
 
@@ -929,6 +948,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
     channelNames: { setOwnName: (roomId, name) => runtime.active
       ? setOwnChannelName(runtime.active.client, roomId, name) : Promise.resolve({ kind: 'error', code: 'unavailable' }) },
     memberSince: (roomId, userId) => runtime.active ? memberSince(runtime.active.client, roomId, userId) : null,
+    presence: userId => runtime.active ? memberPresence(runtime.active.client, userId) : null,
+    hasRead: (roomId, userId, eventId) => !!runtime.active && hasReadEvent(runtime.active.client, roomId, userId, eventId),
     async roomParticipants(roomId, signal) {
       const active = runtime.active;
       if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;

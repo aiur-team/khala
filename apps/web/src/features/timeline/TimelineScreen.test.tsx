@@ -585,4 +585,15 @@ describe('thread design (KM-182)', () => {
     expect(html).toContain('@nobody');
     expect(html).toContain('class="kh-to');
   });
+
+  it('shows Seen by on a message for the mentioned agents whose receipt covers it', () => {
+    const opus = participant('opus', 'agent', 'Opus · Maya');
+    const codex = participant('codex', 'agent', 'Codex · Maya');
+    const html = renderToStaticMarkup(<TimelineScreen controller={ready([item('E1', opus, 'hi'), item('E2', codex, 'hey'),
+      item('E3', viewer, '@Opus and @Codex please stop relabeling'), item('E4', viewer, 'no mention here')])}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      seenBy={eventId => eventId === 'E3' || eventId === 'E4' ? ['opus'] : ['opus', 'codex']} />);
+    expect(html.match(/class="kh-seen"/g)).toHaveLength(1);
+    expect(html).toContain('<p class="kh-seen">Seen by Opus</p>');
+  });
 });

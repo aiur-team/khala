@@ -71,6 +71,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     roomParticipants: matrix.roomParticipants,
     channelNames: matrix.channelNames,
     memberSince: matrix.memberSince,
+    presence: matrix.presence,
+    hasRead: matrix.hasRead,
     limits: decodedLimits.value,
   }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
   const mounted = mountKhalaContent({

@@ -12,7 +12,7 @@ import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/r
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { mentions } from './watch';
-import { appendInbox, readEntries, unreadCount } from './inbox';
+import { appendInbox, readCursor, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
@@ -34,7 +34,7 @@ type Attempt = {
   label: string; restore?: ResumeAuthorization; link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
   failure?: KhalaClientError; files?: SessionFiles; status: StatusFile; appends: Promise<void>; acceptEventKey: ReturnType<typeof createEventKeyFilter>;
-  cryptoReset?: boolean; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
+  cryptoReset?: boolean; readReceipt?: string; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
   return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error',
@@ -82,12 +82,23 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         for (const attempt of channels.values()) {
           if (current(attempt) && ['connected', 'send_failed'].includes(attempt.status.state)) {
             await setStatus(attempt, attempt.status.state, attempt.status.detail);
+            await markDelivered(attempt);
           }
         }
       });
       void heartbeatTask.catch(() => {});
     }, 15_000);
     heartbeatTimer.unref();
+  }
+
+  /** Delivery hooks run in other processes; the read receipt for what they delivered goes from here. */
+  async function markDelivered(attempt: Attempt): Promise<void> {
+    const { session, files, credentials } = attempt;
+    if (!session?.markRead || !files || !credentials) return;
+    const eventId = (await readCursor(files).catch(() => undefined))?.lastDeliveredEventId;
+    if (!eventId || eventId === attempt.readReceipt) return;
+    attempt.readReceipt = eventId;
+    await session.markRead(credentials.roomId, eventId).catch(() => {});
   }
 
   function inboxEntry(message: SessionMessage, session: ChannelSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
@@ -627,7 +638,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         return { channel: attempt?.status.channelName ?? ref.channelName ?? ref.roomId, roomId: ref.roomId,
           state: attempt?.status.state ?? 'disconnected', ...(attempt?.status.detail ? { detail: attempt.status.detail } : {}),
           ...(you !== undefined ? { you } : {}), ...(session ? { agentUserId: session.userId } : {}),
-          unread: (await unreadCount(ref.files.dir)).total, listeningMode: await readListeningMode(ref.files) };
+          unread: (await unreadCount(ref.files.dir)).total, listeningMode: await readListeningMode(ref.files),
+          ...(session?.members ? { members: session.members(ref.roomId) } : {}) };
       }));
       if (channel === undefined) {
         for (const attempt of pendingAttempts()) {
@@ -651,6 +663,16 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const you = ownName(session);
         const latest = await scan(session, credentials.roomId);
         const state = coordination(latest.entries);
+        // Hosted only: who is around, who has read your messages, and a read receipt for what you just read.
+        const presence = (messages: InboxEntry[]) => {
+          const newest = messages.at(-1);
+          if (before === undefined && newest && session.markRead) void session.markRead(credentials.roomId, newest.eventId).catch(() => {});
+          return { ...(you !== undefined ? { you } : {}), ...(session.members ? { members: session.members(credentials.roomId) } : {}),
+            messages: messages.map(entry => {
+              const seenBy = entry.sender === session.userId ? session.seenBy?.(credentials.roomId, entry.eventId) ?? [] : [];
+              return seenBy.length ? { ...entry, seenBy } : entry;
+            }) };
+        };
         if (filter) {
           const matches = (entry: InboxEntry) => (!filter.kinds || filter.kinds.includes(entry.kind === 'message' ? 'message' : entry.eventKind ?? 'event'))
             && (!filter.mentionsOnly || entry.mention === true || mentions(entry, you));
@@ -658,12 +680,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const selected = found.entries.filter(matches);
           const messages = selected.slice(-limit);
           const nextBefore = selected.length > limit ? messages[0]!.eventId : found.nextBefore;
-          return { ...(you !== undefined ? { you } : {}), messages, ...(nextBefore !== undefined ? { nextBefore } : {}), ...state };
+          return { ...presence(messages), ...(nextBefore !== undefined ? { nextBefore } : {}), ...state };
         }
         const page = await session.history(credentials.roomId, limit, before);
         const acceptKey = createEventKeyFilter();
-        return { ...(you !== undefined ? { you } : {}), messages: page.messages.filter(m => m.roomId === credentials.roomId).map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null),
-          ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
+        const messages = page.messages.filter(m => m.roomId === credentials.roomId).map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null);
+        return { ...presence(messages), ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
       } catch (error) { throw safeError(error); }
     },
     async send(text, channel) {
