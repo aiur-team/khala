@@ -304,6 +304,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       }
       const input = { origin: attempt.created.origin, joinId: attempt.created.joinId, pollSecret: attempt.created.pollSecret };
       const issuedCredentials = attempt.restore?.localCredentials ?? await wait(api.pollJoin(input, { signal, ...fetchDeps }));
+      // Confirmed: the agent now connects, waits for its invite and syncs, so status says so (no silent 'joining').
+      if (!attempt.restore && current(attempt)) await setStatus(attempt, 'joining', 'confirmed_syncing');
       let credentials = issuedCredentials;
       if (attempt.restore && credentials.roomId !== attempt.restore.roomId) {
         await removeStateFile(attempt.files!.dir, 'resume.json');
@@ -644,7 +646,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (channel === undefined) {
         for (const attempt of pendingAttempts()) {
           items.push({ channel: attempt.link, ...(attempt.credentials ? { roomId: attempt.credentials.roomId } : {}),
-            link: attempt.link, state: 'joining', unread: 0, listeningMode: defaultMode });
+            link: attempt.link, state: 'joining', ...(attempt.status.detail ? { detail: attempt.status.detail } : {}), unread: 0, listeningMode: defaultMode });
         }
       }
       await statusWrites;
