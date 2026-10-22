@@ -13,7 +13,9 @@ import '../../ui/khala/khala-app.css';
 import './agent-confirm.css';
 
 const errors: Record<AgentConfirmError, string> = {
-  not_member: 'You are not a member of this channel.',
+  not_member: 'You are not in this channel yet. Open the channel\'s invite link, then ask your agent to run khala_join again.',
+  wrong_account: 'This invite is for a different account. Sign in with the invited account and open this link again.',
+  invite_unavailable: 'The invite link your agent used no longer works. Ask someone in the channel for a new link and give it to your agent.',
   not_found: 'This confirmation link is not valid.',
   expired: 'This request expired. Ask your agent to run khala_join again.',
   already_confirmed_by_other: 'Another member already confirmed this agent.',
@@ -72,8 +74,10 @@ export function AgentConfirmFrame({ theme: hostTheme, onThemeChange, homeHref = 
   );
 }
 
-export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: PageTheme & {
+export function AgentConfirm({ controller, roomHref, onOpenRoom, email, ...page }: PageTheme & {
   controller: AgentConfirmController;
+  /** The signed-in account, so a wrong account is visible before anyone confirms. */
+  email?: string;
   roomHref: (roomId: string) => string;
   onOpenRoom: (roomId: string) => void;
 }) {
@@ -89,7 +93,11 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: Page
       {snapshot.state === 'review' ? <>
         <p className="kh-fin-p" aria-hidden="true">wants to join <b>{snapshot.view.channelName}</b></p>
         <span className="kh-fin-sr">{snapshot.view.label} ({harnessDisplayName(snapshot.view.harness)}) wants to join {snapshot.view.channelName}.</span>
-        <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>
+        {snapshot.view.access === 'join' ? <>
+          <p className="kh-fin-p">You are not in this channel yet. Confirming adds you and your agent.</p>
+          <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>
+            Join {snapshot.view.channelName} and add {snapshot.view.label}</button>
+        </> : <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>}
       </> : null}
       {snapshot.state === 'connecting' ? <>
         <span className="kh-spin" aria-hidden="true" />
@@ -108,6 +116,7 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: Page
         {retryable.includes(snapshot.code)
           ? <button type="button" className="kh-btn" onClick={() => controller.retry()}>Retry</button> : null}
       </> : null}
+      {email && (snapshot.state === 'review' || snapshot.state === 'error') ? <p className="kh-fin-p">Signed in as {email}</p> : null}
     </AgentConfirmFrame>
   );
 }

@@ -20,6 +20,8 @@ export type JoinRecord = {
   state: 'pending' | 'confirmed' | 'claimed' | 'ready' | 'expired'; createdAt: string; expiresAt: string;
   rejoinApproval?: { ownerLabel: string; generation: number };
   rejoinSecretHash?: string; rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
+  /** The invite the agent joined with, sealed; it lets a confirming non-member join by the same rules as `/join`. Never sent to a client. */
+  sealedInvite?: string;
 };
 export const joinKey = (joinId: string): string => `agent-join/${joinId}`;
 export const isJoinId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value);
@@ -42,7 +44,7 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
       || !Number.isSafeInteger(approval.generation) || approval.generation < 0
       || Object.keys(approval).some(key => !['ownerLabel', 'generation'].includes(key))) return null;
   }
-  const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials'];
+  const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials', 'sealedInvite'];
   if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin' && key !== 'rejoinApproval')
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;
@@ -110,28 +112,41 @@ export function createJoinStore(deps: JoinStoreDeps) {
   } };
 }
 
-function sealKey(secret: string, joinId: string): Buffer {
-  return createHmac('sha256', secret).update(`khala-agent-join-seal-v1\0${joinId}`).digest();
+const CREDENTIALS_LABEL = 'khala-agent-join-seal-v1';
+const INVITE_LABEL = 'khala-agent-join-invite-v1';
+function sealKey(secret: string, joinId: string, label: string): Buffer {
+  return createHmac('sha256', secret).update(`${label}\0${joinId}`).digest();
 }
-export function sealCredentials(secret: string, joinId: string, credentials: AgentCredentials): string {
+function seal(secret: string, joinId: string, label: string, plaintext: string): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', sealKey(secret, joinId), iv);
+  const cipher = createCipheriv('aes-256-gcm', sealKey(secret, joinId, label), iv);
   cipher.setAAD(Buffer.from(joinId));
-  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(credentials), 'utf8'), cipher.final()]);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return ['v1', iv.toString('base64url'), ciphertext.toString('base64url'), cipher.getAuthTag().toString('base64url')].join('.');
 }
-export function openCredentials(secret: string, joinId: string, sealed: string): AgentCredentials | null {
+function open(secret: string, joinId: string, label: string, sealed: string): string | null {
   try {
     const parts = sealed.split('.');
     if (parts.length !== 4 || parts[0] !== 'v1' || parts.slice(1).some(part => !/^[A-Za-z0-9_-]+$/u.test(part))) return null;
     const iv = Buffer.from(parts[1]!, 'base64url'), ciphertext = Buffer.from(parts[2]!, 'base64url'), tag = Buffer.from(parts[3]!, 'base64url');
     if (iv.length !== 12 || tag.length !== 16) return null;
-    const cipher = createDecipheriv('aes-256-gcm', sealKey(secret, joinId), iv);
+    const cipher = createDecipheriv('aes-256-gcm', sealKey(secret, joinId, label), iv);
     cipher.setAAD(Buffer.from(joinId)); cipher.setAuthTag(tag);
-    const decoded = decodeAgentCredentials(JSON.parse(Buffer.concat([cipher.update(ciphertext), cipher.final()]).toString('utf8')));
-    return decoded.ok ? decoded.value : null;
+    return Buffer.concat([cipher.update(ciphertext), cipher.final()]).toString('utf8');
   } catch { return null; }
 }
+export function sealCredentials(secret: string, joinId: string, credentials: AgentCredentials): string {
+  return seal(secret, joinId, CREDENTIALS_LABEL, JSON.stringify(credentials));
+}
+export function openCredentials(secret: string, joinId: string, sealed: string): AgentCredentials | null {
+  try {
+    const plaintext = open(secret, joinId, CREDENTIALS_LABEL, sealed);
+    const decoded = plaintext === null ? null : decodeAgentCredentials(JSON.parse(plaintext));
+    return decoded?.ok ? decoded.value : null;
+  } catch { return null; }
+}
+export const sealInvite = (secret: string, joinId: string, inviteRef: string): string => seal(secret, joinId, INVITE_LABEL, inviteRef);
+export const openInvite = (secret: string, joinId: string, sealed: string): string | null => open(secret, joinId, INVITE_LABEL, sealed);
 
 export async function consumeJoinBudget(deps: JoinStoreDeps, ip: string): Promise<'allowed' | 'limited'> {
   try {
@@ -160,7 +175,7 @@ export async function consumeJoinBudget(deps: JoinStoreDeps, ip: string): Promis
 }
 
 export async function resolveJoinLink(input: Readonly<{ link: string; origin: string; store: ControlStore; secret: string; clock: () => number }>): Promise<
-  { kind: 'ok'; roomId: RoomId; creatorOwnerId: OwnerId } | { kind: 'invalid_link' | 'link_unavailable' | 'unavailable' }> {
+  { kind: 'ok'; roomId: RoomId; creatorOwnerId: OwnerId; inviteRef: string } | { kind: 'invalid_link' | 'link_unavailable' | 'unavailable' }> {
   let parsed: URL;
   try { parsed = new URL(input.link); } catch { return { kind: 'invalid_link' }; }
   const inviteRef = inviteFromShareLink(parsed, input.origin);
@@ -174,5 +189,5 @@ export async function resolveJoinLink(input: Readonly<{ link: string; origin: st
   if (invite.status === 'revoked' || invite.expiresAt !== null && input.clock() >= Date.parse(invite.expiresAt)) return { kind: 'link_unavailable' };
   const removal = await inviteRemovalState(input.store, invite);
   if (removal !== 'allowed') return { kind: removal === 'revoked' ? 'link_unavailable' : 'unavailable' };
-  return { kind: 'ok', roomId: invite.roomId, creatorOwnerId: invite.creatorOwnerId };
+  return { kind: 'ok', roomId: invite.roomId, creatorOwnerId: invite.creatorOwnerId, inviteRef };
 }

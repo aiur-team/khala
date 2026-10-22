@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, it } from 'vitest';
-import { effectiveState, openCredentials, sealCredentials, type JoinRecord } from './store';
+import { effectiveState, openCredentials, openInvite, sealCredentials, sealInvite, type JoinRecord } from './store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const joinId = randomBytes(16).toString('base64url');
 const credentials = { homeserver: 'https://matrix.example.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
@@ -13,6 +13,20 @@ it('seals credentials to the invitation secret and join ID', () => {
   const ciphertext = Buffer.from(parts[2]!, 'base64url'); ciphertext[0] = ciphertext[0]! ^ 1;
   parts[2] = ciphertext.toString('base64url');
   expect(openCredentials(secret, joinId, parts.join('.'))).toBeNull();
+});
+it('seals the agent invite under its own key, bound to the join', () => {
+  const sealed = sealInvite(secret, joinId, 'inv_abcdefgh');
+  expect(sealed).not.toContain('inv_abcdefgh');
+  expect(openInvite(secret, joinId, sealed)).toBe('inv_abcdefgh');
+  expect(openInvite(secret, randomBytes(16).toString('base64url'), sealed)).toBeNull();
+  expect(openCredentials(secret, joinId, sealed)).toBeNull();
+  expect(openInvite(secret, joinId, sealCredentials(secret, joinId, credentials))).toBeNull();
+});
+it('decodes join records with or without a sealed invite', () => {
+  const record = { joinId, pollSecretHash: 'a'.repeat(64), roomId: '!r:hs', channelName: 'C', label: 'Agent', harness: 'claude', state: 'pending',
+    createdAt: new Date(0).toISOString(), expiresAt: new Date(600000).toISOString() };
+  expect(decodeJoinRecord(record)).not.toBeNull();
+  expect(decodeJoinRecord({ ...record, sealedInvite: sealInvite(secret, joinId, 'inv_abcdefgh') })).not.toBeNull();
 });
 it('logically expires only unclaimed joins at the exact boundary', () => {
   const record = { state: 'pending', expiresAt: new Date(600000).toISOString() } as JoinRecord;
@@ -122,7 +136,7 @@ it('resolves active links without sponsor identity and rejects unavailable links
   expect(await resolveJoinLink(input)).toEqual({ kind: 'link_unavailable' });
   const value = { v: 1, roomId: f.record.roomId, creatorOwnerId: 'owner', inviteRefDigest: digests.inviteRef(ref), policyRevision: 1, policy: { v: 1, kind: 'named_email', emailDigest: 'digest', history: 'none' }, status: 'active', expiresAt: new Date(f.clock() + 1000).toISOString(), lastAuthorizedOperationDigest: null };
   const write = await f.store.compareAndSet({ key: digests.inviteKey(ref), operationId: 'invite', expectedRevision: null, next: { value, expiresAt: null } });
-  expect(await resolveJoinLink(input)).toEqual({ kind: 'ok', roomId: value.roomId, creatorOwnerId: 'owner' });
+  expect(await resolveJoinLink(input)).toEqual({ kind: 'ok', roomId: value.roomId, creatorOwnerId: 'owner', inviteRef: ref });
   f.advance(1000); expect(await resolveJoinLink(input)).toEqual({ kind: 'link_unavailable' });
   if (write.kind !== 'applied') throw Error();
   await f.store.compareAndSet({ key: digests.inviteKey(ref), operationId: 'bad-invite', expectedRevision: write.record.revision, next: { value: { ...value, inviteRefDigest: 'wrong' }, expiresAt: null } });

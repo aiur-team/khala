@@ -426,6 +426,11 @@ describe('agent join browser API', () => {
     expect(await api.agentJoin.view('j1')).toEqual({ kind: 'error', code });
     expect(await api.agentJoin.status('j1')).toEqual({ kind: 'error', code });
   });
+  it.each([[403, 'wrong_account'], [410, 'invite_unavailable']] as const)('maps HTTP %s %s from the join-and-add refusals', async (status, code) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => json(status, { error: code }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.view('j1')).toEqual({ kind: 'error', code });
+  });
   it.each([{ ...view, harness: 'Unknown' }, { ...view, roomId: 'bad' }, {}, { ...view, extra: true }])('rejects malformed views', async body => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(200, body));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });

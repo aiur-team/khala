@@ -13,6 +13,9 @@ describe('M1 agent join', () => {
       expect(decode(value)).toEqual({ ok: true, value });
     }
     expect(join.decodeAgentJoinView({ ...view, agentUserId: credentials.userId })).toEqual({ ok: true, value: { ...view, agentUserId: credentials.userId } });
+    expect(join.decodeAgentJoinView({ ...view, access: 'join' })).toEqual({ ok: true, value: { ...view, access: 'join' } });
+    expect(join.decodeAgentJoinView({ ...view, access: 'admin' }).ok).toBe(false);
+    for (const error of ['wrong_account', 'invite_unavailable']) expect(join.decodeAgentJoinError({ error })).toEqual({ ok: true, value: { error } });
   });
   it('rejects extra and missing fields on each wire shape', () => {
     for (const [decode, value] of [[join.decodeAgentJoinRequest, request], [join.decodeAgentCredentials, credentials], [join.decodeAgentJoinCreated, created], [join.decodeAgentJoinView, view], [join.decodeAgentJoinError, { error: 'not_found' }]] as const) {

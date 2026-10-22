@@ -1,7 +1,7 @@
 import type { RouteRegistration } from '../runtime/handler';
 import { registerAgentHandlers } from './agent/handlers';
 import { registerHumanHandlers } from './human/handlers';
-import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies } from './human/production';
+import { createProductionHumanRuntimeLoader, createProductionHumanServiceLoader, type ProductionHumanDependencies } from './human/production';
 import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 import { createAgentJoinRoutes } from '../agent-join/production';
@@ -15,7 +15,7 @@ export function registerHostedProductionRoutes(options: HostedProductionOptions 
   return Object.freeze([
     ...registerHumanHandlers({ channelLink: () => createHostedHumanChannelLinkRoutes(options) }),
     ...registerAgentHandlers(),
-    ...createAgentJoinRoutes(runtime, options.fetch),
+    ...createAgentJoinRoutes(runtime, createProductionHumanServiceLoader(options), options.fetch),
     ...createProfileRoutes(runtime, options.fetch),
   ]);
 }

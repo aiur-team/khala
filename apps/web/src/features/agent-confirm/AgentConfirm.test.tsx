@@ -6,10 +6,11 @@ import { AgentConfirm } from './AgentConfirm';
 import type { AgentConfirmController, AgentConfirmSnapshot, AgentConfirmError } from './controller';
 
 const view: AgentJoinView = { joinId: 'j1', label: 'Helper', harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' };
-function render(snapshot: AgentConfirmSnapshot) {
+function render(snapshot: AgentConfirmSnapshot, email?: string) {
   const controller: AgentConfirmController = { getSnapshot: () => snapshot, subscribe: () => () => undefined,
     start: vi.fn(), confirm: vi.fn(), retry: vi.fn(), dispose: vi.fn() };
-  return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()} />);
+  return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()}
+    {...(email ? { email } : {})} />);
 }
 describe('AgentConfirm', () => {
   it.each([['opencode', 'OpenCode'], ['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)']])(
@@ -40,7 +41,9 @@ describe('AgentConfirm', () => {
     expect(html).toContain('href="/channels/!r1%3Akhala.local">Open channel');
   });
   it.each<[AgentConfirmError, string, boolean]>([
-    ['not_member', 'You are not a member of this channel.', false],
+    ['not_member', 'You are not in this channel yet. Open the channel&#x27;s invite link, then ask your agent to run khala_join again.', false],
+    ['wrong_account', 'This invite is for a different account. Sign in with the invited account and open this link again.', false],
+    ['invite_unavailable', 'The invite link your agent used no longer works. Ask someone in the channel for a new link and give it to your agent.', false],
     ['not_found', 'This confirmation link is not valid.', false],
     ['expired', 'This request expired. Ask your agent to run khala_join again.', false],
     ['already_confirmed_by_other', 'Another member already confirmed this agent.', false],
@@ -87,6 +90,15 @@ describe('AgentConfirm', () => {
       expect(html.match(/class="wm"/g)).toHaveLength(1);
       expect(html).toMatch(/<h1 class="kh-fin-n">/);
     }
+  });
+  it('offers one join-and-add button to a non-member the invite admits, naming the account', () => {
+    const html = render({ state: 'review', view: { ...view, access: 'join' } }, 'ada@example.test');
+    expect(html).toContain('You are not in this channel yet. Confirming adds you and your agent.');
+    expect(html).toContain('>Join Launch and add Helper</button>');
+    expect(html).not.toContain('>Confirm</button>');
+    expect(html).toContain('Signed in as ada@example.test');
+    expect(render({ state: 'error', code: 'wrong_account' }, 'ada@example.test')).toContain('Signed in as ada@example.test');
+    expect(render({ state: 'review', view })).not.toContain('Signed in as');
   });
   it('escapes agent-controlled labels', () => {
     expect(render({ state: 'review', view: { ...view, label: '<script>bad</script>' } })).toContain('&lt;script&gt;');

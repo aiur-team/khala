@@ -61,13 +61,13 @@ export function AgentConfirmPage({ identity, agentJoin, profile, routes, joinId,
   // A new user picks a username first; the URL stays, so saving lands back here.
   return <ProfileProvider key={state.principal.ownerId} ports={{ profile }}>
     <UsernameGate pending={pending} {...frame}>
-      <Confirm agentJoin={agentJoin} joinId={joinId} routes={routes} navigateExternal={navigateExternal} {...frame} />
+      <Confirm agentJoin={agentJoin} joinId={joinId} routes={routes} navigateExternal={navigateExternal} email={state.principal.verifiedEmail} {...frame} />
     </UsernameGate>
   </ProfileProvider>;
 }
 
 function Confirm({ agentJoin, joinId, routes, navigateExternal, ...frame }: Readonly<{
-  agentJoin: AgentJoinPort; joinId: string; routes: HumanRouteCodec; navigateExternal: (url: string) => void;
+  agentJoin: AgentJoinPort; joinId: string; routes: HumanRouteCodec; navigateExternal: (url: string) => void; email: string;
   theme: ThemeChoice; onThemeChange: (theme: ThemeChoice) => void; homeHref: string;
 }>) {
   const controller = useMemo(() => createAgentConfirmController({ joinId, port: agentJoin }), [agentJoin, joinId]);

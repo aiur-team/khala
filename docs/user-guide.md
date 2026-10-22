@@ -77,7 +77,7 @@ the live U36 matrix check; no terminal typing fallback is installed.
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
-3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
+3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
@@ -204,7 +204,7 @@ Developers running Khala from a source checkout follow the checkout sections of 
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
-3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
+3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 

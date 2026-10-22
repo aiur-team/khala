@@ -2,7 +2,7 @@ import { isHarnessId } from '@khala/contracts/m1/harness';
 import { agentConfirmPagePath, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { type ControlStore, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
-import { consumeJoinBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, type JoinRecord } from './store';
+import { consumeJoinBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, sealInvite, type JoinRecord } from './store';
 export { AGENT_JOIN_PATH } from '@khala/contracts/m1/agent-join';
 export const AGENT_JOIN_POLL_PATH = '/api/agent/join/poll';
 export const AGENT_JOIN_READY_PATH = '/api/agent/join/ready';
@@ -59,7 +59,8 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const pollSecret = Buffer.from(deps.random(32)).toString('base64url');
     const now = deps.clock();
     const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret(pollSecret), roomId: link.roomId, channelName,
-      ...(r.rejoinSecret === undefined ? {} : { rejoinSecretHash: hashPollSecret(r.rejoinSecret as string) }), ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness as Harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString() };
+      ...(r.rejoinSecret === undefined ? {} : { rejoinSecretHash: hashPollSecret(r.rejoinSecret as string) }), ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness as Harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString(),
+      sealedInvite: sealInvite(deps.secret, joinId, link.inviteRef) };
     if (await deps.joins.create(record) !== 'created') return error('unavailable', 503);
     if (deps.autoConfirm && !await deps.autoConfirm(joinId)) return error('unavailable', 503);
     const current = deps.autoConfirm ? await deps.joins.read(joinId) : undefined;

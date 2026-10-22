@@ -7,13 +7,13 @@ import { agentOwnerRecordKey, decodeAgentOwnerRecord, type AgentOwnerRecord } fr
 import { freeAgentName } from '@khala/contracts/m1/channel-names';
 import { suggestUsername } from '@khala/contracts/m1/names';
 import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
-import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlStore, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
-import type { GatewayInspection } from '../invitations/index';
+import type { AdmissionService, GatewayInspection } from '../invitations/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
 import { indexOwnerAgent } from './names';
 import type { AgentProvisioner } from './provision';
-import { createJoinStore, effectiveState, isJoinId, sealCredentials, type JoinRecord } from './store';
+import { createJoinStore, effectiveState, isJoinId, openInvite, sealCredentials, type JoinRecord } from './store';
 
 export const AGENT_JOIN_HUMAN_VIEW_PATH = '/api/human/agent-join';
 export const AGENT_JOIN_HUMAN_CONFIRM_PATH = '/api/human/agent-join/confirm';
@@ -27,6 +27,8 @@ export type AgentJoinHumanDeps = Readonly<{
   roomMemberNames(ownerId: OwnerId, roomId: RoomId): Promise<readonly string[] | null>;
   provisioner: AgentProvisioner;
   revokeAgentSession?: (userId: string, roomId: RoomId) => Promise<boolean>;
+  /** `/join` admission as the requesting human, so a non-member confirmer is held to the same invite rules. */
+  admissionFor(request: Request): Promise<Pick<AdmissionService, 'inspect' | 'admit'> | null>;
 }>;
 const json = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: {
   'cache-control': 'no-store', 'content-type': 'application/json', 'x-content-type-options': 'nosniff',
@@ -41,6 +43,32 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
     if (read.kind === 'absent') return fallbackUsername ?? suggestUsername(principal.verifiedEmail);
     const decoded = decodeProfileRecord(read.record.value);
     return decoded.ok && decoded.value.ownerId === principal.ownerId ? decoded.value.username : null;
+  }
+  /**
+   * A non-member may confirm through the invite the agent joined with, under the same
+   * rules as `/join`: null when they may (`admit` then admits them), else the refusal.
+   */
+  async function inviteAccess(request: Request, principal: AuthPrincipal, record: JoinRecord, admit: boolean): Promise<Response | null> {
+    const inviteRef = record.sealedInvite ? openInvite(deps.sealSecret, record.joinId, record.sealedInvite) : null;
+    if (!inviteRef) return error(403, 'not_member');
+    const admission = await deps.admissionFor(request);
+    if (!admission) return unavailable();
+    if (!admit) {
+      const state = await admission.inspect(inviteRef);
+      if (state === 'eligible' || state === 'already_joined') return null;
+      return inviteRefusal(state);
+    }
+    // One operation per join and human, so a retried click resumes the same admission.
+    const operationId = `agent-join.${record.joinId}.${createHash('sha256').update(principal.ownerId).digest('hex').slice(0, 16)}`;
+    const result = await admission.admit({ operationId, inviteRef, deviceId: `agent-join.${record.joinId}` as DeviceId });
+    return result.kind === 'ok' ? null : inviteRefusal(result.kind === 'rejected' ? result.code : 'unavailable');
+  }
+  function inviteRefusal(code: string): Response {
+    if (code === 'identity_mismatch') return error(403, 'wrong_account');
+    if (code === 'expired' || code === 'revoked') return error(410, 'invite_unavailable');
+    if (code === 'auth_required') return error(401, 'signed_out');
+    if (code === 'forbidden') return error(403, 'not_member');
+    return unavailable();
   }
   function viewOf(record: JoinRecord): AgentJoinView {
     const state = effectiveState(record, deps.clock());
@@ -211,12 +239,16 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const params = new URL(request.url).searchParams;
       const keys = [...params.keys()], joinId = params.get('joinId');
       if (keys.length !== 1 || keys[0] !== 'joinId' || !isJoinId(joinId)) return error(404, 'not_found');
-      if (mutation) return await confirm(joinId, principal);
       const read = await deps.joins.read(joinId);
       if (read.kind !== 'found') return read.kind === 'absent' ? error(404, 'not_found') : unavailable();
-      const denied = await membership(principal, read.record);
+      let denied = await membership(principal, read.record);
+      // Only this human route, on a pending join, ever admits; autoConfirm calls confirm() directly and never does.
+      const joining = denied?.status === 403 && read.record.state === 'pending' && effectiveState(read.record, deps.clock()) === 'pending';
+      if (joining) denied = await inviteAccess(request, principal, read.record, mutation);
+      // confirm() keeps its own checks (expiry, membership, owner); it now runs after any admission.
+      if (mutation) return joining && denied ? denied : await confirm(joinId, principal);
       if (denied) return denied;
-      const view = viewOf(read.record);
+      const view: AgentJoinView = { ...viewOf(read.record), ...(joining ? { access: 'join' as const } : {}) };
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();

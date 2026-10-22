@@ -381,8 +381,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       });
       if (!response) return { kind: 'error', code: 'unavailable' };
       const codes: Partial<Record<number, AgentJoinError>> = {
-        401: 'signed_out', 403: 'not_member', 404: 'not_found', 409: 'already_confirmed_by_other',
+        401: 'signed_out', 403: 'not_member', 404: 'not_found', 409: 'already_confirmed_by_other', 410: 'invite_unavailable',
       };
+      // 403 also means the invite is for another account; only that code is read from the body.
+      if (response.status === 403 && (await jsonObject(response))?.error === 'wrong_account') return { kind: 'error', code: 'wrong_account' };
       if (response.status !== 200) return { kind: 'error', code: codes[response.status] ?? 'unavailable' };
       const decoded = decodeAgentJoinView(await jsonObject(response));
       return decoded.ok ? { kind: 'ok', view: decoded.value } : { kind: 'error', code: 'unavailable' };
