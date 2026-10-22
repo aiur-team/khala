@@ -47,8 +47,8 @@ export function claudeStyleDriver(envKey: string): FakeHarnessDriver {
       if (!stdout) return { kind: 'none' };
       const output = JSON.parse(stdout);
       if (output.decision === 'block') return { kind: 'continue', frame: output.reason };
-      // Claude continues the turn after Stop additionalContext, like a block.
-      if (output.hookSpecificOutput?.hookEventName === 'Stop') return { kind: 'continue', frame: output.hookSpecificOutput.additionalContext };
+      // Only decision:block is a documented Stop continuation. These fake sessions have no transcript,
+      // so their Claude version is unknown, and Stop additionalContext here must fail the sync row.
       if (output.hookSpecificOutput?.additionalContext) return { kind: 'context', frame: output.hookSpecificOutput.additionalContext };
       return { kind: 'none' };
     },

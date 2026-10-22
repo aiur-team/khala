@@ -30,7 +30,10 @@ it('normalizes optional transcript paths and ignores non-string paths', () => {
   expect(codec.parse(JSON.stringify({ ...input, transcript_path: '/tmp/session.jsonl' }))?.transcriptPath).toBe('/tmp/session.jsonl');
   expect(codec.parse(JSON.stringify({ ...input, transcript_path: 12 }))?.transcriptPath).toBeUndefined();
 });
-it('renders Claude Stop as additionalContext so the frame is shown once', () => {
-  expect(claudeCodec.render('stop', 'frame')).toBe(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'frame' } }) + '\n');
+it('renders Claude Stop as additionalContext only for a verified Claude version', () => {
+  expect(claudeCodec.stopContextFloor).toBe('2.1.307');
+  expect(claudeCodec.render('stop', 'frame', true)).toBe(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'frame' } }) + '\n');
+  expect(claudeCodec.render('stop', 'frame')).toBe(JSON.stringify({ decision: 'block', reason: 'frame' }) + '\n');
   expect(claudeCodec.render('tool', 'frame')).toBe(codec.render('tool', 'frame'));
+  expect(codec.stopContextFloor).toBeUndefined();
 });

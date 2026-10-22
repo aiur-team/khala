@@ -11,7 +11,10 @@ export type { SessionSource } from './session-sources';
 /** Hook dialect parsing and stdout, separate from shared delivery state. */
 export type DeliverCodec = Readonly<{
   parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string; replay?: boolean; transcriptPath?: string } | null;
-  render(kind: 'prompt' | 'tool' | 'stop', frame: string): string;
+  /** stopContext: the running harness is known to honour Stop additionalContext (see stopContextFloor). */
+  render(kind: 'prompt' | 'tool' | 'stop', frame: string, stopContext?: boolean): string;
+  /** Lowest harness version verified to show Stop additionalContext once and continue the turn. */
+  stopContextFloor?: string;
   noop(kind?: 'start' | 'prompt' | 'tool' | 'stop'): string;
   /** Some prompt hooks can only record activity, without injecting context. */
   promptAcceptsContext: boolean;
