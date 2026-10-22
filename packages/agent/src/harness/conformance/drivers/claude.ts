@@ -2,9 +2,12 @@ import path from 'node:path';
 import { writeJsonAtomic } from '../../../state';
 import { createTerminalWakeDriver } from '../../../wake/terminal/driver';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
+import { STOP_NUDGE } from '../../adapter';
 
 export const claudeDriver: FakeHarnessDriver = {
   ...claudeStyleDriver('CLAUDE_CODE_SESSION_ID'),
+  // Conformance sessions have no transcript, so Claude's version is unknown and Stop only nudges.
+  syncNudge: STOP_NUDGE,
   wakeProbe(adapter) {
     let prompt: string | undefined;
     let composer: string | undefined;

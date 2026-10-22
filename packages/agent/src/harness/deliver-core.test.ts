@@ -9,6 +9,7 @@ import type { DeliverCodec } from './adapter';
 import { openSessionDir, type SessionFiles } from '../state';
 import { appendEntries, readCursor } from '../inbox';
 import { readActivity, writeActivity } from '../activity';
+import { STOP_NUDGE } from './adapter';
 
 let root: string, files: SessionFiles, io: HookIO;
 let stdout: string, stderr: string;
@@ -226,8 +227,7 @@ it.each(['sync', 'steer', 'async'] as const)('preserves %s delivery boundaries w
   stdout = '';
   await hook('Stop');
   if (mode === 'sync') {
-    expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
-    expect(stdout).toContain('second note');
+    expect(JSON.parse(stdout)).toEqual({ decision: 'block', reason: STOP_NUDGE });
     expect((await readCursor(active)).deliveredCount).toBe(2);
     stdout = '';
     await hook('Stop', { stop_hook_active: true });

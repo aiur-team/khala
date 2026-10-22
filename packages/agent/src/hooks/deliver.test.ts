@@ -616,11 +616,8 @@ describe('multi-channel delivery', () => {
       : { session_id: 'session', hook_event_name: 'Stop' };
     await deliver(JSON.stringify(input), ['--harness', harness], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
     const result = JSON.parse(stdout.write.mock.calls[0]![0] as string);
-    if (harness !== 'claude') expect(result).toEqual(harness === 'cursor' ? { followup_message: STOP_NUDGE } : { decision: 'block', reason: STOP_NUDGE });
-    else {
-      expect(stopFrame(result)).toContain('channel="A"');
-      expect(stopFrame(result)).not.toContain('channel="B"');
-    }
+    // No transcript, so Claude's version is unknown: every harness nudges, and only channel A advances.
+    expect(result).toEqual(harness === 'cursor' ? { followup_message: STOP_NUDGE } : { decision: 'block', reason: STOP_NUDGE });
     expect((await readCursor(a)).deliveredCount).toBe(1);
     expect((await readCursor(b)).deliveredCount).toBe(0);
     expect(stderr.write).toHaveBeenCalledWith(JSON.stringify({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' }) + '\n');

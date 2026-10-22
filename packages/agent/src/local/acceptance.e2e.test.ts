@@ -22,6 +22,7 @@ import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { ensureStateDir, channelFiles, readJson, writeJsonAtomic } from '../state';
 import { readEntries } from '../inbox';
+import { STOP_NUDGE } from '../harness/adapter';
 import { eventually, readEgressLog, nonLoopbackAttempts, matrixModules } from './fixtures/egress';
 import { createWorld, cleanupWorld, cli, raw, admin, deliver, armClaudeWake, inbox, mode, codexCalls, helperFile,
   openBrowser, ownerOpen, McpProcess, startAgent, type World } from './fixtures/e2e-harness';
@@ -280,8 +281,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await received(world.claude, await send(world.codex, 'ae6-sync'));
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
     const sync = await deliver(world.claude, 'Stop');
-    expect(sync, context('AE6')).toMatchObject({ decision: 'block' });
-    expect(frameText(sync), context('AE6')).toContain(message('ae6-sync'));
+    // A block reason is a user turn, so Stop only nudges; the content comes from khala_read.
+    expect(sync, context('AE6')).toEqual({ decision: 'block', reason: STOP_NUDGE });
+    expect(frameText(toolData(await world.claude.call('khala_read', { limit: 100 }))), context('AE6')).toContain(message('ae6-sync'));
     await setMode(world.claude, 'kevin-Claude', 'async');
     await setMode(world.codex, 'kevin-Codex', 'async');
     expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
@@ -520,16 +522,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       // both channels without replaying the PostToolUse message.
       const stopSteer = await human(optimism, 'multi-stop-steer');
       const stop = await deliver(agent, 'Stop');
-      expect(stop).toMatchObject({ decision: 'block' });
-      const blocks = frameText(stop);
-      expect(blocks.match(/<khala-channel-messages /g)).toHaveLength(2);
-      expect(blocks).toContain(sync); expect(blocks).toContain(stopSteer); expect(blocks).not.toContain(steer);
-      for (const name of ['Ecosystem', 'Optimism']) expect(blocks).toContain(`channel=\\"${name}\\" you=\\"kevin-Claude\\"`);
-      const groups = stop!.reason!.match(/<khala-channel-messages\b[\s\S]*?<\/khala-channel-messages>/g)!;
-      for (const [name, own, other] of [['Ecosystem', sync, stopSteer], ['Optimism', stopSteer, sync]]) {
-        const group = groups.find(block => block.includes(`channel="${name}"`));
-        expect(group).toContain(own); expect(group).not.toContain(other);
-      }
+      // Stop only nudges; the per-channel khala_read checks below find both batches.
+      expect(stop).toEqual({ decision: 'block', reason: STOP_NUDGE });
 
       const routed = message('multi-routed');
       expect(toolData(await agent.call('khala_send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
