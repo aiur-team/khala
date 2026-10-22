@@ -3,7 +3,8 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { isWakeEntry } from './events/receive';
 import { filesForDir, readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
-export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number };
+/** shownEventId: the newest entry whose content reached the agent's context (read receipts follow it, not nudges). */
+export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number; shownEventId?: string };
 export async function readEntries(files: SessionFiles): Promise<InboxEntry[]> {
   let content: string;
   try { content = await fs.readFile(files.inbox, 'utf8'); } catch (error) {
@@ -49,14 +50,16 @@ export async function unreadCounts(files: SessionFiles): Promise<{ total: number
   const { entries } = await unread(files);
   return { total: entries.length, messages: entries.filter(entry => isWakeEntry(entry)).length };
 }
-export async function advanceCursor(files: SessionFiles, expected: Cursor, delivered: readonly InboxEntry[]): Promise<Cursor | 'conflict'> {
+export async function advanceCursor(files: SessionFiles, expected: Cursor, delivered: readonly InboxEntry[], shown = false): Promise<Cursor | 'conflict'> {
   const current = await readCursor(files);
   if (current.deliveredCount !== expected.deliveredCount || current.lastDeliveredEventId !== expected.lastDeliveredEventId) return 'conflict';
   if (!delivered.length) return expected;
   const entries = await readEntries(files);
   const slice = entries.slice(expected.deliveredCount, expected.deliveredCount + delivered.length);
   if (slice.length !== delivered.length || slice.some((entry, index) => entry.eventId !== delivered[index]?.eventId)) return 'conflict';
-  const next = { lastDeliveredEventId: delivered[delivered.length - 1]!.eventId, deliveredCount: expected.deliveredCount + delivered.length };
+  const last = delivered[delivered.length - 1]!.eventId;
+  const shownEventId = shown ? last : current.shownEventId;
+  const next = { lastDeliveredEventId: last, deliveredCount: expected.deliveredCount + delivered.length, ...(shownEventId ? { shownEventId } : {}) };
   await writeJsonAtomic(files.cursor, next);
   return next;
 }

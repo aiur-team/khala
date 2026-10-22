@@ -94,7 +94,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   async function markDelivered(attempt: Attempt): Promise<void> {
     const { session, files, credentials } = attempt;
     if (!session?.markRead || !files || !credentials) return;
-    const eventId = (await readCursor(files).catch(() => undefined))?.lastDeliveredEventId;
+    const eventId = (await readCursor(files).catch(() => undefined))?.shownEventId;
     if (!eventId || eventId === attempt.readReceipt) return;
     attempt.readReceipt = eventId;
     await session.markRead(credentials.roomId, eventId).catch(() => {});

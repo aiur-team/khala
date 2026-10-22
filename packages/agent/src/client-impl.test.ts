@@ -185,12 +185,17 @@ it('reports member presence, own-message readers and marks the newest read messa
   await client.read(3, '$before');
   expect(session.markRead).not.toHaveBeenCalled();
 });
-it('sends a read receipt for what delivery hooks delivered, once per cursor move', async () => {
+it('sends a read receipt for what delivery hooks showed, once per cursor move, never for a nudge', async () => {
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   try {
     await connected();
     Object.assign(session, { markRead: vi.fn(async () => {}) });
-    await fs.writeFile(path.join(channelDir(), 'cursor.json'), JSON.stringify({ lastDeliveredEventId: '$delivered', deliveredCount: 1 }));
+    // A nudge-only delivery (Cursor Stop) moves the cursor without showing content.
+    await fs.writeFile(path.join(channelDir(), 'cursor.json'), JSON.stringify({ lastDeliveredEventId: '$nudged', deliveredCount: 1 }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await client.status();
+    expect(session.markRead).not.toHaveBeenCalled();
+    await fs.writeFile(path.join(channelDir(), 'cursor.json'), JSON.stringify({ lastDeliveredEventId: '$delivered', deliveredCount: 2, shownEventId: '$delivered' }));
     await vi.advanceTimersByTimeAsync(15_000);
     await vi.waitFor(() => expect(session.markRead).toHaveBeenCalledWith(credentials.roomId, '$delivered'));
     await vi.advanceTimersByTimeAsync(15_000);

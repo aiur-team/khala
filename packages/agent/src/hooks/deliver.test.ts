@@ -62,6 +62,11 @@ it('silently ignores inactive non-prompt events without creating state', async (
   expect(await hook('Stop')).toEqual({ code: 0, stdout: '', stderr: '' });
   expect(await fs.readdir(root)).toEqual([]);
 });
+it('records shown content for read receipts on a Claude Stop delivery', async () => {
+  await seed([message(1)]);
+  expect(JSON.parse((await hook('Stop')).stdout).hookSpecificOutput.additionalContext).toContain('Docs are a go');
+  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$e1', deliveredCount: 1, shownEventId: '$e1' });
+});
 it('delivers exact prompt frame once and marks busy', async () => {
   await seed([message(1), message(2), message(3)]);
   const expected = exactFrame.replace('count="1"', 'count="3"').replace('\n</khala', '\n[2026-10-02T10:04:00Z] Maya (human): Docs are a go from my side.\n[2026-10-02T10:04:00Z] Maya (human): Docs are a go from my side.\n</khala');
@@ -279,7 +284,7 @@ it('recomputes the unread slice when another delivery advances the cursor', asyn
   await deliver(stopInput(), ['--harness', 'claude'], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
   expect(advance).toHaveBeenCalledTimes(2);
   expect(stdout.write).toHaveBeenCalledWith(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: exactFrame.replace('Docs are a go from my side.', 'second-message') } }) + '\n');
-  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$e2', deliveredCount: 2 });
+  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$e2', deliveredCount: 2, shownEventId: '$e2' });
   expect((await unread(files)).entries).toEqual([]);
 });
 
@@ -351,7 +356,7 @@ describe('cursor', () => {
     expect((await readActivity(files)).state).toBe('busy');
     expect(await cursorHook('postToolUse')).toEqual({});
     expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: CURSOR_STOP_NUDGE });
-    expect((await readCursor(files)).deliveredCount).toBe(1);
+    expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$e1', deliveredCount: 1 });
     await appendEntries(files, [message(2)]);
     expect(await cursorHook('stop', { loop_count: 1 })).toEqual({});
     expect((await readActivity(files)).state).toBe('idle');
@@ -360,6 +365,7 @@ describe('cursor', () => {
   it('steer: postToolUse returns additional_context', async () => {
     await seedCursor([message()], 'steer');
     expect(await cursorHook('postToolUse')).toEqual({ additional_context: exactFrame });
+    expect((await readCursor(files)).shownEventId).toBe('$e1');
     expect(await cursorHook('postToolUse')).toEqual({});
   });
   it('async: injects nothing and leaves messages unread', async () => {
