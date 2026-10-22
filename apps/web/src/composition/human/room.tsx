@@ -31,11 +31,16 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipant
     const participants = await context.roomParticipants?.(roomId, signal);
     if (!participants) throw new Error('agent roster unavailable');
     if (!signal.aborted && epoch === readEpoch) onParticipants(participants);
-    return { generation: context.generation, agents: participants.filter(item => item.kind === 'agent').map(item => ({
-      participantId: item.participantId, ownerId: item.ownerId, displayName: item.displayName,
-      ownerDisplayName: participants.find(owner => owner.kind === 'human' && owner.ownerId === item.ownerId)?.displayName ?? 'Channel member',
-      connection: 'unknown' as const, routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown' as const,
-    })) };
+    return { generation: context.generation, agents: participants.filter(item => item.kind === 'agent').map(item => {
+      const detail = context.describeParticipant?.(item.participantId);
+      const presence = detail?.kind === 'agent' ? context.presence?.(detail.matrixUserId) ?? null : null;
+      return {
+        participantId: item.participantId, ownerId: item.ownerId, displayName: item.displayName,
+        ownerDisplayName: participants.find(owner => owner.kind === 'human' && owner.ownerId === item.ownerId)?.displayName ?? 'Channel member',
+        connection: presence?.connection ?? 'unknown', routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown' as const,
+        ...(presence?.connection === 'offline' ? { awaySince: presence.since, ...(presence.reason ? { awayReason: presence.reason } : {}) } : {}),
+      };
+    }) };
   };
   return {
     agents,
@@ -308,6 +313,10 @@ function HumanRoom({ context, roomId, navigate, routes }: {
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
           {...(describeParticipant ? { describeParticipant } : {})}
+          {...(context.hasRead ? { seenBy: (eventId: EventId) => presence.agents.flatMap(agent => {
+            const userId = matrixUserId(agent.participantId);
+            return userId && context.hasRead!(roomId, userId, eventId) ? [agent.participantId] : [];
+          }) } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

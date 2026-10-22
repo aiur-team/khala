@@ -1,4 +1,4 @@
-import type { AgentNamesPort, ChannelNamesPort } from '../../features/channel/ports';
+import type { AgentNamesPort, ChannelNamesPort, MemberPresence } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
@@ -38,6 +38,10 @@ export interface HumanApplicationPorts {
   readonly channelNames?: ChannelNamesPort;
   /** When `matrixUserId` took its current name in `roomId` (its latest membership event), if known. */
   readonly memberSince?: (roomId: RoomId, matrixUserId: string) => number | null;
+  /** Hosted Matrix presence; absent (local) or `null` (not yet known) hides the roster dot. */
+  readonly presence?: (matrixUserId: string) => MemberPresence | null;
+  /** Whether `matrixUserId` has read a loaded event in `roomId`. */
+  readonly hasRead?: (roomId: RoomId, matrixUserId: string, eventId: string) => boolean;
   readonly profile?: ProfilePort;
   /** Current room membership, independent of asynchronous timeline loading. */
   readonly isJoined?: (roomId: RoomId) => boolean;

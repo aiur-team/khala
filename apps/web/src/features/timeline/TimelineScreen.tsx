@@ -16,7 +16,7 @@ import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from
 import { attributionFor, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent, type RenderOptions } from './message-renderer';
-import type { MentionCandidate } from './mentions';
+import { segmentMentions, type MentionCandidate } from './mentions';
 import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
@@ -67,6 +67,8 @@ export interface TimelineScreenProps {
   onOpenParticipant?: (participantId: string) => void;
   /** Receives the `@mention` roster on change, so the detail pane's Recent in Khala draws the same chips. */
   onMentionRoster?: (roster: readonly MentionCandidate[]) => void;
+  /** Participants whose read receipt covers `eventId`; a message shows "Seen by" for the ones it @mentions. */
+  seenBy?: (eventId: EventId) => readonly string[];
   /** The empty thread's Invite button. KM-183 opens the invite popover. */
   onInvite?: () => void;
   /** The clock for day separator labels; tests pin it. */
@@ -224,7 +226,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
+  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -679,6 +681,9 @@ export function TimelineScreen({
     const identity = identityFor(item.participant, fullNameFor(item.participant, eventId));
     const inlineEvidence = evidence ? evidenceLayout.inline.get(eventId) : undefined;
     const memberOf = evidence ? evidenceLayout.memberOf.get(eventId) ?? [] : [];
+    const readers = seenBy && item.content.kind === 'text' && item.content.body.includes('@') ? seenBy(eventId) : [];
+    const seen = readers.length === 0 ? [] : [...new Set(segmentMentions((item.content as { body: string }).body, mentionRoster)
+      .flatMap(segment => 'mention' in segment && readers.includes(segment.participantId) ? [segment.mention] : []))];
     entries.push({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
@@ -690,6 +695,7 @@ export function TimelineScreen({
         after={<>
           {isReadableItem(item) && renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
           {inlineEvidence ? <InlineEvidence unit={inlineEvidence} status={evidenceView.status} /> : null}
+          {seen.length > 0 ? <p className="kh-seen">Seen by {seen.join(', ')}</p> : null}
           {memberOf.map(unit => {
             const linkId = evidenceLinkId(unit, eventId);
             return (

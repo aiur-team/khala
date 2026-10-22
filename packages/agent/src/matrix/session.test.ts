@@ -47,6 +47,8 @@ function fake() {
     sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$state' }),
     sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
+    setPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn((_id: string) => null as unknown),
+    setRoomReadMarkersHttpRequest: vi.fn().mockResolvedValue({}),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
   });
 }
@@ -605,4 +607,42 @@ it.each(['expired', 'not-found', 'forbidden', '404', 'before-join', 'transient']
   expect(fetchRoomEvent).toHaveBeenCalledTimes(kind === 'expired' ? 0 : 1);
   if (kind === 'transient') expect(rememberUndecryptable).not.toHaveBeenCalled();
   else expect(rememberUndecryptable).toHaveBeenLastCalledWith([]);
+});
+
+describe('presence and read receipts', () => {
+  const presenceEvent = (content: Record<string, unknown>) => ({ getContent: () => content });
+  it('heartbeats online while alive and says why on a clean exit', async () => {
+    vi.useFakeTimers();
+    session = await createAgentMatrixSession(creds);
+    expect(client.setPresence).toHaveBeenCalledWith({ presence: 'online', status_msg: '' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(client.setPresence).toHaveBeenCalledTimes(2);
+    await session.stop();
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'session ended' });
+    expect(client.setPresence.mock.invocationCallOrder.at(-1)).toBeLessThan(client.stopClient.mock.invocationCallOrder[0]!);
+  });
+  it('reports other members as online, away since their last heartbeat, or unknown', async () => {
+    const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@idle:hs', name: 'Idle' }, { userId: '@new:hs', name: 'New' }];
+    const users: Record<string, unknown> = {
+      '@peer:hs': { presence: 'offline', lastPresenceTs: Date.parse('2026-10-22T12:00:00Z'), lastActiveAgo: 3_600_000, events: { presence: presenceEvent({ status_msg: 'session ended' }) } },
+      '@idle:hs': { presence: 'unavailable', events: { presence: presenceEvent({}) } },
+      '@new:hs': { presence: 'offline', events: { presence: null } },
+    };
+    Object.assign(client.room, { getJoinedMembers: () => members });
+    client.getUser.mockImplementation((id: string) => users[id] ?? null);
+    session = await createAgentMatrixSession(creds);
+    expect(session.members!('!r:hs')).toEqual([
+      { name: 'Peer', presence: 'away', since: '2026-10-22T11:00:00.000Z', reason: 'session ended' },
+      { name: 'Idle', presence: 'online' }, { name: 'New', presence: 'unknown' }]);
+  });
+  it('lists readers of a loaded event and marks delivered events read', async () => {
+    const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@late:hs', name: 'Late' }];
+    Object.assign(client.room, { getJoinedMembers: () => members, findEventById: (id: string) => id === '$mine' ? {} : undefined,
+      hasUserReadEvent: (userId: string) => userId !== '@late:hs' });
+    session = await createAgentMatrixSession(creds);
+    expect(session.seenBy!('!r:hs', '$mine')).toEqual(['Peer']);
+    expect(session.seenBy!('!r:hs', '$old')).toEqual([]);
+    await session.markRead!('!r:hs', '$seen');
+    expect(client.setRoomReadMarkersHttpRequest).toHaveBeenCalledWith('!r:hs', '$seen', '$seen');
+  });
 });

@@ -158,6 +158,35 @@ it('reads earlier and own history without appending or waking; preserves paginat
   vi.mocked(session.history).mockResolvedValue({ messages: [] });
   expect(await client.read(2)).toEqual({ messages: [] });
 });
+it('reports member presence, own-message readers and marks the newest read message', async () => {
+  await connected();
+  const members = [{ name: 'Peer', presence: 'away' as const, since: '2026-10-22T11:00:00.000Z', reason: 'session ended' }];
+  Object.assign(session, { members: vi.fn(() => members), seenBy: vi.fn((_room: string, id: string) => id === '$own' ? ['Peer'] : []),
+    markRead: vi.fn(async () => {}) });
+  vi.mocked(session.history).mockResolvedValue({ messages: [message('$own', credentials.userId), message('$unseen', credentials.userId), message('$theirs')] });
+  const page = await client.read(3);
+  expect(page.members).toEqual(members);
+  expect(page.messages.map(m => (m as { seenBy?: string[] }).seenBy)).toEqual([['Peer'], undefined, undefined]);
+  expect(session.seenBy).not.toHaveBeenCalledWith(credentials.roomId, '$theirs');
+  expect(session.markRead).toHaveBeenCalledWith(credentials.roomId, '$theirs');
+  expect((await client.status()).channels?.[0]?.members).toEqual(members);
+  vi.mocked(session.markRead!).mockClear();
+  await client.read(3, '$before');
+  expect(session.markRead).not.toHaveBeenCalled();
+});
+it('sends a read receipt for what delivery hooks delivered, once per cursor move', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  try {
+    await connected();
+    Object.assign(session, { markRead: vi.fn(async () => {}) });
+    await fs.writeFile(path.join(channelDir(), 'cursor.json'), JSON.stringify({ lastDeliveredEventId: '$delivered', deliveredCount: 1 }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(session.markRead).toHaveBeenCalledWith(credentials.roomId, '$delivered'));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await client.status();
+    expect(session.markRead).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
 it('guards read/send and recovers from sanitized send failures', async () => {
   await expect(client.send('x')).rejects.toMatchObject({ code: 'not_connected' });
   await expect(client.read(1)).rejects.toMatchObject({ code: 'not_connected' });

@@ -6,7 +6,9 @@ export const RESTORE_HISTORY_MAX_PAGES = 20;
 
 export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1' | 'm.room.member'; body: string; content: Record<string, unknown>; previousContent?: Record<string, unknown> };
 export type SessionModeCommand = { eventId: string; roomId: string; sender: string; ts: number; content: unknown };
-export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
+/** `away` carries when the member was last seen alive and, after a clean exit, why it left. */
+export type MemberPresence = { name: string; presence: 'online' | 'away' | 'unknown'; since?: string; reason?: string };
+export type SessionEndReason ='removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
   readonly userId: string;
   readonly cryptoReset?: boolean;
@@ -26,6 +28,11 @@ export interface ChannelSession {
   sendChannelEvent(roomId: string, content: Record<string, unknown>, txnId?: string): Promise<{ eventId: string }>;
   roomName(roomId: string): string | undefined;
   displayName(userId: string): string | undefined;
+  // Hosted only; the local helper has no presence or receipts.
+  members?(roomId: string): MemberPresence[];
+  /** Names of other members whose read receipt (or later message) covers `eventId`. */
+  seenBy?(roomId: string, eventId: string): string[];
+  markRead?(roomId: string, eventId: string): Promise<void>;
   stop(): Promise<void>;
 }
 
