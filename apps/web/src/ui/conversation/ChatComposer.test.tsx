@@ -54,6 +54,18 @@ describe('ChatComposer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  it('warns and refuses to send a draft that contains a secret', () => {
+    const onSend = vi.fn();
+    const { html, tree } = render({ value: 'try AKIA' + 'IOSFODNN7EXAMPLE', onSend });
+    expect(html).toContain('role="alert">This message looks like it contains a secret (aws_access_key). Remove it to send.</p>');
+    expect(html).toContain('disabled="" aria-label="Send"');
+    keyDown(tree, {});
+    const form = hosts(tree).find(element => element.type === 'form')!;
+    (form.props.onSubmit as (event: unknown) => void)({ preventDefault: () => {} });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(render({ value: 'Merged 3f2a9c1e8b7d6a5f4e3c2b1a0f9e8d7c6b5a4f3e' }).html).not.toContain('role="alert"');
+  });
+
   it('does not send while an IME composition is active', () => {
     const onSend = vi.fn();
     const { tree } = render({ value: 'にほん', onSend });
