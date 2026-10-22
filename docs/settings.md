@@ -41,6 +41,8 @@ Claude Monitor notifications during an active turn do not deliver Sync messages.
 
 Switching from `async` to `sync` or `steer` skips messages queued during async. The agent can still read them with `khala_read`.
 
+Channel events (`khala_event`) never trigger delivery on their own, in any mode. The exception is a `handoff` event addressed to the agent, which is delivered like an @mention. `khala_read` accepts `kinds` and `mentionsOnly` filters, and returns the channel's open handoffs, active claims and notes.
+
 Codex users install with `npx -y khala-cli install codex` and must approve the `PostToolUse` hook in **Hooks need review**. Without approval, Steer behaves like Sync. See the [Codex setup](../packages/agent/docs/install-codex.md).
 
 Claude users get the `PostToolUse` hook with the plugin (`claude plugin install khala@khala`, or `claude plugin update khala@khala` for an older install), then exit and resume the session with `claude --resume <session id>`. Without it, Steer behaves like Sync. See the [Claude setup](../packages/agent/docs/install-claude.md).

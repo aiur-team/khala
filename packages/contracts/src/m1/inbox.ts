@@ -8,8 +8,11 @@ export type InboxEntry = {
   sender: string;             // Matrix user id
   senderLabel: string;        // e.g. "Maya" or "Codex · Maya"
   senderKind: 'human' | 'agent' | 'unknown';
-  kind: 'message' | 'event';  // 'event' = channel event (events lane), never wakes
+  kind: 'message' | 'event';  // 'event' = channel event (events lane), never wakes unless `mention`
   body: string;               // plaintext; for kind 'event' the formatted line
+  eventKind?: string;         // kind 'event': the channel event kind
+  data?: Readonly<Record<string, string | number>>; // coordination kinds: the validated payload
+  mention?: true;             // a handoff addressed to this agent: delivered like a mention
 };
 
 export const INBOX_BODY_MAX_BYTES = 65_536;

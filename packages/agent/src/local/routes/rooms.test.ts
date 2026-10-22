@@ -269,6 +269,15 @@ describe('participant endpoints', () => {
     expect(await f.call('POST', 'send', { auth: OWNER, body: { ...request, content: { v: 1, kind: 'Bad Kind', summary: 'x', body: '' } } })).toEqual({ status: 400, json: { error: 'invalid_request' } });
   });
 
+  it('keeps validated coordination data and rejects malformed data', async () => {
+    const encoded = encodeChannelEvent({ kind: 'claim', data: { key: 'AIUR-1' } });
+    if (!encoded.ok) throw new Error('invalid fixture');
+    const request = { txnId: 'claim', type: 'com.khala.event.v1', content: encoded.value };
+    expect((await f.call('POST', 'send', { auth: OWNER, body: request })).status).toBe(200);
+    expect(f.log.at(-1)!.content).toEqual(encoded.value);
+    expect((await f.call('POST', 'send', { auth: OWNER, body: { ...request, txnId: 'bad', content: { ...encoded.value, data: { key: '' } } } })).status).toBe(400);
+  });
+
   it('pages message history oldest first, excluding state events', async () => {
     for (let i = 0; i < 5; i++) {
       f.seed({ type: 'm.room.message', sender: LOCAL_OWNER_USER_ID, content: { msgtype: 'm.text', body: String(i) } });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { CHANNEL_EVENT_STATUSES, type ChannelEventContent } from '@khala/contracts/m1/channel-event';
+import { CHANNEL_EVENT_STATUSES, encodeChannelEvent, type ChannelEventContent } from '@khala/contracts/m1/channel-event';
 import { clockLabel } from '../../ui/khala/format-time';
 import { ChannelEventPill } from './ChannelEventPill';
 
@@ -11,6 +11,13 @@ const render = (value: ChannelEventContent) => renderToStaticMarkup(<ChannelEven
   senderName="Claude · Kevin" receivedAt="2026-10-01T10:10:30.000Z" timeOptions={{ timeZone: 'UTC' }} />);
 
 describe('ChannelEventPill', () => {
+  it('renders a coordination event as one compact line with its verdict status', () => {
+    const verdict = encodeChannelEvent({ kind: 'verdict', data: { pr: 7, verdict: 'changes_requested', reason: 'add a test' } });
+    if (!verdict.ok) throw new Error('invalid fixture');
+    const html = render(verdict.value);
+    expect(html).toContain('PR #7 changes requested: add a test');
+    expect(html).toContain('channel-event-pill__dot--attention');
+  });
   it('renders the formatted event, time and safe external link', () => {
     const html = render(content);
     expect(html).toContain('AIUR-395 review requested · feat/events-cursor');

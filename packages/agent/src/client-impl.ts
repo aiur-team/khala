@@ -4,13 +4,14 @@ import * as fs from 'node:fs/promises';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { applyListeningMode, readListeningMode } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
-import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
+import { encodeChannelEvent, foldCoordination } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
+import { mentions } from './watch';
 import { appendInbox, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
@@ -96,8 +97,31 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     const { eventId, roomId, ts, sender, senderLabel, senderKind } = entry;
     const base = { eventId, roomId, ts, sender, senderLabel, senderKind };
     const content = message.type === 'm.room.member' ? memberRenameContent(message.content, message.previousContent) : message.content;
-    const event = toEventInboxEntry(base, content);
+    const event = toEventInboxEntry(base, content, ownName(session));
     return event && acceptKey(event.key) ? event.entry : null;
+  }
+  // ponytail: the fold sees the newest FOLD_PAGES x 100 events; older claims, handoffs and notes are forgotten.
+  const FOLD_PAGES = 5;
+  /** Pages back from `before` (newest when undefined), oldest entry first, until `enough` holds or pages run out. */
+  async function scan(session: ChannelSession, roomId: string, before?: string, enough: (entries: InboxEntry[]) => boolean = () => false) {
+    let entries: InboxEntry[] = [];
+    let cursor = before;
+    const acceptKey = createEventKeyFilter();
+    for (let page = 0; page < FOLD_PAGES; page++) {
+      const result = await session.history(roomId, 100, cursor);
+      entries = [...result.messages.filter(m => m.roomId === roomId).map(m => inboxEntry(m, session, acceptKey))
+        .filter((entry): entry is InboxEntry => entry !== null), ...entries];
+      cursor = result.nextBefore;
+      if (cursor === undefined || enough(entries)) break;
+    }
+    return { entries, ...(cursor !== undefined ? { nextBefore: cursor } : {}) };
+  }
+  function coordination(entries: readonly InboxEntry[]) {
+    const state = foldCoordination(entries.flatMap(entry => entry.eventKind && entry.data
+      ? [{ sender: entry.sender, by: entry.senderLabel, at: entry.ts, content: { kind: entry.eventKind, data: entry.data } }] : []));
+    return { ...(state.openHandoffs.length ? { openHandoffs: state.openHandoffs } : {}),
+      ...(state.activeClaims.length ? { activeClaims: state.activeClaims } : {}),
+      ...(Object.keys(state.notes).length ? { notes: state.notes } : {}) };
   }
 
   function refs(): ChannelRef[] {
@@ -620,15 +644,26 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         unread: items.reduce((sum, item) => sum + item.unread, 0),
         ...(single ? { listeningMode: single.listeningMode } : items.length === 0 ? { listeningMode: defaultMode } : {}), channels: items };
     },
-    async read(limit, before, channel) {
+    async read(limit, before, channel, filter) {
       await initialize();
       const { session, credentials } = requireSession(channel);
       try {
+        const you = ownName(session);
+        const latest = await scan(session, credentials.roomId);
+        const state = coordination(latest.entries);
+        if (filter) {
+          const matches = (entry: InboxEntry) => (!filter.kinds || filter.kinds.includes(entry.kind === 'message' ? 'message' : entry.eventKind ?? 'event'))
+            && (!filter.mentionsOnly || entry.mention === true || mentions(entry, you));
+          const found = (before === undefined ? latest : await scan(session, credentials.roomId, before, entries => entries.filter(matches).length > limit));
+          const selected = found.entries.filter(matches);
+          const messages = selected.slice(-limit);
+          const nextBefore = selected.length > limit ? messages[0]!.eventId : found.nextBefore;
+          return { ...(you !== undefined ? { you } : {}), messages, ...(nextBefore !== undefined ? { nextBefore } : {}), ...state };
+        }
         const page = await session.history(credentials.roomId, limit, before);
         const acceptKey = createEventKeyFilter();
-        const you = ownName(session);
         return { ...(you !== undefined ? { you } : {}), messages: page.messages.filter(m => m.roomId === credentials.roomId).map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null),
-          ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}) };
+          ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
       } catch (error) { throw safeError(error); }
     },
     async send(text, channel) {
@@ -651,10 +686,21 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (!encoded.ok) throw new KhalaClientError('internal_error', 'invalid_event');
       const txnId = encoded.value.key === undefined ? undefined
         : 'khev-' + createHash('sha256').update(encoded.value.key).digest('hex').slice(0, 32);
+      // Claims are a race-tolerant convention over E2EE content, not a lock: the earliest claim
+      // by room order wins. Check before posting, and again after, in case an earlier claim raced ours.
+      const claimKey = encoded.value.kind === 'claim' ? encoded.value.data?.key : undefined;
+      const holder = async () => {
+        if (claimKey === undefined) return undefined;
+        const claim = coordination((await scan(session, credentials.roomId)).entries).activeClaims?.find(item => item.key === claimKey);
+        return claim && claim.sender !== session.userId ? { error: 'claimed' as const, by: claim.by, at: claim.at } : undefined;
+      };
       try {
+        const held = await holder();
+        if (held) return held;
         const sent = await session.sendChannelEvent(credentials.roomId, encoded.value, txnId);
         if (current(attempt) && attempt.status.state === 'send_failed') await setStatus(attempt, 'connected');
-        return sent;
+        // The event is posted; a failed recheck must not report the send as failed.
+        return await holder().catch(() => undefined) ?? sent;
       } catch (error) {
         if (!current(attempt)) throw new KhalaClientError('not_connected');
         if (current(attempt)) await setStatus(attempt, 'send_failed', errorDetail(error, 'send_failed'));

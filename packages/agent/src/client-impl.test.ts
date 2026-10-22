@@ -5,7 +5,7 @@ import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { StartSession } from './transport';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import type { requestJoin, pollJoin, reportReady } from './join';
@@ -275,7 +275,7 @@ it('dedupes keys across senders and drops own and malformed events before key co
   handler!({ ...channelEvent('$bad'), content: { ...channelEvent('$bad').content, url: 'javascript:x' } });
   handler!(channelEvent('$first'));
   handler!(channelEvent('$duplicate', '@agent-other:s'));
-  expect(await entries()).toEqual([{ ...toInboxEntry(message('$first'), 'Maya'), kind: 'event', body: 'CI failed: test' }]);
+  expect(await entries()).toEqual([{ ...toInboxEntry(message('$first'), 'Maya'), kind: 'event', body: 'CI failed: test', eventKind: 'ci.failed' }]);
   expect(waker).not.toHaveBeenCalled();
 });
 it('preserves message/event order and wakes only for messages', async () => {
@@ -1458,4 +1458,54 @@ it.each(['ended', 'join-failed'] as const)('closes the session before wiping cre
   expect(await readStateFile(savedDir, 'resume.json')).toBeNull();
   expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${control.creds.homeserver}/_matrix/client/v3/logout`,
     expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: `Bearer ${control.creds.accessToken}` }) }));
+});
+
+describe('coordination events', () => {
+  const coord = (eventId: string, kind: string, data: Record<string, unknown>, sender = '@khala_abc:s'): SessionMessage => {
+    const encoded = encodeChannelEvent({ kind, data });
+    if (!encoded.ok) throw new Error('invalid fixture');
+    return { eventId, sender, roomId: credentials.roomId, ts: now().getTime(), type: 'com.khala.event.v1', body: '', content: encoded.value };
+  };
+  beforeEach(() => { vi.mocked(session.displayName).mockImplementation(id => id === '@khala_abc:s' ? 'Maya' : id === credentials.userId ? 'Codex' : undefined); });
+  it('filters reads and returns folded handoffs, claims and notes', async () => {
+    await connected();
+    vi.mocked(session.history).mockResolvedValue({ messages: [
+      message('$hi'), { ...message('$ping'), body: '@Codex ping' }, coord('$c1', 'claim', { key: 'AIUR-1' }),
+      coord('$h1', 'handoff', { ticket: 'AIUR-2', from: 'Maya', to: 'Codex', reason: 'yours now', state: 'in_review' }),
+      coord('$n1', 'note', { key: 'freeze', value: 'no merges' }),
+    ] });
+    const read = await client.read(10, undefined, undefined, { mentionsOnly: true });
+    expect(read.messages.map(entry => entry.eventId)).toEqual(['$ping', '$h1']);
+    expect(read.activeClaims).toEqual([{ key: 'AIUR-1', by: 'Maya', sender: '@khala_abc:s', at: now().toISOString() }]);
+    expect(read.openHandoffs).toMatchObject([{ ticket: 'AIUR-2', to: 'Codex' }]);
+    expect(read.notes).toEqual({ freeze: 'no merges' });
+    expect((await client.read(1, undefined, undefined, { kinds: ['claim', 'note'] })).messages.map(entry => entry.eventId)).toEqual(['$n1']);
+    expect((await client.read(10, undefined, undefined, { kinds: ['message'] })).messages.map(entry => entry.eventId)).toEqual(['$hi', '$ping']);
+  });
+  it('rejects a claim on a key another participant holds without posting', async () => {
+    await connected();
+    vi.mocked(session.history).mockResolvedValue({ messages: [coord('$c1', 'claim', { key: 'AIUR-1' })] });
+    const claim = encodeChannelEvent({ kind: 'claim', data: { key: 'AIUR-1' } });
+    if (!claim.ok) throw new Error('invalid fixture');
+    expect(await client.sendChannelEvent(claim.value)).toEqual({ error: 'claimed', by: 'Maya', at: now().toISOString() });
+    expect(session.sendChannelEvent).not.toHaveBeenCalled();
+    vi.mocked(session.history).mockResolvedValue({ messages: [] });
+    expect(await client.sendChannelEvent(claim.value)).toEqual({ eventId: '$event' });
+  });
+  it('reports a lost claim race after posting', async () => {
+    await connected();
+    vi.mocked(session.history).mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValue({ messages: [coord('$c0', 'claim', { key: 'AIUR-1' }), coord('$event', 'claim', { key: 'AIUR-1' }, credentials.userId)] });
+    const claim = encodeChannelEvent({ kind: 'claim', data: { key: 'AIUR-1' } });
+    if (!claim.ok) throw new Error('invalid fixture');
+    expect(await client.sendChannelEvent(claim.value)).toMatchObject({ error: 'claimed', by: 'Maya' });
+    expect(session.sendChannelEvent).toHaveBeenCalledOnce();
+  });
+  it('wakes for a handoff addressed to the agent only', async () => {
+    await connected();
+    handler!(coord('$other', 'handoff', { ticket: 'T', from: 'Maya', to: 'Bob', reason: 'r', state: 's' }));
+    handler!(coord('$mine', 'handoff', { ticket: 'T', from: 'Maya', to: '@codex', reason: 'r', state: 's' }));
+    await entries();
+    expect(waker.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$mine']);
+  });
 });

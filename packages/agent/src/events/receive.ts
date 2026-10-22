@@ -1,12 +1,15 @@
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { decodeChannelEvent, formatChannelEventLine } from '@khala/contracts/m1/channel-event';
 
-export function toEventInboxEntry(base: Omit<InboxEntry, 'kind' | 'body'>, rawContent: unknown): { entry: InboxEntry; key?: string } | null {
+/** `you` is the agent's own display name: a handoff addressed to it is delivered like a mention. */
+export function toEventInboxEntry(base: Omit<InboxEntry, 'kind' | 'body'>, rawContent: unknown, you?: string): { entry: InboxEntry; key?: string } | null {
   const decoded = decodeChannelEvent(rawContent);
   if (!decoded.ok) return null;
   const content = decoded.value;
+  const to = content.kind === 'handoff' ? String(content.data?.to ?? '').replace(/^@/u, '').toLowerCase() : '';
   return {
-    entry: { ...base, kind: 'event', body: formatChannelEventLine(content) + (content.url ? ' ' + content.url : '') },
+    entry: { ...base, kind: 'event', body: formatChannelEventLine(content) + (content.url ? ' ' + content.url : ''), eventKind: content.kind,
+      ...(content.data ? { data: content.data } : {}), ...(to && to === you?.toLowerCase() ? { mention: true as const } : {}) },
     ...(content.key !== undefined ? { key: content.key } : {}),
   };
 }
@@ -22,5 +25,5 @@ export function createEventKeyFilter(): (key: string | undefined) => boolean {
 }
 
 export function isWakeEntry(entry: InboxEntry): boolean {
-  return entry.kind === 'message';
+  return entry.kind === 'message' || entry.mention === true;
 }

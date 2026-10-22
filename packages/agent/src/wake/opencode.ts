@@ -2,6 +2,7 @@ import path from 'node:path';
 import { readActivity } from '../activity';
 import { listChannels } from '../channels';
 import { readCursor, unread } from '../inbox';
+import { isWakeEntry } from '../events/receive';
 import { readListeningMode } from '../mode';
 import { readJson, writeJsonAtomic, stateRoot, type SessionFiles } from '../state';
 import type { WakeDriver } from './driver';
@@ -74,7 +75,7 @@ export async function pollOpenCodeWake(files: SessionFiles, io: HookIO, replay =
     for (const channel of await listChannels(files)) {
       if (await readListeningMode(channel.files) === 'async') continue;
       const session = await readJson<{ userId: string }>(channel.files.session);
-      if ((await unread(channel.files)).entries.some(entry => entry.kind === 'message' && entry.sender !== session?.userId)) eligible = true;
+      if ((await unread(channel.files)).entries.some(entry => isWakeEntry(entry) && entry.sender !== session?.userId)) eligible = true;
     }
     if (!eligible) return;
     await writeJsonAtomic(path.join(files.dir, file), { ...pending, delivered: true });

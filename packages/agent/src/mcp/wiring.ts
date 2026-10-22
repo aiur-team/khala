@@ -66,9 +66,9 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
         return watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
           ? { ...withWake, watcherArmed: await monitorArmed(files), ...(hint ? { watcherHint: hint } : {}) } : withWake;
       },
-      async read(limit, before, channel) {
+      async read(limit, before, channel, filter) {
         await initialize();
-        const result = await (channel === undefined ? client.read(limit, before) : client.read(limit, before, channel));
+        const result = await (filter ? client.read(limit, before, channel, filter) : channel === undefined ? client.read(limit, before) : client.read(limit, before, channel));
         const wakeNotice = await wakeDisableNotice(files.dir);
         return { ...result, ...(wakeNotice ? { wakeNotice } : {}) };
       },

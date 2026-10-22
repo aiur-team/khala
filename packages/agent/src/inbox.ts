@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
+import { isWakeEntry } from './events/receive';
 import { filesForDir, readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
 export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number };
@@ -46,7 +47,7 @@ export async function unread(files: SessionFiles): Promise<{ entries: InboxEntry
 }
 export async function unreadCounts(files: SessionFiles): Promise<{ total: number; messages: number }> {
   const { entries } = await unread(files);
-  return { total: entries.length, messages: entries.filter(entry => entry.kind === 'message').length };
+  return { total: entries.length, messages: entries.filter(entry => isWakeEntry(entry)).length };
 }
 export async function advanceCursor(files: SessionFiles, expected: Cursor, delivered: readonly InboxEntry[]): Promise<Cursor | 'conflict'> {
   const current = await readCursor(files);
