@@ -25,14 +25,15 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       const confirmed = { ...view, state: 'confirmed', agentUserId: '@agent-x:khala.local' };
       let confirmations = 0;
       let polls = 0;
-      const invites: unknown[] = [];
+      let signedIn = false;
       const errors: string[] = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/api/human/auth/login?**', async route => {
         assert.equal(new URL(route.request().url()).searchParams.get('return_to'), '/agent/confirm?joinId=j1');
+        signedIn = true;
         await route.fulfill({ status: 302, headers: { location: '/agent/confirm?joinId=j1' } });
       });
-      await page.route('**/api/human/me', route => route.fulfill({ json: {
+      await page.route('**/api/human/me', route => !signedIn ? route.fulfill({ status: 401, json: { code: 'authentication_required' } }) : route.fulfill({ json: {
         principal: { v: 1, ownerId: 'owner_alice', providerIssuer: 'https://issuer.example', providerSubject: 'alice',
           verifiedEmail: 'alice@example.test', sessionExpiresAt: '2030-01-01T00:00:00Z' }, csrfToken: 'browser-proof',
       } }));
@@ -48,11 +49,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         polls += 1;
         return route.fulfill({ json: { ...confirmed, state: polls >= 3 ? 'ready' : 'confirmed' } });
       });
-      await page.route('**/fixture/invite', route => {
-        invites.push(route.request().postDataJSON());
-        return route.fulfill({ json: {} });
-      });
-      await page.goto(origin + '?signedOut=1');
+      await page.goto(origin + '/agent/confirm?joinId=j1');
       // Signed out, the page goes straight to sign-in and back; no button.
       await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
       assert.equal(new URL(page.url()).pathname + new URL(page.url()).search, '/agent/confirm?joinId=j1');
@@ -69,13 +66,12 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       assert.equal(await confirmPage.getAttribute('data-theme'), toggled);
       assert.equal(await page.evaluate(() => localStorage.getItem('khala.theme')), toggled);
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
-      await page.getByText('Connecting Helper… Keep this tab open.').waitFor();
       await page.getByRole('link', { name: 'Open channel' }).waitFor();
       await expect(page.getByText('Helper joined Launch.', { exact: true })).toBeVisible();
       assert.equal(confirmations, 1);
       assert.equal(polls, 3);
-      assert.deepEqual(invites, [{ roomId: '!r1:khala.local', userId: '@agent-x:khala.local' }]);
-      assert.equal(await page.getByText('Keep this tab open.', { exact: false }).count(), 0);
+      // No Matrix device: the page never takes the cross-tab device lock, so any tab or browser works.
+      assert.deepEqual(await page.evaluate(async () => { const { held = [], pending = [] } = await navigator.locks.query(); return [...held, ...pending]; }), []);
       await page.getByRole('link', { name: 'Open channel' }).click();
       assert.equal(new URL(page.url()).pathname, '/channels/!r1%3Akhala.local');
       await page.getByText('Opened channel', { exact: true }).waitFor();

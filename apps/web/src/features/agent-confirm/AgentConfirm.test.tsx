@@ -28,9 +28,8 @@ describe('AgentConfirm', () => {
     expect(html).toContain('>Confirm</button>');
     expect(render({ state: 'review', view: { ...view, harness: 'codex' } })).toContain('Helper (Codex)');
   });
-  it('shows keep-tab-open guidance only while connecting', () => {
-    expect(render({ state: 'connecting', view })).toContain('role="status">Connecting Helper… Keep this tab open.');
-    for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'done', view },
+  it('never asks to keep the tab open: the server finishes the join', () => {
+    for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'connecting', view }, { state: 'done', view },
       { state: 'error', code: 'ready_timeout', view }] satisfies AgentConfirmSnapshot[]) {
       expect(render(snapshot)).not.toContain('Keep this tab open');
     }
@@ -46,7 +45,6 @@ describe('AgentConfirm', () => {
     ['expired', 'This request expired. Ask your agent to run khala_join again.', false],
     ['already_confirmed_by_other', 'Another member already confirmed this agent.', false],
     ['ready_timeout', 'The agent did not finish connecting.', true],
-    ['invite_failed', 'Could not add the agent to the channel.', true],
     ['unavailable', 'Khala is unavailable right now. Try again.', true],
     ['signed_out', 'Khala is unavailable right now. Try again.', true],
   ])('renders %s with appropriate retry', (code, copy, retry) => {
@@ -65,7 +63,7 @@ describe('AgentConfirm', () => {
   });
   it('renders connecting with a spinner and status', () => {
     expect(render({ state: 'connecting', view })).toContain(
-      '<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">Connecting Helper… Keep this tab open.</p>');
+      '<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">Connecting Helper…</p>');
   });
   it('renders done with a check line and a primary Open channel link', () => {
     const html = render({ state: 'done', view });
@@ -73,8 +71,8 @@ describe('AgentConfirm', () => {
     expect(html).toContain('<a class="kh-btn pri" href="/channels/!r1%3Akhala.local">Open channel</a>');
   });
   it('renders a retryable error as an alert with Retry', () => {
-    expect(render({ state: 'error', code: 'invite_failed', view })).toContain(
-      '<p class="kh-fin-p kh-fin-err" role="alert">Could not add the agent to the channel.</p><button type="button" class="kh-btn">Retry</button>');
+    expect(render({ state: 'error', code: 'ready_timeout', view })).toContain(
+      '<p class="kh-fin-p kh-fin-err" role="alert">The agent did not finish connecting.</p><button type="button" class="kh-btn">Retry</button>');
   });
   it('titles a viewless error without the chip', () => {
     const html = render({ state: 'error', code: 'not_found' });

@@ -22,7 +22,6 @@ import type {
   RoomId,
 } from '@khala/contracts/messaging/index';
 import type { ChannelService } from '@khala/messaging/channels/index';
-import type { AgentJoinPort, AgentInvitePort } from '../../features/agent-confirm/ports';
 import type { ConversationIndexPort } from './conversations';
 import type { SyncStatusPort } from './sync-status';
 
@@ -34,14 +33,12 @@ export interface HumanApplicationPorts {
   readonly describeParticipant?: (participantId: string) => Participant | undefined;
   /** `describeParticipant` keyed by Matrix user id, for the conversation list's harness logos. */
   readonly describeMatrixUser?: (matrixUserId: string) => Participant | undefined;
-  readonly agentJoin?: AgentJoinPort;
   readonly agentNames?: AgentNamesPort;
   /** Sets the viewer's own name in one channel. */
   readonly channelNames?: ChannelNamesPort;
   /** When `matrixUserId` took its current name in `roomId` (its latest membership event), if known. */
   readonly memberSince?: (roomId: RoomId, matrixUserId: string) => number | null;
   readonly profile?: ProfilePort;
-  readonly inviteAgent?: AgentInvitePort;
   /** Current room membership, independent of asynchronous timeline loading. */
   readonly isJoined?: (roomId: RoomId) => boolean;
   /** The listening mode a Matrix user reports in `roomId`; `sync` when unknown. */

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -356,37 +356,6 @@ describe('plain encrypted channel send', () => {
       msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': 'agent_one',
       ...(kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': '$prior' } : {}),
     }, 'txn_1');
-  });
-});
-
-describe('inviteWithHistory', () => {
-  function client(encrypted = true, membership?: string) {
-    return { getRoom: vi.fn(() => ({ hasEncryptionStateEvent: () => encrypted,
-      getMember: () => membership ? { membership } : null } as unknown as Room)), invite: vi.fn().mockResolvedValue({}) };
-  }
-  it('uses the browser SDK invite for an encrypted channel', async () => {
-    const sdk = client();
-    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(true);
-    expect(sdk.invite).toHaveBeenCalledExactlyOnceWith('!r', '@agent-x:hs');
-  });
-  it.each(['invite', 'join'])('skips a member already in state %s', async membership => {
-    const sdk = client(true, membership);
-    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(true);
-    expect(sdk.invite).not.toHaveBeenCalled();
-  });
-  it('fails closed on unencrypted or missing channels and malformed identities', async () => {
-    const sdk = client(false);
-    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
-    const encrypted = client();
-    for (const id of ['agent', '@:hs', '@a b:hs', '@a:']) expect(await inviteWithHistory(encrypted, '!r', id)).toBe(false);
-    encrypted.getRoom.mockReturnValue(null as unknown as Room);
-    expect(await inviteWithHistory(encrypted, '!r', '@agent-x:hs')).toBe(false);
-    expect(sdk.invite).not.toHaveBeenCalled();
-    expect(encrypted.invite).not.toHaveBeenCalled();
-  });
-  it('returns false when the invite fails', async () => {
-    const sdk = client(); sdk.invite.mockRejectedValue(new Error('offline'));
-    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
   });
 });
 

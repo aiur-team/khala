@@ -7,4 +7,3 @@ export interface AgentJoinPort {
   confirm(joinId: string, signal?: AbortSignal): Promise<AgentJoinResult>;
   status(joinId: string, signal?: AbortSignal): Promise<AgentJoinResult>;
 }
-export type AgentInvitePort = (roomId: string, agentUserId: string) => Promise<boolean>;

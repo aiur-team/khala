@@ -1,5 +1,3 @@
-import { AgentConfirm, AgentConfirmFrame } from '../../features/agent-confirm/AgentConfirm';
-import { createAgentConfirmController } from '../../features/agent-confirm/controller';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
@@ -83,39 +81,6 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   );
 }
 
-/** The confirm page draws its own full-viewport frame (§20), with the shell's theme. */
-function ConfirmFrame({ chrome, routes, children }: { chrome: HumanShellChrome; routes: HumanRouteCodec; children: ReactNode }) {
-  return <AgentConfirmFrame theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-    homeHref={routes.conversationsPath()}>{children}</AgentConfirmFrame>;
-}
-
-function AgentConfirmRoute({ context, chrome, joinId, routes, navigateRoute }: {
-  context: HumanRouteContext;
-  chrome: HumanShellChrome;
-  joinId: string;
-  routes: HumanRouteCodec;
-  navigateRoute: (path: string) => void;
-}) {
-  const controller = useMemo(() => context.agentJoin && context.inviteAgent
-    ? createAgentConfirmController({ joinId, port: context.agentJoin, invite: context.inviteAgent }) : null,
-  [context, joinId]);
-  useEffect(() => {
-    if (!controller) return;
-    const dispose = context.registerDisposer(() => controller.dispose());
-    controller.start();
-    return dispose;
-  }, [context, controller]);
-  if (!controller) {
-    return <ConfirmFrame chrome={chrome} routes={routes}>
-      <h1 className="kh-fin-n">Agent confirmation unavailable</h1>
-      <p className="kh-fin-p kh-fin-err" role="alert">Khala is unavailable right now.</p>
-    </ConfirmFrame>;
-  }
-  return <AgentConfirm controller={controller} roomHref={routes.roomPath}
-    theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange} homeHref={routes.conversationsPath()}
-    onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />;
-}
-
 /** Starts sign-in that returns to `path` and leaves the page; false when sign-in cannot start. */
 export async function redirectToSignIn(identity: IdentityPort, path: string,
   navigateExternal: (url: string) => void): Promise<boolean> {
@@ -133,7 +98,7 @@ export async function redirectToSignIn(identity: IdentityPort, path: string,
  * Every signed-out route goes straight to sign-in and back to the same path.
  * Cancelled and failed sign-ins return to the landing page, which reports them.
  */
-function SignInRedirect({ identity, path, navigateExternal }: {
+export function SignInRedirect({ identity, path, navigateExternal }: {
   identity: IdentityPort;
   path: string;
   navigateExternal: (url: string) => void;
@@ -167,7 +132,7 @@ function SignInRedirect({ identity, path, navigateExternal }: {
   );
 }
 
-function SigningIn() {
+export function SigningIn() {
   return <div className="kh-state-c"><span className="kh-spin" aria-hidden="true"></span><b>Signing in…</b></div>;
 }
 
@@ -348,14 +313,19 @@ export function HumanApplicationScreen({
   account = 'oauth',
 }: HumanApplicationScreenProps) {
   const local = account === 'local_owner';
-  const renderRoute = (context: HumanRouteContext, route: HumanRoute, chrome: HumanShellChrome): ReactNode => {
+  const renderRoute = (context: HumanRouteContext, route: HumanRoute): ReactNode => {
     switch (route.kind) {
       case 'conversations':
         return <ConversationIndexRoute />;
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'agent_confirm':
-        return <AgentConfirmRoute context={context} chrome={chrome} joinId={route.joinId} routes={routes} navigateRoute={navigateRoute} />;
+        // The hosted entry serves this path as its own page (confirm-page.tsx); reaching it in-app needs a full load.
+        return (
+          <KhalaPageFrame model={{ title: 'Agent confirmation', labelledBy: 'khala-agent-confirm' }}>
+            <p><a href={route.path}>Open the agent confirmation</a></p>
+          </KhalaPageFrame>
+        );
       case 'channel':
         return renderRoom(context, route, navigateRoute, routes);
       case 'not_found':
@@ -366,34 +336,25 @@ export function HumanApplicationScreen({
         );
     }
   };
-  // The agent confirm page is a standalone page (§20): no owner shell, while it
-  // loads or waits for the device either.
-  const isConfirm = (chrome: HumanShellChrome) => routes.parse(chrome.path).kind === 'agent_confirm';
-  const renderAppShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => {
-    if (isConfirm(chrome)) return phase === 'ready' ? children : <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>;
-    return <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute} local={local}>
+  const renderAppShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) =>
+    <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute} local={local}>
       {children}
     </OwnerShell>;
-  };
-  // A human without a username chooses one before any app route, the confirm
-  // page included. The URL is left alone, so saving lands on the asked-for route.
-  const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => {
-    const pending = isConfirm(chrome)
-      ? <ConfirmFrame chrome={chrome} routes={routes}><SigningIn /></ConfirmFrame>
-      : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity" local={local}>
+  // A human without a username chooses one before any app route.
+  // The URL is left alone, so saving lands on the asked-for route.
+  const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => {
+    const pending = <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity" local={local}>
         {local ? <LoadingSpinner label="Loading" /> : <SigningIn />}
       </PendingOwnerShell>;
     return <ProfileProvider key={context.principal.ownerId} ports={context}>
       <UsernameGate pending={pending} theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange} homeHref={routes.conversationsPath()}
         brandActions={local ? null : <LogoutAction application={application} routes={routes} mode={chrome.mode} />}>
-        {renderAppShell(context, chrome, children, phase)}
+        {renderAppShell(context, chrome, children)}
       </UsernameGate>
     </ProfileProvider>;
   };
   const renderPendingShell = (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable',
-    children: ReactNode) => isConfirm(chrome)
-    ? <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>
-    : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase={phase} local={local}>{children}</PendingOwnerShell>;
+    children: ReactNode) => <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase={phase} local={local}>{children}</PendingOwnerShell>;
 
   return (
     <HumanAccountContext.Provider value={account}>

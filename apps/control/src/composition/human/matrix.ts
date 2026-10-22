@@ -88,6 +88,8 @@ export type MatrixHumanServices = Readonly<{
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
   revokeAgentSession(userId: string, roomId: RoomId): Promise<boolean>;
+  /** Invites a ready agent into the room as its owner; true when it is now invited or joined. */
+  inviteAgentAsOwner(ownerId: OwnerId, roomId: RoomId, userId: string): Promise<boolean>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
   /** The joined members of a channel the owner is in, with the names they hold there; `null` when unavailable. */
   roomMembers(ownerId: OwnerId, roomId: RoomId): Promise<readonly Readonly<{ userId: string; name: string }>[] | null>;
@@ -826,6 +828,20 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         // Room-scoped display names: a per-channel name is the member's own m.room.member displayname here.
         return Object.keys(joined).map(userId => ({ userId, name: displayName(safeObject(joined[userId])?.display_name, userId) }));
       } catch { return null; }
+    },
+    async inviteAgentAsOwner(ownerId, roomId, userId) {
+      try {
+        const session = await controlLogin(ownerId);
+        if (!session) return false;
+        const room = `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}`;
+        const headers = { authorization: `Bearer ${session.accessToken}` };
+        const member = await request(`${room}/state/m.room.member/${encodeURIComponent(userId)}`, { headers });
+        const membership = member.status === 200 ? (await body(member))?.membership : null;
+        if (membership === 'invite' || membership === 'join') return true;
+        const invited = await request(`${room}/invite`, { method: 'POST',
+          headers: { ...headers, accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ user_id: userId }) });
+        return invited.status === 200;
+      } catch { return false; }
     },
     roomName: async (ownerId, roomId) => {
       const session = await controlLogin(ownerId);

@@ -37,11 +37,12 @@ async function fixture(state: JoinRecord['state'] = 'pending') {
   const joins = createJoinStore({ store, clock, random: randomBytes });
   const joinId = randomBytes(16).toString('base64url'), pollSecret = randomBytes(32).toString('base64url');
   const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret(pollSecret), roomId: credentials.roomId, channelName: 'Channel', label: 'Agent', harness: 'claude', state, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString(),
-    ...(state === 'confirmed' ? { ownerId: 'owner', agentUserId: credentials.userId, sealedCredentials: sealCredentials(secret, joinId, credentials) } : {}) };
+    ...(state === 'confirmed' ? { ownerId: 'owner', agentUserId: credentials.userId, sealedCredentials: sealCredentials(secret, joinId, credentials) } : {}),
+    ...(state === 'claimed' || state === 'ready' ? { ownerId: 'owner', agentUserId: credentials.userId } : {}) };
   expect(await joins.create(record)).toBe('created');
   const ref = 'inv_abcdefgh', digests = createDigests(secret);
   await store.compareAndSet({ key: digests.inviteKey(ref), expectedRevision: null, operationId: 'invite', next: { value: { v: 1, roomId: credentials.roomId, creatorOwnerId: 'owner', inviteRefDigest: digests.inviteRef(ref), policyRevision: 1, policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null, lastAuthorizedOperationDigest: null }, expiresAt: null } });
-  const deps = { store, clock, random: randomBytes, joins, origin, secret, roomName: vi.fn(async () => 'Channel') };
+  const deps = { store, clock, random: randomBytes, joins, origin, secret, roomName: vi.fn(async () => 'Channel'), inviteAgent: vi.fn(async () => true) };
   const request = (method = 'GET', query = `joinId=${joinId}`, bearer: string | null = `Bearer ${pollSecret}`) => new Request(`${origin}/api/agent/join/poll?${query}`, { method, headers: bearer === null ? {} : { authorization: bearer } });
   const createRequest = (body: unknown = { link: `${origin}/join/${ref}`, harness: 'codex', label: ' Agent ' }, contentType = 'application/json') => new Request(`${origin}/api/agent/join`, { method: 'POST', headers: { 'content-type': contentType }, body: typeof body === 'string' ? body : JSON.stringify(body) });
   return { deps, joins, store, record, joinId, pollSecret, request, createRequest, handlers: createAgentJoinAgentHandlers(deps), advance: (ms: number) => { now += ms; } };
@@ -99,6 +100,22 @@ it('ready is idempotent under concurrency and cannot bypass claiming', async () 
   const f = await fixture('claimed');
   const responses = await Promise.all([f.handlers.ready(f.request('POST')), f.handlers.ready(f.request('POST'))]);
   for (const response of responses) { expect(response.status).toBe(204); expect(await response.text()).toBe(''); expect(response.headers.get('cache-control')).toBe('no-store'); }
+  expect((await f.handlers.ready(f.request('POST'))).status).toBe(204);
+});
+it('invites the agent as its owner before reporting ready, so no browser tab has to', async () => {
+  const f = await fixture('claimed');
+  expect((await f.handlers.ready(f.request('POST'))).status).toBe(204);
+  expect(f.deps.inviteAgent).toHaveBeenCalledExactlyOnceWith('owner', credentials.roomId, credentials.userId);
+  expect((await f.handlers.ready(f.request('POST'))).status).toBe(204);
+  expect(f.deps.inviteAgent).toHaveBeenCalledTimes(1);
+});
+it('keeps the join claimed when the owner invite fails, so ready can be retried', async () => {
+  const f = await fixture('claimed');
+  f.deps.inviteAgent.mockResolvedValueOnce(false);
+  const failed = await f.handlers.ready(f.request('POST'));
+  expect(failed.status).toBe(503); expect(await failed.json()).toEqual({ error: 'unavailable' });
+  const read = await f.joins.read(f.joinId); if (read.kind !== 'found') throw Error();
+  expect(read.record.state).toBe('claimed');
   expect((await f.handlers.ready(f.request('POST'))).status).toBe(204);
 });
 it('never releases credentials on unknown writes or unresolved conflicts', async () => {

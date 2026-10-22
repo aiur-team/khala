@@ -81,16 +81,17 @@ route retains recipient review and legacy pause controls as a fallback without a
 ## Agent confirmation
 
 An owner opens the agent confirmation link and reviews its label, harness and
-channel before pressing **Confirm**. A signed-out visitor goes straight to
-sign-in and returns to the same link. While connecting, keep the tab
-open: the browser polls status every second and uses its Matrix client to invite
-the ready agent with encrypted history. History sharing relies on shared history
-visibility and the browser's verified identity. Existing invited or joined members
-are treated as success. **Open channel** appears when the invite succeeds.
+channel before pressing **Confirm**. The page is its own light entry
+(`confirm-page.tsx`): it makes only control-API calls, with no Matrix client,
+device lock or tab handoff, so it works in any tab or browser while Khala is
+open elsewhere. A signed-out visitor goes straight to sign-in and returns to the
+same link; a failed sign-in callback lands on "Sign-in expired. Try again", which
+returns there too. The control server invites the agent as its owner when the
+agent reports ready, so the tab may be closed after confirming. That server
+invite carries no MSC4268 encrypted-history bundle. **Open channel** loads the app.
 
 If connecting times out, **Retry** resumes status checks without confirming again.
-If the invite fails, **Retry** attempts only the invite. Closing or navigating away
-stops the page's requests and timers; reopening a confirmed link resumes polling.
+Reopening a confirmed link resumes polling.
 
 ## Mention notifications
 

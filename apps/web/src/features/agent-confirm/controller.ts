@@ -1,14 +1,14 @@
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
-import type { AgentInvitePort, AgentJoinError, AgentJoinPort, AgentJoinResult } from './ports';
+import type { AgentJoinError, AgentJoinPort, AgentJoinResult } from './ports';
 
-export type AgentConfirmError = AgentJoinError | 'expired' | 'ready_timeout' | 'invite_failed';
+export type AgentConfirmError = AgentJoinError | 'expired' | 'ready_timeout';
 export type AgentConfirmSnapshot =
   | Readonly<{ state: 'loading' }>
   | Readonly<{ state: 'review' | 'connecting' | 'done'; view: AgentJoinView }>
   | Readonly<{ state: 'error'; code: AgentConfirmError; view?: AgentJoinView }>;
 
 export function createAgentConfirmController({
-  joinId, port, invite, pollMs = 1000, readyTimeoutMs = 60_000,
+  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000,
   now = () => Date.now(),
   setTimer = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay);
@@ -17,7 +17,6 @@ export function createAgentConfirmController({
 }: {
   joinId: string;
   port: AgentJoinPort;
-  invite: AgentInvitePort;
   pollMs?: number;
   readyTimeoutMs?: number;
   now?: () => number;
@@ -61,17 +60,6 @@ export function createAgentConfirmController({
     catch { return { kind: 'error', code: 'unavailable' }; }
   }
 
-  async function addAgent(view: AgentJoinView) {
-    const token = endOperation();
-    publish({ state: 'connecting', view });
-    if (!view.agentUserId) { error('unavailable', view); return; }
-    let added = false;
-    try { added = await invite(view.roomId, view.agentUserId); } catch { /* Retry invite only. */ }
-    if (!current(token)) return;
-    if (added) publish({ state: 'done', view });
-    else error('invite_failed', view);
-  }
-
   function poll(view: AgentJoinView) {
     const token = endOperation();
     let latest = view;
@@ -92,7 +80,8 @@ export function createAgentConfirmController({
       if (result.kind === 'error') { error(result.code, latest); return; }
       latest = result.view;
       if (latest.state === 'expired') { error('expired', latest); return; }
-      if (latest.state === 'ready') { await addAgent(latest); return; }
+      // The server invites the agent before it reports ready.
+      if (latest.state === 'ready') { endOperation(); publish({ state: 'done', view: latest }); return; }
       publish({ state: 'connecting', view: latest });
       schedule();
     }
@@ -109,7 +98,7 @@ export function createAgentConfirmController({
         else publish({ state: 'review', view });
         break;
       case 'confirmed': poll(view); break;
-      case 'ready': void addAgent(view); break;
+      case 'ready': publish({ state: 'done', view }); break;
       case 'expired': error('expired', view); break;
     }
   }
@@ -147,8 +136,7 @@ export function createAgentConfirmController({
     retry() {
       if (disposed || snapshot.state !== 'error') return;
       const { code, view } = snapshot;
-      if (code === 'invite_failed' && view) void addAgent(view);
-      else if (code === 'ready_timeout' && view) poll(view);
+      if (code === 'ready_timeout' && view) poll(view);
       else if (code === 'unavailable' || code === 'signed_out') {
         if (confirmAttempted && view) poll(view);
         else void load();

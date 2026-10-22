@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BlobsStoreLike } from '../../runtime/control-store';
 import { createProductionHumanRuntimeLoader, createProductionHumanServiceLoader } from './production';
+import { loginCookie } from '../../auth/callback';
 
 const env = {
   PUBLIC_APP_ORIGIN: 'https://khala.aiur.team',
@@ -72,7 +73,7 @@ describe('createProductionHumanServiceLoader', () => {
       });
       const load = createProductionHumanServiceLoader({ env, stores });
       const request = new Request('https://khala.aiur.team/api/human/auth/callback?code=secret-code&state=secret-state', {
-        headers: { cookie: `__Host-khala_login=${'a'.repeat(43)}` },
+        headers: { cookie: `${loginCookie('secret-state')}=${'a'.repeat(43)}` },
       });
       const services = await load(request);
       expect(await services!.auth.completeSignIn(request)).toEqual({ kind: 'unavailable', cookies: [] });

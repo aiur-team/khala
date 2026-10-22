@@ -272,6 +272,13 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
       assert.equal(await status.evaluate(node => getComputedStyle(node).textAlign), 'right');
       assert.equal(new URL(page.url()).search, '', `${outcome}: sign_in leaves the URL`);
     }
+    // An expired sign-in retries back to the page that began it (kept in this tab), e.g. an agent confirm link.
+    await page.evaluate(() => sessionStorage.setItem('khala.signInReturn', '/agent/confirm?joinId=j1'));
+    await page.goto(`${url}?sign_in=expired`);
+    const retry = page.locator('.signin-status').getByRole('link', { name: 'Try again' });
+    await retry.waitFor();
+    assert.equal((await page.locator('.signin-status').innerText()).trim(), 'Sign-in expired. Try again');
+    assert.equal(await retry.getAttribute('href'), '/api/human/auth/login?return_to=%2Fagent%2Fconfirm%3FjoinId%3Dj1');
     await page.goto(`${url}?sign_in=%3Cb%3Eforged%3C%2Fb%3E`);
     assert.equal(await page.locator('.signin-status').count(), 0, 'unknown outcomes show nothing');
     assert.equal(new URL(page.url()).search, '');

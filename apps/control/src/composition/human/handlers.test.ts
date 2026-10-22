@@ -146,6 +146,11 @@ describe('auth route handlers', () => {
   it.each([
     ['provider_denied', '/?sign_in=cancelled'],
     ['provider_error', '/?sign_in=error'],
+    // Never a raw JSON 400: a stale, replayed or crossed login offers a retry instead.
+    ['login_expired', '/?sign_in=expired'],
+    ['login_replayed', '/?sign_in=expired'],
+    ['state_mismatch', '/?sign_in=expired'],
+    ['invalid_response', '/?sign_in=error'],
   ] as const)('redirects %s with a cleared cookie and no provider detail', async (code, location) => {
     const auth = services({ auth: { completeSignIn: vi.fn(async () => ({ kind: 'rejected' as const, code, cookies: ['__Host-khala_login=; Max-Age=0'] })) } });
     const registrations = createHumanHandlers(async () => auth);
