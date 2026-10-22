@@ -423,7 +423,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       };
       attempt.unsubscribe = session.onMessage(intake);
       attempt.unsubscribeMode = session.onListeningModeCommand(intakeMode);
-      if (!attempt.restore?.localCredentials) await wait(api.reportReady(input, fetchDeps));
+      if (!attempt.restore?.localCredentials) await wait(api.reportReady(input, { signal, timeoutMs: options.inviteTimeoutMs ?? 120_000, ...fetchDeps }));
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;

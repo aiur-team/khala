@@ -195,8 +195,27 @@ it.each([
   [500, {}, 'protocol'], ...gatewayCases,
 ] satisfies [number, unknown, string][])('maps ready errors %s %j', async (status, body, reason) => {
   const deps = fake(reply(status, body));
-  await rejects(reportReady(session, deps), 'internal_error', reason);
+  await rejects(reportReady(session, { ...deps, timeoutMs: 0 }), 'internal_error', reason);
   expect(deps.calls).toHaveLength(1);
+});
+it.each([
+  [503, { error: 'unavailable' }], [429, {}],
+] satisfies [number, unknown][])('retries ready after %s with backoff until it succeeds', async (status, body) => {
+  const deps = fake(reply(status, body), reply(status, body), reply(204));
+  const sleep = vi.fn(async () => {});
+  await reportReady(session, { ...deps, sleep, now: () => 0 });
+  expect(deps.calls).toHaveLength(3);
+  expect(sleep.mock.calls.map(call => (call as unknown[])[0])).toEqual([1000, 2000]);
+});
+it('stops retrying ready at the invite deadline and never retries a terminal error', async () => {
+  let clock = 0;
+  const unavailable = fake(...Array.from({ length: 10 }, () => reply(503, { error: 'unavailable' })));
+  const sleep = vi.fn(async (ms: number) => { clock += ms; });
+  await rejects(reportReady(session, { ...unavailable, sleep, now: () => clock, timeoutMs: 10_000 }), 'internal_error', 'unavailable');
+  expect(sleep.mock.calls.map(call => call[0])).toEqual([1000, 2000, 4000]);
+  const featureOff = fake(reply(503, { code: 'feature_unavailable' }), reply(204));
+  await rejects(reportReady(session, { ...featureOff, sleep }), 'internal_error', 'feature_unavailable');
+  expect(featureOff.calls).toHaveLength(1);
 });
 it('encodes joinId only as a query parameter for poll and ready', async () => {
   const deps = fake(reply(200, confirmed), reply(204));
