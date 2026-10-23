@@ -29,7 +29,9 @@ export type AvatarProps =
     logo: string | null;
     initials: string;
     /** The `.kh-st` connection dot; omitted while unknown. */
-    status?: 'on' | 'off' | undefined;
+    status?: 'on' | 'off' | 'away' | undefined;
+    /** Greys a not-running agent and is its tooltip, e.g. `Not running — last seen 3m ago`. */
+    offline?: string | undefined;
   }>
   | Shared & Readonly<{
     kind: 'human'; label: string; hue: number; initials: string;
@@ -43,7 +45,8 @@ export function Avatar(props: AvatarProps) {
   if (props.kind === 'generic') return <span className="kh-av kh-gen" aria-hidden="true">#</span>;
   if (props.kind === 'more') return <span className="kh-av kh-more">+{props.count}</span>;
 
-  const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ' kh-aav'}${props.ghost ? ' ghost' : ''}`;
+  const offline = props.kind === 'agent' ? props.offline : undefined;
+  const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ' kh-aav'}${props.ghost ? ' ghost' : ''}${offline ? ' kh-off' : ''}`;
   // An agent's fill is its own colour (else the owner's swatch), under a white harness glyph.
   const fill = props.kind === 'agent' ? props.swatch ?? props.ownerSwatch : undefined;
   const style = props.kind === 'agent'
@@ -57,7 +60,8 @@ export function Avatar(props: AvatarProps) {
   </> : props.initials;
 
   if (props.static || props.ghost) {
-    return <span className={className} style={style} aria-hidden="true">{content}</span>;
+    return <span className={className} style={style} aria-hidden="true" {...(offline ? { title: offline } : {})}>{content}</span>;
   }
-  return <button type="button" className={className} style={style} aria-label={props.label} onClick={props.onClick}>{content}</button>;
+  return <button type="button" className={className} style={style} aria-label={offline ? `${props.label} (${offline})` : props.label}
+    {...(offline ? { title: offline } : {})} onClick={props.onClick}>{content}</button>;
 }

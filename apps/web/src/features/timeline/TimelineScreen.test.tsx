@@ -66,6 +66,23 @@ describe('TimelineScreen', () => {
     expect(html).not.toContain('Agent name unavailable');
   });
 
+  it('greys a not-running agent\'s avatar and chip and shows its mode on the chip (#1341)', () => {
+    const bot = participant('bot', 'agent', 'Claude');
+    const draw = (state: { mode: 'steer' | 'sync' | 'async' | 'mute'; offline?: string }) => renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',
+      items: [item('E1', bot, 'hello')], nextCursor: null, newMessageCount: 0 })} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      members={[viewer, bot]} agentState={id => id === bot.participantId ? state : undefined}
+      describeParticipant={id => id === bot.participantId ? { matrixUserId: '@bot:hs', participantId: 'bot', ownerId: bot.ownerId,
+        displayName: 'Claude', kind: 'agent', ownerLabel: 'Kevin', harness: 'claude' } : undefined} />);
+    const stopped = draw({ mode: 'mute', offline: 'Not running — last seen 3m ago' });
+    expect(stopped).toContain('class="kh-av kh-aav kh-off"');
+    expect(stopped).toContain('aria-label="Claude details (Not running — last seen 3m ago)" title="Not running — last seen 3m ago"');
+    expect(stopped).toMatch(/class="kh-chip kh-chip-a kh-off"[^>]*title="Not running — last seen 3m ago"/u);
+    expect(stopped).toContain('aria-label="Listening mode: Mute · silent"');
+    const running = draw({ mode: 'steer' });
+    expect(running).not.toContain('kh-off');
+    expect(running).toContain('aria-label="Listening mode: Steer · interrupts"');
+  });
+
   it('renders an unknown member without throwing', () => {
     const unknown = participant('unknown:@stranger:hs', 'human', 'Unknown');
     const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',

@@ -62,7 +62,7 @@ describe('MCP command lifecycle', () => {
     await expect(runMcpCommand([], { ...io, output, env: {}, createClient: () => client })).rejects.toThrow('write failed');
     expect(client.close).toHaveBeenCalledTimes(1);
   });
-  it('exits on SIGTERM with stdin open after initializing a real session', async () => {
+  it.each(['SIGTERM', 'SIGHUP'] as const)('exits on %s with stdin open after initializing a real session', async signal => {
     const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-signal-'));
     const child = spawn(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
       env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'signal-session' },
@@ -86,7 +86,7 @@ describe('MCP command lifecycle', () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
         expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
-        child.kill('SIGTERM');
+        child.kill(signal);
         expect(await closed).toEqual({ code: 0, signal: null });
       })();
       await Promise.race([completed, new Promise<never>((_resolve, reject) => {

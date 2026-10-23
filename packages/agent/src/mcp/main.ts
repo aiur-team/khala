@@ -131,6 +131,8 @@ export default async function main(argv: readonly string[]): Promise<number> {
   };
   process.once('SIGTERM', onSignal);
   process.once('SIGINT', onSignal);
+  // Closing the terminal window sends SIGHUP; exit cleanly so presence goes offline at once.
+  process.once('SIGHUP', onSignal);
   try {
     const code = await runMcpCommand(argv, { createClient, signal: stop.signal });
     exitCode = cleanupFailed ? 1 : code;
@@ -138,6 +140,7 @@ export default async function main(argv: readonly string[]): Promise<number> {
   } finally {
     process.off('SIGTERM', onSignal);
     process.off('SIGINT', onSignal);
+    process.off('SIGHUP', onSignal);
     process.stdin.destroy();
     // CLI cleanup is finished; SDK request-deadline timers may still be alive.
     setImmediate(() => process.exit(exitCode));

@@ -25,6 +25,7 @@
 .kh-chip.kh-chip-a { color: hsl(var(--ah) 70% 72%); }
 .khala-app[data-theme="light"] .kh-chip.kh-chip-a { color: hsl(var(--ah) 60% 36%); }
 .kh-chip-a i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
+.kh-chip-mode { display: inline-grid; place-items: center; opacity: .8; } .kh-chip-mode svg { width: 11px; height: 11px; }
 .kh-chip-h { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 9px 2px 3px; }
 .kh-chip-h i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
 .kh-chip-h { color: hsl(var(--oh) 70% 72%); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .1); }

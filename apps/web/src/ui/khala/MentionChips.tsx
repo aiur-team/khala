@@ -4,6 +4,8 @@
 import { Fragment, type CSSProperties } from 'react';
 import { ChipsToggleIcon } from './icons';
 import { harnessLogo } from './identity';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { ModeIcon, modeTip } from './ModeIcon';
 
 export type MentionTarget = Readonly<{
   /** Participant id. */
@@ -25,6 +27,10 @@ export type MentionTarget = Readonly<{
   isViewer: boolean;
   /** A group mention (`@channel`, `@humans`, `@agents`): its audience, shown in the popup. */
   group?: string;
+  /** An agent's listening mode, shown as an icon on its chip. */
+  mode?: ListeningMode;
+  /** A not-running agent's tooltip (`Not running — last seen 3m ago`); greys its chip. */
+  offline?: string;
 }>;
 
 /** Chips shown before the `+N` toggle. */
@@ -87,8 +93,11 @@ function Chip({ target, onPick }: Readonly<{ target: MentionTarget; onPick(targe
   }
   const logo = target.harness ? harnessLogo(target.harness) : null;
   // The chip wears the agent's own colour (`--ah`); its badge keeps the owner's (`--oh`/`--hc`).
-  return <button type="button" className="kh-chip kh-chip-a" style={{ '--oh': target.ownerHue, '--ah': target.hue, ...swatch } as CSSProperties} data-kh-mention={target.id} onMouseDown={keepFocus} onClick={() => onPick(target)}>
-    {logo ? <img src={logo} alt="" /> : null}@{target.display}<i>{target.ownerInitials}</i>
+  return <button type="button" className={`kh-chip kh-chip-a${target.offline ? ' kh-off' : ''}`} style={{ '--oh': target.ownerHue, '--ah': target.hue, ...swatch } as CSSProperties}
+    data-kh-mention={target.id} {...(target.offline ? { title: target.offline } : {})} onMouseDown={keepFocus} onClick={() => onPick(target)}>
+    {logo ? <img src={logo} alt="" /> : null}@{target.display}
+    {target.mode ? <span className="kh-chip-mode" role="img" aria-label={`Listening mode: ${modeTip(target.mode)}`} data-tip={modeTip(target.mode)}><ModeIcon mode={target.mode} /></span> : null}
+    {target.offline ? <span className="sr-only">{`, ${target.offline}`}</span> : null}<i>{target.ownerInitials}</i>
   </button>;
 }
 
