@@ -9,6 +9,8 @@ import { Switch } from './Switch';
 import { useToast } from './Toast';
 
 export const COMING_SOON = 'Coming soon';
+/** The locked controls' hover-only explanations, shown as text on touch screens. */
+export const TOUCH_HINT = 'Type, Approve joins and History are coming soon. Humans see messages from when they join.';
 
 /** The channel link a popover shows and copies (`useChannelLink`). */
 export type CopyableLink = Readonly<{
@@ -62,6 +64,7 @@ export function InvitePopover({ link }: Readonly<{ link: CopyableLink }>) {
       <Segmented label="History" locked title={COMING_SOON} value="join"
         options={[{ value: 'full', label: 'Full' }, { value: 'join', label: 'From join' }]} />
     </div>
+    <span className="kh-hint kh-touch-hint">{TOUCH_HINT}</span>
     <div className="kh-link">
       <code>{link.url ?? (link.error ? 'Link unavailable' : 'Preparing link…')}</code>
       <button type="button" className="kh-ib sm" data-tip="Copy link" aria-label="Copy link"

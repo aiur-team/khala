@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { copyWithToast, InvitePopover, type CopyableLink } from './InvitePopover';
+import { readFileSync } from 'node:fs';
+import { copyWithToast, InvitePopover, TOUCH_HINT, type CopyableLink } from './InvitePopover';
 import { ToastProvider } from './Toast';
 
 const link = (overrides: Partial<CopyableLink> = {}): CopyableLink => ({
@@ -38,6 +39,12 @@ describe('InvitePopover', () => {
     const disabled = html.match(/<button[^>]*disabled=""[^>]*>/g) ?? [];
     expect(disabled).toHaveLength(5);
     for (const button of disabled) expect(button).toContain('title="Coming soon"');
+  });
+
+  it('spells out the locked controls on touch screens, where title tooltips never show', () => {
+    expect(render(link())).toContain(`<span class="kh-hint kh-touch-hint">${TOUCH_HINT}</span>`);
+    const css = readFileSync(new URL('./controls.css', import.meta.url), 'utf8');
+    expect(css).toContain('.kh-touch-hint { display: none; } @media (hover: none) { .kh-touch-hint { display: block; } }');
   });
 
   it('offers the link in a selectable field after a failed copy', () => {
