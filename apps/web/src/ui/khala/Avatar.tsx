@@ -20,9 +20,9 @@ export type AvatarProps =
     hue: number;
     ownerHue: number;
     ownerInitials: string;
-    /** The owner's variant colour (tiers 1-2), which `ownerHue` alone cannot draw. */
+    /** The owner's colour, which `ownerHue` alone cannot draw. */
     ownerSwatch?: string | undefined;
-    /** The agent's own fill, a variant of its owner's colour (#1308); `ownerSwatch` without it. */
+    /** The agent's own colour; `ownerSwatch` without it. */
     swatch?: string | undefined;
     ownerHost?: string;
     /** Harness logo URL; `null` renders the agent's initials instead. */
@@ -33,9 +33,8 @@ export type AvatarProps =
   }>
   | Shared & Readonly<{
     kind: 'human'; label: string; hue: number; initials: string;
-    /** A variant colour (tiers 1-2) and its tier, which get a ring marker so they don't rely on colour alone. */
+    /** The human's palette colour, which `hue` alone cannot draw. */
     swatch?: string | undefined;
-    tier?: 0 | 1 | 2 | undefined;
   }>
   | Readonly<{ kind: 'generic' }>
   | Readonly<{ kind: 'more'; count: number }>;
@@ -45,12 +44,11 @@ export function Avatar(props: AvatarProps) {
   if (props.kind === 'more') return <span className="kh-av kh-more">+{props.count}</span>;
 
   const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ' kh-aav'}${props.ghost ? ' ghost' : ''}`;
-  // An agent's fill is its own variant of its owner's colour (else the owner's swatch), under a white harness glyph.
+  // An agent's fill is its own colour (else the owner's swatch), under a white harness glyph.
   const fill = props.kind === 'agent' ? props.swatch ?? props.ownerSwatch : undefined;
   const style = props.kind === 'agent'
     ? { '--h': props.hue, '--oh': props.ownerHue, ...(fill ? { '--hc': fill } : {}) } as CSSProperties
     : { '--oh': props.hue, ...(props.swatch ? { '--hc': props.swatch } : {}) } as CSSProperties;
-  const tier = props.kind === 'human' && props.tier ? { 'data-kh-tier': String(props.tier) } : {};
   const content = props.kind === 'agent' ? <>
     {props.logo ? <img src={props.logo} alt="" /> : <span className="kh-ini">{props.initials}</span>}
     <span className="kh-own" style={{ '--oh': props.ownerHue, ...(props.ownerSwatch ? { '--hc': props.ownerSwatch } : {}) } as CSSProperties}
@@ -59,7 +57,7 @@ export function Avatar(props: AvatarProps) {
   </> : props.initials;
 
   if (props.static || props.ghost) {
-    return <span className={className} style={style} aria-hidden="true" {...tier}>{content}</span>;
+    return <span className={className} style={style} aria-hidden="true">{content}</span>;
   }
-  return <button type="button" className={className} style={style} aria-label={props.label} onClick={props.onClick} {...tier}>{content}</button>;
+  return <button type="button" className={className} style={style} aria-label={props.label} onClick={props.onClick}>{content}</button>;
 }

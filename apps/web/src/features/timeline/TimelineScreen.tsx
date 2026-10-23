@@ -200,7 +200,7 @@ type Identity = Readonly<{
   ownerHue: number;
   /** The owner's swatch, for an agent's owner badge. */
   ownerSwatch: string | undefined;
-  /** As the viewer sees them: a human's own colour, an agent's variant of its owner's colour (#1308); `null` for an unknown participant. */
+  /** As the viewer sees them: a human's own colour, an agent's own colour (#1308); `null` for an unknown participant. */
   color: ResolvedHumanColor | null;
   harness: Extract<Participant, { kind: 'agent' }>['harness'] | undefined;
   isViewerOwned: boolean;
@@ -602,7 +602,7 @@ export function TimelineScreen({
     }
     if (identity.kind === 'human') {
       return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={humanInitials(identity.label, identity.chosenInitials)} ghost={ghost}
-        swatch={colorSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
+        swatch={colorSwatch(identity.color)} onClick={open(identity.participantId)} />;
     }
     return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={identity.ownerSwatch} swatch={colorSwatch(identity.color)}
       ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}

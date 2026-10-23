@@ -11,8 +11,7 @@ import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
 import { defaultHumanColor, type ChannelColors, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HumanColorsProvider, assignAgentVariants, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, colorSwatch, variantColor,
-  type ResolvedHumanColor } from '../../ui/khala/human-colors';
+import { HumanColorsProvider, channelPalette, colorOf, colorSwatch, humanColorOf, ownerColorOf, resolveChannelColors } from '../../ui/khala/human-colors';
 import { ChannelColorsPicker } from './ChannelColors';
 import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
@@ -20,7 +19,7 @@ import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
-import type { ChannelController } from './controller';
+import type { ChannelAgentView, ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';
 import { memberCountLabel, ownerOfLabel } from './roster-model';
 
@@ -173,34 +172,29 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
   onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
-  const { humanColors, variants, takenColors } = useMemo(() => {
+  // Operator requests 2026-10-02/2026-10-23: per-member colours, resolved once per channel as this viewer sees them.
+  const humanColors = useMemo(() => {
     const viewerOwner = viewerOwnerId ?? '';
     // A colour the human chose for this channel (#1308) outranks their profile colour.
-    const humans = (humanParticipants ?? []).map(human => ({ ownerId: human.ownerId ?? human.participantId,
-      color: channelColors?.(human.ownerId ?? human.participantId)?.color ?? humanColorOf(describeParticipant?.(human.participantId)) }));
-    const humanOwners = new Set(humans.map(human => human.ownerId));
-    const agentOwners = view.agents.flatMap(agent => agent.ownerId && !humanOwners.has(agent.ownerId)
-      ? [{ ownerId: agent.ownerId, color: ownerColorOf(describeParticipant?.(agent.participantId)) }] : []);
-    const owners = resolveHumanColors({ viewer: { ownerId: viewerOwner,
-      color: channelColors?.(viewerOwner)?.color ?? viewerColor ?? defaultHumanColor(viewerOwner) }, others: [...humans, ...agentOwners] });
-    // Each agent's variant of its owner's colour, keyed by participant id beside the owners.
-    const owned = view.agents.flatMap(agent => agent.ownerId ? [{ participantId: agent.participantId, ownerId: agent.ownerId,
-      matrixUserId: describeParticipant?.(agent.participantId)?.matrixUserId }] : []);
-    const variants = assignAgentVariants(owned, ownerId => channelColors?.(ownerId));
-    return {
-      humanColors: new Map<string, ResolvedHumanColor>([...owners, ...owned.map(agent => [agent.participantId,
-        variantColor(owners.get(agent.ownerId) ?? resolvedColor(defaultHumanColor(agent.ownerId), 0), variants.get(agent.participantId) ?? 0)] as const)]),
-      variants,
-      // Other humans' chosen colours here, which the viewer's channel colour picker disables.
-      takenColors: new Set(humans.map(human => human.color ?? defaultHumanColor(human.ownerId))),
+    const human = (ownerId: string, profile: HumanColorId | null | undefined) => ({ id: ownerId, ownerId, pick: channelColors?.(ownerId)?.color ?? profile ?? undefined });
+    // An agent's colour counts only from its owner's own record.
+    const agentPick = (agent: ChannelAgentView) => {
+      const matrixUserId = describeParticipant?.(agent.participantId)?.matrixUserId;
+      return agent.ownerId && matrixUserId ? channelColors?.(agent.ownerId)?.agents[matrixUserId] : undefined;
     };
+    return resolveChannelColors(viewerOwner, [
+      human(viewerOwner, viewerColor),
+      ...(humanParticipants ?? []).map(entry => human(entry.ownerId ?? entry.participantId, humanColorOf(describeParticipant?.(entry.participantId)))),
+      // Owners outside the channel still colour their agents' owner badges.
+      ...view.agents.flatMap(agent => agent.ownerId ? [human(agent.ownerId, ownerColorOf(describeParticipant?.(agent.participantId)))] : []),
+      ...view.agents.map(agent => ({ id: agent.participantId, ownerId: agent.ownerId ?? '', pick: agentPick(agent) })),
+    ]);
   }, [channelColors, describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
       ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}), initials: viewerInitials },
     humans: humanParticipants ?? [], agents: view.agents, currentNames, describeParticipant,
-    colorFor: ownerId => humanColors.get(ownerId) ?? resolvedColor(defaultHumanColor(ownerId), 0),
+    colorFor: ownerId => humanColors.get(ownerId) ?? colorOf(defaultHumanColor(ownerId)),
     agentColorFor: participantId => humanColors.get(participantId),
   }), [describeParticipant, currentNames, humanColors, humanParticipants, view.agents, viewerEmail, viewerInitials, viewerName, viewerOwnerId,
     viewerParticipantId]);
@@ -324,11 +318,11 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
           {...(renameAgent ? { onRename: renameFromRoster } : {})}
           {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})}
           {...(onSetChannelColors && viewerOwnerId ? { renderColors: () => <ChannelColorsPicker save={onSetChannelColors}
-            channelColor={channelColors?.(viewerOwnerId)?.color} profileColor={viewerColor ?? defaultHumanColor(viewerOwnerId)}
-            taken={takenColors} agents={members.agents.flatMap(agent => {
+            channelColor={channelColors?.(viewerOwnerId)?.color} shownColor={humanColors.get(viewerOwnerId)?.key ?? defaultHumanColor(viewerOwnerId)}
+            palette={channelPalette(humanColors.size)} agents={members.agents.flatMap(agent => {
               const matrixUserId = agent.isViewerOwned ? describeParticipant?.(agent.participantId)?.matrixUserId : undefined;
-              const variant = variants.get(agent.participantId);
-              return matrixUserId && variant !== undefined ? [{ participantId: agent.participantId, matrixUserId, name: agent.name, variant }] : [];
+              const color = matrixUserId && (channelColors?.(viewerOwnerId)?.agents[matrixUserId] ?? humanColors.get(agent.participantId)?.key);
+              return matrixUserId && color ? [{ participantId: agent.participantId, matrixUserId, name: agent.name, color }] : [];
             })} /> } : {})} />
       </div>
     </div>

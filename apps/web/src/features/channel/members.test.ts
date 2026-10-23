@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
-import { resolvedColor } from '../../ui/khala/human-colors';
+import { colorOf } from '../../ui/khala/human-colors';
 import { participantHue } from '../../ui/khala/identity';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers, type MemberInput } from './members';
@@ -73,7 +73,7 @@ const colorInput = {
 
 describe('resolveMembers colours', () => {
   it('takes human hues and agent owner hues from colorFor', () => {
-    const colors = new Map([['owner_mira', resolvedColor('lime', 0)], ['owner_theo', resolvedColor('indigo', 1)]]);
+    const colors = new Map([['owner_mira', colorOf('lime')], ['owner_theo', colorOf('indigo.1')]]);
     const members = resolveMembers({ ...colorInput, colorFor: ownerId => colors.get(ownerId)! });
     expect(members.viewer).toMatchObject({ hue: 84, color: colors.get('owner_mira') });
     expect(members.humans[0]).toMatchObject({ hue: 244, color: colors.get('owner_theo') });

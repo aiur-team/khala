@@ -37,7 +37,7 @@ export type AgentMember = Readonly<{
   ownerHue: number;
   /** The colour the viewer sees the owner in; `null` without `MemberInput.colorFor`. */
   ownerColor: ResolvedHumanColor | null;
-  /** The agent's own colour, a variant of its owner's (#1308); `null` without `MemberInput.agentColorFor`. */
+  /** The agent's own colour (#1308); `null` without `MemberInput.agentColorFor`. */
   color: ResolvedHumanColor | null;
   ownerName: string;
   ownerInitials: string;
@@ -67,9 +67,9 @@ export type MemberInput = Readonly<{
   agents: readonly ChannelAgentView[];
   currentNames?: ReadonlyMap<ParticipantId, string> | undefined;
   describeParticipant?: ((participantId: string) => Participant | undefined) | undefined;
-  /** The channel's per-viewer human colours (`resolveHumanColors`); without it, hues hash as before. */
+  /** The channel's per-viewer human colours (`resolveChannelColors`); without it, hues hash as before. */
   colorFor?: ((ownerId: string) => ResolvedHumanColor) | undefined;
-  /** An agent's own colour (`variantColor`), by participant id. */
+  /** An agent's own colour (`resolveChannelColors`), by participant id. */
   agentColorFor?: ((participantId: string) => ResolvedHumanColor | undefined) | undefined;
 }>;
 
@@ -125,7 +125,7 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     const ownerId = agent.ownerId ?? null;
     const name = baseNames[index]!;
     const ownerColor = colorFor?.(ownerId ?? agent.participantId) ?? null;
-    // An agent wears a variant of its owner's colour (#1308; the owner's own before that, operator request 2026-10-04).
+    // An agent wears its own colour (#1308; the owner's before that, operator request 2026-10-04).
     const ownerHue = ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId });
     const color = agentColorFor?.(agent.participantId) ?? ownerColor;
     return {

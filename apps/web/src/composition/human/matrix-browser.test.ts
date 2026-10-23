@@ -407,15 +407,15 @@ describe('setOwnChannelColors (#1308)', () => {
   }
   it('writes the viewer\'s own member event, keeping its other content, and reads it back', async () => {
     const sdk = client();
-    expect(await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'teal', agents: { '@a:hs': 2 } })).toBe('sent');
+    expect(await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'teal', agents: { '@a:hs': 'teal.2' } })).toBe('sent');
     expect(sdk.sendStateEvent).toHaveBeenCalledExactlyOnceWith('!r', EventType.RoomMember, { membership: 'join', displayname: 'alice',
-      'com.khala.listening_mode': 'sync', 'com.khala.colors': { color: 'teal', agents: { '@a:hs': 2 } } }, me);
-    const saved = client({ membership: 'join', 'com.khala.colors': { agents: { '@a:hs': 4 } } });
-    expect(readChannelColors(saved as unknown as MatrixClient, '!r', me)).toEqual({ agents: { '@a:hs': 4 } });
+      'com.khala.listening_mode': 'sync', 'com.khala.colors': { color: 'teal', agents: { '@a:hs': 'teal.2' } } }, me);
+    const saved = client({ membership: 'join', 'com.khala.colors': { agents: { '@a:hs': 'red' } } });
+    expect(readChannelColors(saved as unknown as MatrixClient, '!r', me)).toEqual({ agents: { '@a:hs': 'red' } });
   });
   it('drops invalid parts and refuses when not joined', async () => {
     const sdk = client();
-    await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'nope' as never, agents: { '@a:hs': 0 } });
+    await setOwnChannelColors(sdk as unknown as MatrixClient, '!r', { color: 'nope' as never, agents: { '@a:hs': 0 as never } });
     expect(sdk.sendStateEvent.mock.calls[0]![2]).toMatchObject({ 'com.khala.colors': { agents: {} } });
     const left = client({ membership: 'leave' });
     expect(await setOwnChannelColors(left as unknown as MatrixClient, '!r', { agents: {} })).toBe('failed');

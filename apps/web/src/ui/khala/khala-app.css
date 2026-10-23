@@ -136,8 +136,6 @@
 /* Operator request 2026-10-02: per-human colours. `--hc` is the resolved colour's `tint` at every tier, so
    white initials keep at least 4.5:1; the hue-only fallback is 29% lightness for the same reason. A colour
    variant (tiers 1-2, past the 10 base colours) also carries a ring marker, so it doesn't rely on colour alone. */
-[data-kh-tier="1"].kh-hav { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 3.5px var(--hc); }
-[data-kh-tier="2"].kh-hav { outline: 1.5px dashed var(--hc); outline-offset: 2px; }
 .kh-more { font: 700 .66rem/1 "JetBrains Mono", monospace; color: var(--muted); background: var(--surface-3) !important; border-color: var(--line) !important; cursor: default; }
 .kh-gen { background: var(--surface-3) !important; border-color: var(--line) !important; color: var(--faint); font: 700 .9rem/1 "JetBrains Mono", monospace; }
 .kh-st { position: absolute; left: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--surface); background: var(--good); }

@@ -36,21 +36,26 @@ export function decodeHumanColorRecord(input: unknown): Decoded<HumanColorRecord
 /**
  * A human's colours in one channel, in their own `m.room.member` content (only
  * that member can send it): an optional channel colour that overrides their
- * profile colour there, and a variant index per agent Matrix user id. Clients
- * honour an agent entry only for an agent that human owns.
+ * profile colour there, and a colour per agent Matrix user id. Clients honour
+ * an agent entry only for an agent that human owns.
  */
 export const CHANNEL_COLORS_MEMBER_KEY = 'com.khala.colors' as const;
-/** Variant 0 is the human's own colour; agents take 1..AGENT_VARIANT_COUNT-1. */
-export const AGENT_VARIANT_COUNT = 9;
-export type ChannelColors = Readonly<{ color?: HumanColorId; agents: Readonly<Record<string, number>> }>;
-export const isAgentVariant = (value: unknown): value is number =>
-  Number.isInteger(value) && (value as number) >= 1 && (value as number) < AGENT_VARIANT_COUNT;
+/** Generated shades per base colour; the channel palette grows by one shade ring per 10 members. */
+export const CHANNEL_SHADE_COUNT = 8;
+/** A channel palette colour: a base colour, or `<base>.<n>` for its nth shade (1..CHANNEL_SHADE_COUNT). */
+export type ChannelColorKey = HumanColorId | `${HumanColorId}.${number}`;
+export function isChannelColorKey(value: unknown): value is ChannelColorKey {
+  if (typeof value !== 'string') return false;
+  const [id, shade, ...rest] = value.split('.');
+  return isHumanColorId(id) && rest.length === 0 && (shade === undefined || /^[1-9]$/u.test(shade) && Number(shade) <= CHANNEL_SHADE_COUNT);
+}
+export type ChannelColors = Readonly<{ color?: ChannelColorKey; agents: Readonly<Record<string, ChannelColorKey>> }>;
 /** The colours in a member event's content; invalid parts are dropped, `null` when absent. */
 export function memberChannelColors(content: unknown): ChannelColors | null {
   const raw = typeof content === 'object' && content !== null ? (content as Record<string, unknown>)[CHANNEL_COLORS_MEMBER_KEY] : undefined;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const { color, agents } = raw as Record<string, unknown>;
   const entries = typeof agents === 'object' && agents !== null && !Array.isArray(agents)
-    ? Object.entries(agents).filter(([userId, index]) => userId.startsWith('@') && isAgentVariant(index)) : [];
-  return { ...(isHumanColorId(color) ? { color } : {}), agents: Object.fromEntries(entries) as Record<string, number> };
+    ? Object.entries(agents).filter(([userId, key]) => userId.startsWith('@') && isChannelColorKey(key)) : [];
+  return { ...(isChannelColorKey(color) ? { color } : {}), agents: Object.fromEntries(entries) as Record<string, ChannelColorKey> };
 }

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { CHANNEL_COLORS_MEMBER_KEY, AGENT_VARIANT_COUNT, HUMAN_COLOR_IDS, decodeHumanColorRecord, defaultHumanColor, fnv1a, humanColorRecordKey, isAgentVariant, isHumanColorId, memberChannelColors } from './colors';
+import { CHANNEL_COLORS_MEMBER_KEY, HUMAN_COLOR_IDS, decodeHumanColorRecord, defaultHumanColor, fnv1a, humanColorRecordKey, isChannelColorKey, isHumanColorId, memberChannelColors } from './colors';
 
 it('defines ten stable colour ids in palette order', () => {
   expect(HUMAN_COLOR_IDS).toEqual(['red', 'orange', 'amber', 'lime', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
@@ -27,12 +27,15 @@ it('decodes exact colour records and encodes owner keys', () => {
   }
 });
 it('reads a member event\'s channel colours, dropping invalid parts', () => {
-  expect(memberChannelColors({ membership: 'join', [CHANNEL_COLORS_MEMBER_KEY]: { color: 'teal', agents: { '@a:x': 2 } } }))
-    .toEqual({ color: 'teal', agents: { '@a:x': 2 } });
-  expect(memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: { color: '#fff', agents: { '@a:x': 0, '@b:x': 9, '@c:x': 1.5, d: 3, '@e:x': 8 } } }))
-    .toEqual({ agents: { '@e:x': 8 } });
+  expect(memberChannelColors({ membership: 'join', [CHANNEL_COLORS_MEMBER_KEY]: { color: 'teal.2', agents: { '@a:x': 'red' } } }))
+    .toEqual({ color: 'teal.2', agents: { '@a:x': 'red' } });
+  expect(memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: { color: '#fff', agents: { '@a:x': 2, '@b:x': 'red.9', '@c:x': 'red.0', d: 'red', '@e:x': 'pink.8' } } }))
+    .toEqual({ agents: { '@e:x': 'pink.8' } });
   expect(memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: { agents: [1] } })).toEqual({ agents: {} });
   expect(memberChannelColors({ membership: 'join' })).toBeNull();
   expect(memberChannelColors(null)).toBeNull();
-  expect(isAgentVariant(AGENT_VARIANT_COUNT - 1)).toBe(true);
+});
+it('accepts base colours and their shades 1..8 as channel colour keys', () => {
+  for (const key of ['red', 'red.1', 'pink.8']) expect(isChannelColorKey(key)).toBe(true);
+  for (const key of ['red.0', 'red.9', 'red.01', 'red.1.1', 'chartreuse', 'red.', 3, null]) expect(isChannelColorKey(key)).toBe(false);
 });
