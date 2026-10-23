@@ -31,11 +31,20 @@ export type MentionTarget = Readonly<{
 const FLAT_LIMIT = 3;
 
 /**
- * `khInsert` (source:4344): append `@label `, first adding a space when the
- * draft is non-empty and doesn't end in whitespace.
+ * `khInsert` (source:4344) at a caret: `@label ` replaces `start`..`end`, with a
+ * leading space unless at the start or after whitespace, and no doubled
+ * trailing space. `caret` sits after the inserted text.
  */
+export function insertMentionAt(value: string, label: string, start: number, end = start): Readonly<{ value: string; caret: number }> {
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = before && !/\s$/u.test(before) ? `${before} ` : before;
+  return { value: `${lead}@${label}${/^\s/u.test(after) ? '' : ' '}${after}`, caret: lead.length + label.length + 2 };
+}
+
+/** Appends `@label ` to the draft (the roster's mention action). */
 export function insertMention(value: string, label: string): string {
-  return `${value && !/\s$/u.test(value) ? `${value} ` : value}@${label} `;
+  return insertMentionAt(value, label, value.length).value;
 }
 
 export type MentionGroup = Readonly<{ human: MentionTarget | null; agents: readonly MentionTarget[] }>;
@@ -64,31 +73,33 @@ export function flatMentionOrder(targets: readonly MentionTarget[]): readonly Me
     group.human && !group.human.isViewer ? [group.human, ...group.agents] : group.agents);
 }
 
+// Keeps the draft focused (and its caret) on desktop; the composer also restores it.
+const keepFocus = (event: { preventDefault(): void }) => event.preventDefault();
+
 function Chip({ target, onPick }: Readonly<{ target: MentionTarget; onPick(target: MentionTarget): void }>) {
   const swatch: Readonly<Record<string, string>> = target.swatch ? { '--hc': target.swatch } : {};
   if (target.kind === 'human') {
     const style = { '--oh': target.hue, ...swatch } as CSSProperties;
     if (target.isViewer) return <span className="kh-chip kh-chip-h kh-chip-me" style={style}><i>{target.ownerInitials}</i>You</span>;
-    return <button type="button" className="kh-chip kh-chip-h" style={style} data-kh-mention={target.id} onClick={() => onPick(target)}>
+    return <button type="button" className="kh-chip kh-chip-h" style={style} data-kh-mention={target.id} onMouseDown={keepFocus} onClick={() => onPick(target)}>
       <i>{target.ownerInitials}</i>@{target.display}
     </button>;
   }
   const logo = target.harness ? harnessLogo(target.harness) : null;
-  return <button type="button" className="kh-chip kh-chip-a" style={{ '--oh': target.ownerHue, ...swatch } as CSSProperties} data-kh-mention={target.id} onClick={() => onPick(target)}>
+  // The chip wears the agent's own colour (`--ah`); its badge keeps the owner's (`--oh`/`--hc`).
+  return <button type="button" className="kh-chip kh-chip-a" style={{ '--oh': target.ownerHue, '--ah': target.hue, ...swatch } as CSSProperties} data-kh-mention={target.id} onMouseDown={keepFocus} onClick={() => onPick(target)}>
     {logo ? <img src={logo} alt="" /> : null}@{target.display}<i>{target.ownerInitials}</i>
   </button>;
 }
 
-export function MentionChips({ targets, value, onChange, open, onOpenChange }: Readonly<{
+export function MentionChips({ targets, onPick, open, onOpenChange }: Readonly<{
   targets: readonly MentionTarget[];
-  value: string;
-  onChange(value: string): void;
+  onPick(target: MentionTarget): void;
   open: boolean;
   onOpenChange(open: boolean): void;
 }>) {
   const flat = flatMentionOrder(targets);
   if (flat.length === 0) return null;
-  const pick = (target: MentionTarget) => onChange(insertMention(value, target.label));
   const overflow = flat.length > FLAT_LIMIT;
   const expanded = open && overflow;
   const toggle = overflow
@@ -101,7 +112,7 @@ export function MentionChips({ targets, value, onChange, open, onOpenChange }: R
   if (!expanded) {
     return <div className="kh-to">
       <div className="kh-to-flat" role="toolbar" aria-label="Mention">
-        {flat.slice(0, FLAT_LIMIT).map(target => <Chip key={target.id} target={target} onPick={pick} />)}
+        {flat.slice(0, FLAT_LIMIT).map(target => <Chip key={target.id} target={target} onPick={onPick} />)}
         {toggle}
       </div>
     </div>;
@@ -110,8 +121,8 @@ export function MentionChips({ targets, value, onChange, open, onOpenChange }: R
   return <div className="kh-to is-open">
     <div className="kh-to-grid" role="group" aria-label="Mention">
       {groups.map(group => <Fragment key={group.human?.id ?? group.agents[0]!.ownerId}>
-        <div className="kh-to-h">{group.human ? <Chip target={group.human} onPick={pick} /> : null}</div>
-        <div className="kh-to-ags">{group.agents.map(target => <Chip key={target.id} target={target} onPick={pick} />)}</div>
+        <div className="kh-to-h">{group.human ? <Chip target={group.human} onPick={onPick} /> : null}</div>
+        <div className="kh-to-ags">{group.agents.map(target => <Chip key={target.id} target={target} onPick={onPick} />)}</div>
       </Fragment>)}
     </div>
     <div className="kh-to-foot"><span>Mention a human or agent</span>{toggle}</div>

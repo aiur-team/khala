@@ -2,7 +2,7 @@ import opencodeLogo from './assets/opencode.svg';
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { flatMentionOrder, insertMention, MentionChips, type MentionTarget } from './MentionChips';
+import { flatMentionOrder, insertMention, insertMentionAt, MentionChips, type MentionTarget } from './MentionChips';
 
 const kevin: MentionTarget = { id: 'p-kevin', kind: 'human', label: 'Kevin', display: 'Kevin', hue: 214, ownerHue: 214, ownerInitials: 'YO', ownerId: 'o-kevin', isViewer: true };
 const maya: MentionTarget = { id: 'p-maya', kind: 'human', label: 'Maya', display: 'Maya', hue: 330, ownerHue: 330, ownerInitials: 'MC', ownerId: 'o-maya', isViewer: false };
@@ -13,7 +13,7 @@ const codex2: MentionTarget = { ...codex, id: 'a3', display: 'Codex #2' };
 
 type Props = Parameters<typeof MentionChips>[0];
 const props = (overrides: Partial<Props> = {}): Props => ({
-  targets: [maya, codex, kevin, claude], value: '', onChange: () => {}, open: false, onOpenChange: () => {}, ...overrides,
+  targets: [maya, codex, kevin, claude], onPick: () => {}, open: false, onOpenChange: () => {}, ...overrides,
 });
 const html = (overrides: Partial<Props> = {}) => renderToStaticMarkup(<MentionChips {...props(overrides)} />);
 
@@ -43,6 +43,13 @@ describe('insertMention', () => {
     expect(insertMention('hi ', 'Kai')).toBe('hi @Kai ');
     expect(insertMention('hi\n', 'Kai')).toBe('hi\n@Kai ');
   });
+
+  it('inserts at the caret or over a selection, caret after the mention', () => {
+    expect(insertMentionAt('hi there', 'Codex', 2)).toEqual({ value: 'hi @Codex there', caret: 10 });
+    expect(insertMentionAt('hi there', 'Codex', 0)).toEqual({ value: '@Codex hi there', caret: 7 });
+    expect(insertMentionAt('ask bob now', 'Codex', 4, 7)).toEqual({ value: 'ask @Codex now', caret: 11 });
+    expect(insertMentionAt('ab', 'Codex', 1)).toEqual({ value: 'a @Codex b', caret: 9 });
+  });
 });
 
 describe('MentionChips', () => {
@@ -50,7 +57,7 @@ describe('MentionChips', () => {
     expect(flatMentionOrder([maya, codex, kevin, claude]).map(target => target.id)).toEqual(['a1', 'p-maya', 'a2']);
     const markup = html();
     expect(markup).toMatch(/^<div class="kh-to"><div class="kh-to-flat" role="toolbar" aria-label="Mention">/u);
-    expect(markup).toContain('<button type="button" class="kh-chip kh-chip-a" style="--oh:214" data-kh-mention="a1"><img src="');
+    expect(markup).toContain('<button type="button" class="kh-chip kh-chip-a" style="--oh:214;--ah:210" data-kh-mention="a1"><img src="');
     expect(markup).toContain('alt=""/>@Claude<i>KE</i></button>');
     expect(markup).toContain('<button type="button" class="kh-chip kh-chip-h" style="--oh:330" data-kh-mention="p-maya"><i>MC</i>@Maya</button>');
     expect(markup.indexOf('"a1"')).toBeLessThan(markup.indexOf('"p-maya"'));
@@ -87,12 +94,19 @@ describe('MentionChips', () => {
     expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
   });
 
-  it('inserts @label when a chip is clicked', () => {
-    const onChange = vi.fn();
-    const tree = MentionChips(props({ value: 'hi', onChange }));
+  it('picks the clicked chip without taking focus from the draft', () => {
+    const onPick = vi.fn();
+    const tree = MentionChips(props({ onPick }));
     (mentionButton(tree, 'a2').props.onClick as () => void)();
     (mentionButton(tree, 'p-maya').props.onClick as () => void)();
-    expect(onChange.mock.calls).toEqual([[insertMention('hi', 'Codex')], [insertMention('hi', 'Maya')]]);
+    expect(onPick.mock.calls).toEqual([[codex], [maya]]);
+    const preventDefault = vi.fn();
+    (mentionButton(tree, 'a2').props.onMouseDown as (event: unknown) => void)({ preventDefault });
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it('colours an agent chip with its own resolved hue, its badge with the owner’s', () => {
+    expect(html({ targets: [codex] })).toContain('style="--oh:330;--ah:150" data-kh-mention="a2"');
   });
 
   it('renders the viewer’s own chip as a static span', () => {

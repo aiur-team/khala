@@ -1,7 +1,7 @@
 import { type SyntheticEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { detectSecret } from '@khala/contracts/m1/secrets';
 import { SendIcon } from '../khala/icons';
-import { MentionChips, type MentionTarget } from '../khala/MentionChips';
+import { insertMentionAt, MentionChips, type MentionTarget } from '../khala/MentionChips';
 import { MENTION_LIST_ID, MentionPopup, mentionOptionId } from '../khala/MentionPopup';
 import { activeMentionQuery, applyMention, filterMentionTargets } from '../khala/mention-autocomplete';
 import './conversation.css';
@@ -89,11 +89,20 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
     onChange(next.value);
     setCaret(next.caret);
   };
+  // A chip inserts at the draft's caret or over its selection. A blurred
+  // textarea keeps both (iOS blurs it on the tap), so read them here.
+  const pickChip = (target: MentionTarget) => {
+    const textarea = input.current;
+    const next = insertMentionAt(value, target.label, textarea?.selectionStart ?? value.length, textarea?.selectionEnd ?? value.length);
+    pickedCaret.current = next.caret;
+    textarea?.focus(); // inside the tap, so iOS keeps the keyboard up
+    onChange(next.value);
+    setCaret(next.caret);
+  };
 
   return <>
     {secret ? <p className="kh-secret-warning" role="alert">This message looks like it contains a secret ({secret}). Remove it to send.</p> : null}
-    <MentionChips targets={mentionTargets} value={value} open={open} onOpenChange={setOpen}
-      onChange={next => { onChange(next); setCaret(next.length); input.current?.focus(); }} />
+    <MentionChips targets={mentionTargets} open={open} onOpenChange={setOpen} onPick={pickChip} />
     <form className="kh-comp" onSubmit={event => { event.preventDefault(); if (!blocked) onSend(); }}>
       {mentionOpen ? <MentionPopup options={options} active={active} onPick={pick} onHover={setActive} targets={mentionTargets} /> : null}
       <label className="sr-only" htmlFor="kh-input">Message</label>
