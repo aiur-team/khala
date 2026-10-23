@@ -4,7 +4,7 @@
 import type { HumanColorId } from '@khala/contracts/m1/colors';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ThemeChoice } from '../../shell/types';
-import { GearIcon, LogOutIcon, MoonIcon, SunIcon, UserIcon } from './icons';
+import { ArchiveIcon, GearIcon, LogOutIcon, MoonIcon, SunIcon, UserIcon } from './icons';
 import { HUMAN_PALETTE } from './human-colors';
 import { Popover } from './Popover';
 
@@ -15,6 +15,8 @@ export type SettingsMenuProps = Readonly<{
   color?: HumanColorId | null;
   /** Opens the profile dialog; without it the menu has no Profile item. */
   onEditProfile?(): void;
+  /** Opens Settings > Archived channels; without it the menu has no such item. */
+  onOpenArchived?(): void;
   /** Without it the menu has no Log out item, e.g. while identity is checked. */
   onSignOut?(): void;
   signingOut?: boolean;
@@ -113,7 +115,7 @@ export type SettingsItem = Readonly<{
  * The menu's items in order. A new item is one more entry here; the keyboard
  * navigation works over however many items there are.
  */
-export function settingsItems({ theme, onThemeChange, username, color = null, onEditProfile, onSignOut, signingOut = false, mentionNotifications }: SettingsMenuProps): SettingsItem[] {
+export function settingsItems({ theme, onThemeChange, username, color = null, onEditProfile, onOpenArchived, onSignOut, signingOut = false, mentionNotifications }: SettingsMenuProps): SettingsItem[] {
   const next: ThemeChoice = theme === 'dark' ? 'light' : 'dark';
   const items: SettingsItem[] = [{
     id: 'mode', icon: next === 'light' ? <SunIcon /> : <MoonIcon />, label: next === 'light' ? 'Light mode' : 'Dark mode',
@@ -125,6 +127,7 @@ export function settingsItems({ theme, onThemeChange, username, color = null, on
       : mentionNotifications.state === 'unsupported' ? 'Unavailable in this browser'
         : mentionNotifications.state === 'on' ? 'On' : 'Off',
     disabled: mentionNotifications.state === 'blocked' || mentionNotifications.state === 'unsupported', run: mentionNotifications.toggle });
+  if (onOpenArchived) items.push({ id: 'archived', icon: <ArchiveIcon />, label: 'Archived channels', run: onOpenArchived });
   if (onEditProfile) items.push({ id: 'profile', icon: <UserIcon />, label: 'Profile', detail: <>
     {color ? <span className="kh-swatch-dot" style={{ background: HUMAN_PALETTE[color].solid }} /> : null}{username ? `@${username}` : 'Not set'}
   </>, run: onEditProfile });

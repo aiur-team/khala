@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react';
 import { Avatar } from '../khala/Avatar';
 import { clockLabel, type TimeOptions } from '../khala/format-time';
-import { SearchIcon } from '../khala/icons';
+import { ArchiveIcon, SearchIcon } from '../khala/icons';
 import { harnessLogo, humanInitials, initials, ownerInitials, useParticipantHue } from '../khala/identity';
 
 export type ConversationMember = Readonly<{
@@ -27,6 +27,8 @@ export type ConversationSummary = Readonly<{
   members?: readonly ConversationMember[];
   /** Who sent the latest message: a human's first name or an agent's label. */
   lastSender?: Readonly<{ label: string; isViewer: boolean }>;
+  /** The viewer archived it: hidden from the index, listed in Settings > Archived channels. */
+  archived?: boolean;
 }>;
 
 const AGENT_OWNER_SEPARATOR = ' · ';
@@ -65,7 +67,7 @@ function SkeletonRow() {
   </div>;
 }
 
-export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No channels yet.', action, showSearch = true, timeOptions = {}, viewerOwnerId, viewerInitials = null }: Readonly<{
+export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No channels yet.', action, showSearch = true, timeOptions = {}, viewerOwnerId, viewerInitials = null, onArchive, onOpenArchived }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
@@ -81,10 +83,16 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   viewerOwnerId?: string;
   /** The viewer's chosen initials, on their own agents' owner badges; agent initials without them. */
   viewerInitials?: string | null;
+  /** Adds a swipe (touch) or hover/focus (pointer, keyboard) Archive action to each row. */
+  onArchive?(id: string): void;
+  /** Opens Settings > Archived channels from the bottom row shown while an archived channel is unread. */
+  onOpenArchived?(): void;
 }>) {
   const needle = query.toLocaleLowerCase();
-  const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(needle));
-  const unread = conversations.reduce((count, item) => count + (item.unreadCount ?? 0), 0);
+  const active = conversations.filter(item => !item.archived);
+  const visible = active.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(needle));
+  const unread = active.reduce((count, item) => count + (item.unreadCount ?? 0), 0);
+  const archivedUnread = conversations.some(item => item.archived && item.unreadCount);
   return <>
     <div className="kh-list-head"><b>Channels</b><span>{unread} unread</span>{action}</div>
     {showSearch ? <label className="kh-search"><SearchIcon />
@@ -93,13 +101,13 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
     <div className="kh-convos">
       {status === 'loading' ? <><SkeletonRow /><SkeletonRow /><SkeletonRow /><span className="sr-only" role="status">Loading channels…</span></> : null}
       {status === 'error' ? <div className="kh-cv-empty" role="alert">Channels are unavailable. Try reloading.</div> : null}
-      {status === 'ready' && visible.length === 0 ? <div className="kh-cv-empty" role="status">{conversations.length > 0 && query ? 'No channels match.' : emptyLabel}</div> : null}
+      {status === 'ready' && visible.length === 0 ? <div className="kh-cv-empty" role="status">{active.length > 0 && query ? 'No channels match.' : emptyLabel}</div> : null}
       {visible.map(item => {
         const preview = previewText(item);
         const time = item.timestamp ? clockLabel(new Date(item.timestamp), timeOptions) : null;
         const members = (item.members ?? []).slice(0, 2);
         const label = [item.title, preview, time, item.unreadCount ? `${item.unreadCount} unread` : null].filter(Boolean).join(', ');
-        return <button key={item.id} type="button" className={`kh-cv${selectedId === item.id ? ' is-active' : ''}${item.unreadCount ? ' unread' : ''}`}
+        const row = <button key={item.id} type="button" className={`kh-cv${selectedId === item.id ? ' is-active' : ''}${item.unreadCount ? ' unread' : ''}`}
           data-kh-convo={item.id} aria-label={label} aria-current={selectedId === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
           <span className="kh-cv-av" aria-hidden="true">
             {members.length ? members.map(member => <MemberAvatar key={member.id} member={member} members={item.members ?? []} viewerOwnerId={viewerOwnerId} viewerInitials={viewerInitials} />) : <Avatar kind="generic" />}
@@ -110,7 +118,17 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
             <span className="kh-cv-pv" dir="auto">{preview}</span>
           </span>
         </button>;
+        return onArchive ? <div key={item.id} className="kh-cv-row">
+          {row}
+          <button type="button" className="kh-cv-archive" aria-label={`Archive ${item.title}`} title="Archive" onClick={() => onArchive(item.id)}>
+            <ArchiveIcon /><span>Archive</span>
+          </button>
+        </div> : row;
       })}
+      {archivedUnread && onOpenArchived ? <button type="button" className="kh-cv unread kh-cv-archived" aria-label="Archived channels, new messages" onClick={onOpenArchived}>
+        <span className="kh-cv-av" aria-hidden="true"><span className="kh-av kh-cv-archived-icon"><ArchiveIcon /></span><span className="kh-cv-unread" /></span>
+        <span className="kh-cv-t"><span><b>Archived channels</b></span><span className="kh-cv-pv">New messages</span></span>
+      </button> : null}
     </div>
   </>;
 }

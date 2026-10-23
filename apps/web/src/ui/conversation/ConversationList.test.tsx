@@ -131,4 +131,37 @@ describe('ConversationList', () => {
     expect(render([])).toContain('<div class="kh-cv-empty" role="status">No channels yet.</div>');
     expect(render([release], { query: 'nothing here' })).toContain('<div class="kh-cv-empty" role="status">No channels match.</div>');
   });
+
+  describe('archiving', () => {
+    const quiet: ConversationSummary = { ...bare, id: '!q:khala.local', title: 'Quiet', unreadCount: null };
+    const archivedRead: ConversationSummary = { ...quiet, id: '!a:khala.local', title: 'Old project', archived: true };
+    const archivedUnread: ConversationSummary = { ...archivedRead, unreadCount: 2 };
+    const props = { onArchive: vi.fn(), onOpenArchived: vi.fn() };
+
+    it('hides archived channels from the index and its unread count', () => {
+      const html = render([quiet, archivedUnread], props);
+      expect(html).toContain('Quiet');
+      expect(html).not.toContain('data-kh-convo="!a:khala.local"');
+      expect(html).toContain('<span>0 unread</span>');
+    });
+
+    it('gives each row an Archive action only when archiving is available', () => {
+      expect(render([quiet], props)).toContain('aria-label="Archive Quiet"');
+      expect(render([quiet])).not.toContain('kh-cv-archive');
+    });
+
+    it('shows the Archived channels row last, with an unread dot, only while an archived channel is unread', () => {
+      const html = render([quiet, archivedUnread], props);
+      expect(html).toMatch(/<button type="button" class="kh-cv unread kh-cv-archived"[^>]*>.*<span class="kh-cv-unread"><\/span>.*Archived channels.*<\/button><\/div>$/su);
+      expect(html.indexOf('kh-cv-archived')).toBeGreaterThan(html.indexOf('Quiet'));
+      expect(render([quiet, archivedRead], props)).not.toContain('Archived channels');
+      expect(render([quiet, archivedUnread])).not.toContain('Archived channels');
+    });
+
+    it('keeps the Archived channels row when only archived channels exist', () => {
+      const html = render([archivedUnread], props);
+      expect(html).toContain('No channels yet.');
+      expect(html).toContain('Archived channels');
+    });
+  });
 });

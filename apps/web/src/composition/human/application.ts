@@ -43,6 +43,8 @@ export interface HumanApplicationPorts {
   readonly channelColors?: (roomId: RoomId, matrixUserId: string) => ChannelColors | null;
   /** Sets the viewer's own colours in one channel. */
   readonly setChannelColors?: (roomId: RoomId, colors: ChannelColors) => Promise<'sent' | 'failed'>;
+  /** Hosted only: archives or unarchives a channel for the viewer, which also quiets their own agents there. */
+  readonly setArchived?: (roomId: RoomId, archived: boolean) => Promise<'sent' | 'failed'>;
   /** Hosted Matrix presence; absent (local) or `null` (not yet known) hides the roster dot. */
   readonly presence?: (matrixUserId: string) => MemberPresence | null;
   /** Whether `matrixUserId` has read a loaded event in `roomId`. */

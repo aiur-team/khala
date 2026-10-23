@@ -17,6 +17,9 @@ export interface ChannelSession {
   listeningMode?(roomId: string): ListeningMode;
   onEnded?(handler: (reason: SessionEndReason) => void): () => void;
   inviter(roomId: string): string | undefined;
+  /** Hosted only: whether the agent's inviter archived the channel (their own member event). */
+  ownerArchived?(roomId: string): boolean;
+  onOwnerArchived?(handler: (roomId: string, archived: boolean) => void): () => void;
   onListeningModeCommand(handler: (c: SessionModeCommand) => void): () => void;
   publishListeningMode(roomId: string, mode: ListeningMode, signal?: AbortSignal): Promise<void>;
   onMessage(handler: (m: SessionMessage) => void): () => void;

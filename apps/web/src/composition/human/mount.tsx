@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import type { IdentityPort } from '@khala/contracts/messaging/index';
+import { decodeRoomId, type IdentityPort } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
@@ -13,6 +13,7 @@ import { HumanScreen, type HumanShellChrome } from './screen';
 import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList, type ConversationSummary } from '../../ui/conversation';
+import { ArchivedChannelsRoute } from './ArchivedChannelsRoute';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { CopyIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
@@ -281,16 +282,20 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
   const [editingProfile, setEditingProfile] = useState(false);
   const closeProfile = useCallback(() => setEditingProfile(false), []);
   const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
-  const inThread = route.kind === 'channel' || route.kind === 'join';
+  const inThread = route.kind === 'channel' || route.kind === 'join' || route.kind === 'archived';
+  const setArchived = context.setArchived;
+  const openArchived = setArchived ? () => navigateRoute(routes.archivedPath()) : undefined;
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread}
     brandActions={local ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
       mentionNotifications={{ state: notificationState, toggle: () => void notificationPreference.toggle() }}
-      username={username} color={color} onEditProfile={() => setEditingProfile(true)} {...(local ? {} : { onSignOut: signOut, signingOut })} />}
+      username={username} color={color} onEditProfile={() => setEditingProfile(true)} {...(openArchived ? { onOpenArchived: openArchived } : {})}
+      {...(local ? {} : { onSignOut: signOut, signingOut })} />}
     overlay={editingProfile ? <ProfileDialog ownerId={context.principal.ownerId} onClose={closeProfile} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId} viewerInitials={viewerInitials}
+      {...(setArchived && openArchived ? { onArchive: (id: string) => { const roomId = decodeRoomId(id); if (roomId.ok) void setArchived(roomId.value, true); }, onOpenArchived: openArchived } : {})}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
       action={<>
         <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded="false"
@@ -317,6 +322,8 @@ export function HumanApplicationScreen({
     switch (route.kind) {
       case 'conversations':
         return <ConversationIndexRoute />;
+      case 'archived':
+        return <ArchivedChannelsRoute context={context} routes={routes} navigateRoute={navigateRoute} />;
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'agent_confirm':

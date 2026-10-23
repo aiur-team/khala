@@ -16,6 +16,7 @@ import { createKhalaAgentClient } from './client-impl';
 import { migrateLegacy } from './channels';
 import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './matrix/session';
 import { appendInbox } from './inbox';
+import { readListeningMode } from './mode';
 import { channelFiles, filesForDir, readJoinFile, writeJoinFile, joinFilePath, stateKey, ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
 import { toInboxEntry } from './sender';
 import { deliver } from '../hooks/deliver';
@@ -618,6 +619,23 @@ it('contains hosted cache write failure through status and close', async () => {
   await connected();
   expect((await client.status()).state).toBe('connected');
   await expect(client.close()).resolves.toBeUndefined();
+});
+
+it('goes quiet while its owner archives the channel and listens again on unarchive', async () => {
+  let archived = true;
+  let onArchived: ((roomId: string, archived: boolean) => void) | undefined;
+  session.ownerArchived = () => archived;
+  session.onOwnerArchived = callback => { onArchived = callback; return () => { onArchived = undefined; }; };
+  await connected();
+  expect(await client.status()).toMatchObject({ listeningMode: 'sync', archived: true });
+  expect(await readListeningMode(channelFiles(filesForDir(dir), credentials.roomId))).toBe('async');
+  archived = false; onArchived!(credentials.roomId, false);
+  await vi.waitFor(async () => expect(await client.status()).not.toHaveProperty('archived'));
+  expect(await readListeningMode(channelFiles(filesForDir(dir), credentials.roomId))).toBe('sync');
+  onArchived!('!other:s', true);
+  expect(await client.status()).not.toHaveProperty('archived');
+  onArchived!(credentials.roomId, true);
+  await vi.waitFor(async () => expect((await client.status()).archived).toBe(true));
 });
 
 it('restores the listening mode from the joined member rather than stale process state', async () => {

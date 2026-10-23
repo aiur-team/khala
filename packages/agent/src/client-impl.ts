@@ -2,7 +2,7 @@ import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRe
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { applyListeningMode, readListeningMode } from './mode';
+import { applyArchived, applyListeningMode, readModeState } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
 import { encodeChannelEvent, foldCoordination, type CoordinationEvent } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
@@ -465,7 +465,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         });
       };
       attempt.unsubscribe = session.onMessage(intake);
-      attempt.unsubscribeMode = session.onListeningModeCommand(intakeMode);
+      const stopMode = session.onListeningModeCommand(intakeMode);
+      const stopArchive = session.onOwnerArchived?.((roomId, archived) => {
+        if (!current(attempt) || roomId !== credentials.roomId) return;
+        attempt.appends = attempt.appends.then(async () => { if (current(attempt)) await applyArchived(attempt.files!, archived); })
+          .catch(async () => { if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {}); });
+      });
+      attempt.unsubscribeMode = () => { stopMode(); stopArchive?.(); };
       if (!attempt.restore?.localCredentials) await wait(api.reportReady(input, { signal, timeoutMs: options.inviteTimeoutMs ?? 120_000, ...fetchDeps }));
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
@@ -479,6 +485,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');
         await writeStateFile(channelDir, 'mode.json', { ...previous, mode: session.listeningMode(credentials.roomId) });
       } else await removeStateFile(channelDir, 'mode.json');
+      if (session.ownerArchived && !asyncOnly) await applyArchived(attempt.files!, session.ownerArchived(credentials.roomId));
       // Subscribe first and hold live events until older gap messages are queued.
       // The inbox tail (not the delivery cursor) is the durable intake boundary.
       const missed: SessionMessage[][] = [];
@@ -679,10 +686,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const attempt = channels.get(ref.key);
         const session = attempt?.joined && current(attempt) ? attempt.session : undefined;
         const you = session ? ownName(session) : undefined;
+        const modeState = await readModeState(ref.files);
         return { channel: attempt?.status.channelName ?? ref.channelName ?? ref.roomId, roomId: ref.roomId,
           state: attempt?.status.state ?? 'disconnected', ...(attempt?.status.detail ? { detail: attempt.status.detail } : {}),
           ...(you !== undefined ? { you } : {}), ...(session ? { agentUserId: session.userId } : {}),
-          unread: (await unreadCount(ref.files.dir)).total, listeningMode: await readListeningMode(ref.files),
+          unread: (await unreadCount(ref.files.dir)).total, listeningMode: modeState.mode,
+          ...(modeState.archived ? { archived: true } : {}),
           ...(session?.members ? { members: session.members(ref.roomId) } : {}) };
       }));
       if (channel === undefined) {
@@ -698,6 +707,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         ...(single ? { channelName: single.channel, ...(single.you !== undefined ? { displayName: single.you, you: single.you } : {}),
           ...(single.agentUserId !== undefined ? { agentUserId: single.agentUserId } : {}) } : {}),
         unread: items.reduce((sum, item) => sum + item.unread, 0),
+        ...(single?.archived ? { archived: true } : {}),
         ...(single ? { listeningMode: single.listeningMode } : items.length === 0 ? { listeningMode: defaultMode } : {}), channels: items };
     },
     async read(limit, before, channel, filter) {

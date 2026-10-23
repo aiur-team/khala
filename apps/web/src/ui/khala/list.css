@@ -44,3 +44,27 @@
 
 /* The New channel popover's error line (§4.3), on the §12.2 `.kh-hint` (controls.css). */
 .kh-new-err { color: var(--block-ink); }
+/* Archive: a scroll-snap swipe on touch; a hover/focus icon on fine pointers. */
+.kh-cv-row { flex: 0 0 auto; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; border-radius: 12px; }
+.kh-cv-row::-webkit-scrollbar { display: none; }
+.kh-cv-row > .kh-cv { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; }
+.kh-cv-archive { flex: 0 0 88px; scroll-snap-align: end; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; font: inherit; font-size: .75rem; cursor: pointer; }
+.kh-cv-archive svg { width: 18px; height: 18px; }
+@media (hover: hover) and (pointer: fine) {
+  .kh-cv-row { overflow: visible; position: relative; }
+  .kh-cv-archive { position: absolute; right: .45rem; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border-radius: 8px; background: var(--surface-3); color: var(--fg); opacity: 0; }
+  .kh-cv-archive span { display: none; }
+  .kh-cv-row:hover .kh-cv-archive, .kh-cv-archive:focus-visible { opacity: 1; }
+  .kh-cv-archive:hover { background: var(--accent); color: #fff; }
+}
+.kh-cv-archived-icon { display: grid; place-items: center; border-radius: 50%; background: var(--surface-3); color: var(--muted); }
+.kh-cv-archived-icon svg { width: 20px; height: 20px; }
+.kh-archived { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.kh-archived li { display: flex; align-items: center; gap: .75rem; padding: .55rem .6rem; border-radius: 12px; background: var(--surface-2); }
+.kh-archived a { flex: 1; min-width: 0; display: flex; align-items: center; gap: .5rem; color: var(--fg); text-decoration: none; }
+.kh-archived .kh-cv-unread { position: static; flex: 0 0 auto; }
+.kh-archived b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.kh-archived li.unread b { font-weight: 700; }
+.kh-archived em { flex: 0 0 auto; font-style: normal; font-size: .75rem; color: var(--accent); }
+.kh-archived-back { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); text-decoration: none; }
+.kh-archived-back svg { width: 16px; height: 16px; }

@@ -40,6 +40,7 @@ import {
 import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
 import { CHANNEL_COLORS_MEMBER_KEY, memberChannelColors, type ChannelColors } from '@khala/contracts/m1/colors';
+import { ARCHIVED_MEMBER_KEY, memberArchived } from '@khala/contracts/m1/archive';
 import type { ChannelNameResult, ChannelNamesPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
@@ -231,6 +232,7 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         preview: typeof body === 'string' ? body : null,
         timestamp: latest ? new Date(latest.getTs()).toISOString() : null,
         unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
+        ...(viewer && memberArchived(candidate.getMember(viewer)?.events.member?.getContent()) ? { archived: true } : {}),
         members: candidate.getJoinedMembers()
           .filter(member => member.userId !== viewer)
           .map(member => conversationMember(member.userId, member.name)),
@@ -791,6 +793,21 @@ export async function setOwnChannelColors(client: Pick<MatrixClient, 'getRoom' |
   } catch { return 'failed'; }
 }
 
+/** Archives or unarchives the channel for the viewer only, in their member event, keeping its other content. */
+export async function setOwnArchived(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
+  archived: boolean): Promise<'sent' | 'failed'> {
+  try {
+    const userId = client.getUserId();
+    const own = userId ? client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
+    if (!userId || !own || own.getContent().membership !== 'join') return 'failed';
+    const rest: Record<string, unknown> = { ...own.getContent() };
+    delete rest[ARCHIVED_MEMBER_KEY];
+    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
+    await send.call(client, roomId, EventType.RoomMember, { ...rest, membership: 'join', ...(archived ? { [ARCHIVED_MEMBER_KEY]: true } : {}) }, userId);
+    return 'sent';
+  } catch { return 'failed'; }
+}
+
 /** When `userId` took its current name in `roomId`: the time of its latest membership event. */
 export function memberSince(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): number | null {
   return client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getTs() ?? null;
@@ -862,6 +879,7 @@ export type MatrixBrowserPorts = Readonly<{
   memberSince(roomId: RoomId, userId: string): number | null;
   channelColors(roomId: RoomId, userId: string): ChannelColors | null;
   setChannelColors(roomId: RoomId, colors: ChannelColors): Promise<'sent' | 'failed'>;
+  setArchived(roomId: RoomId, archived: boolean): Promise<'sent' | 'failed'>;
   presence(userId: string): MemberPresence | null;
   hasRead(roomId: RoomId, userId: string, eventId: string): boolean;
   typing: TypingPort;
@@ -1000,6 +1018,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     memberSince: (roomId, userId) => runtime.active ? memberSince(runtime.active.client, roomId, userId) : null,
     channelColors: (roomId, userId) => runtime.active ? readChannelColors(runtime.active.client, roomId, userId) : null,
     setChannelColors: (roomId, colors) => runtime.active ? setOwnChannelColors(runtime.active.client, roomId, colors) : Promise.resolve('failed'),
+    setArchived: (roomId, archived) => runtime.active ? setOwnArchived(runtime.active.client, roomId, archived) : Promise.resolve('failed'),
     presence: userId => runtime.active ? memberPresence(runtime.active.client, userId) : null,
     hasRead: (roomId, userId, eventId) => !!runtime.active && hasReadEvent(runtime.active.client, roomId, userId, eventId),
     typing: {
