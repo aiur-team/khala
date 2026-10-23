@@ -1,6 +1,6 @@
 import { decodeListeningMode, DEFAULT_LISTENING_MODE, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import path from 'node:path';
-import { advanceCursor, unread } from './inbox';
+import { advanceCursor, markNudged, readCursor, readEntries, unread } from './inbox';
 import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
 /** The owner-chosen mode and whether the owner archived the channel. */
@@ -29,8 +29,15 @@ export async function readListeningMode(files: SessionFiles): Promise<ListeningM
 export async function applyArchived(files: SessionFiles, archived: boolean): Promise<void> {
   const content = await readJson<Record<string, unknown>>(files.mode);
   if ((content?.archived === true) === archived) return;
-  if (!archived && !QUIET.has((await readModeState(files)).mode)) await skipBacklog(files);
+  const stored = (await readModeState(files)).mode;
+  if (!archived && !QUIET.has(stored)) await skipBacklog(files);
+  if (!archived && stored === 'async') await skipPings(files);
   await writeJsonAtomic(files.mode, { ...(content ?? {}), archived });
+}
+/** Pings that arrived while muted (or archived) were ignored; they must not nudge once async resumes. */
+async function skipPings(files: SessionFiles): Promise<void> {
+  const cursor = await readCursor(files);
+  await markNudged(files, cursor, (await readEntries(files)).length);
 }
 async function skipBacklog(files: SessionFiles): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -51,6 +58,7 @@ export async function applyListeningMode(files: SessionFiles, next: ListeningMod
   const { keepBacklog, ...record } = meta;
   const { mode: previous, archived } = await readModeState(files);
   if (QUIET.has(previous) && !QUIET.has(next) && !keepBacklog) await skipBacklog(files);
+  if (previous === 'mute' && next === 'async') await skipPings(files);
   await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...record, updatedAt: now().toISOString() });
   return { previous, next };
 }

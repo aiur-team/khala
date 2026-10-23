@@ -5,7 +5,7 @@ import { filesForDir, readJson, StateError, writeJsonAtomic, type SessionFiles }
 
 /** shownEventId: the newest entry whose content reached the agent's context (read receipts follow it, not nudges).
  * nudgedCount: async mentions before this index already earned their constant nudge. It is separate from
- * `deliveredCount` so a ping never moves the backlog cursor; any delivery drops it. */
+ * `deliveredCount` so a ping never moves the backlog cursor; a delivery past it drops it. */
 export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number; shownEventId?: string; nudgedCount?: number };
 export async function readEntries(files: SessionFiles): Promise<InboxEntry[]> {
   let content: string;
@@ -75,7 +75,8 @@ export async function advanceCursor(files: SessionFiles, expected: Cursor, deliv
   if (slice.length !== delivered.length || slice.some((entry, index) => entry.eventId !== delivered[index]?.eventId)) return 'conflict';
   const last = delivered[delivered.length - 1]!.eventId;
   const shownEventId = shown ? last : current.shownEventId;
-  const next = { lastDeliveredEventId: last, deliveredCount: expected.deliveredCount + delivered.length, ...(shownEventId ? { shownEventId } : {}) };
+  const next = { lastDeliveredEventId: last, deliveredCount: expected.deliveredCount + delivered.length, ...(shownEventId ? { shownEventId } : {}),
+    ...(wakeStart(current) > expected.deliveredCount + delivered.length ? { nudgedCount: current.nudgedCount } : {}) };
   await writeJsonAtomic(files.cursor, next);
   return next;
 }

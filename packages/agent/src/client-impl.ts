@@ -494,8 +494,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const membershipTime = session.joinedAt?.(credentials.roomId);
       if (!savedJoinBoundary && membershipTime !== undefined) originalJoinedAt = new Date(membershipTime).toISOString();
       if (asyncOnly) {
-        await writeStateFile(channelDir, 'mode.json', { mode: 'async' });
-        await publishMode(attempt, session, credentials.roomId, 'async');
+        // An async-only harness listens no closer than async; a mute it chose survives a rejoin.
+        const mode = (await readModeState(attempt.files!)).mode === 'mute' ? 'mute' : 'async';
+        await writeStateFile(channelDir, 'mode.json', { mode });
+        await publishMode(attempt, session, credentials.roomId, mode);
       } else if (session.listeningMode) {
         const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');
         await writeStateFile(channelDir, 'mode.json', { ...previous, mode: session.listeningMode(credentials.roomId) });

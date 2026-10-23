@@ -91,3 +91,9 @@ it('records an agent change with its reason and keeps the async backlog on reque
   expect((await unreadCounts(files)).total).toBe(3);
   expect(JSON.parse(await fs.readFile(files.mode, 'utf8'))).toEqual({ mode: 'sync', changedBy: 'agent', reason: 'owner asked', eventTs: 5, updatedAt: now().toISOString() });
 });
+it("does not nudge for pings that arrived while muted, and keeps them as backlog", async () => {
+  await applyListeningMode(files, "mute", meta); await backlog();
+  await applyListeningMode(files, "async", meta);
+  expect(await readCursor(files)).toMatchObject({ deliveredCount: 0, nudgedCount: 3 });
+  expect((await unreadCounts(files)).total).toBe(3);
+});
