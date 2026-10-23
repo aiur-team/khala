@@ -23,6 +23,8 @@ export type MentionTarget = Readonly<{
   ownerId: string;
   /** The viewer's own human entry. */
   isViewer: boolean;
+  /** A group mention (`@channel`, `@humans`, `@agents`): its audience, shown in the popup. */
+  group?: string;
 }>;
 
 /** Chips shown before the `+N` toggle. */

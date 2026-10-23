@@ -31,6 +31,7 @@
 .khala-app[data-theme="light"] .kh-mention { color: hsl(var(--mh) 60% 34%); }
 .kh-row.me .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
 .kh-mention:hover { text-decoration: underline; }
+.kh-mention.kh-mgroup { cursor: default; }
 .kh-row.human .kh-b { background: var(--hb, hsl(330 42% 30%)); color: #fff; }
 .khala-app[data-theme="light"] .kh-row.human .kh-b { background: var(--hb-l, hsl(330 62% 86%)); color: var(--hk, #3a1026); }
 .kh-row.human .kh-b code { background: rgba(0,0,0,.2); }

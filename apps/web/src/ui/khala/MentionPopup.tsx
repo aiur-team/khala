@@ -14,6 +14,7 @@ export const mentionOptionId = (target: MentionTarget) => `kh-mention-opt-${targ
 const keepFocus = (event: SyntheticEvent) => event.preventDefault();
 
 function Avatar({ target }: Readonly<{ target: MentionTarget }>) {
+  if (target.group) return <i style={{ '--oh': 45 } as CSSProperties}>@</i>;
   const swatch: Readonly<Record<string, string>> = target.swatch ? { '--hc': target.swatch } : {};
   if (target.kind === 'human') return <i style={{ '--oh': target.hue, ...swatch } as CSSProperties}>{target.ownerInitials}</i>;
   const logo = target.harness ? harnessLogo(target.harness) : null;

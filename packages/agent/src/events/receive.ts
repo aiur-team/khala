@@ -29,7 +29,11 @@ export function isWakeEntry(entry: InboxEntry): boolean {
   return entry.kind === 'message' || entry.mention === true;
 }
 
+/** `@channel` (everyone) and `@agents` address every agent; `@humans` does not. */
+const agentGroupMention = /(?<![\p{L}\p{N}_@])@(?:channel|agents)(?![\p{L}\p{N}_])/iu;
+
 export function mentions(entry: InboxEntry, name: string | undefined): boolean {
+  if (entry.kind === 'message' && agentGroupMention.test(entry.body)) return true;
   if (!name) return false;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(entry.body);

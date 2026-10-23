@@ -38,6 +38,7 @@ function renderMentions(text: string, options: RenderOptions, key: string): Reac
   if (!options.mentions) return [text];
   return segmentMentions(text, options.mentions).map((segment, index) => {
     if ('text' in segment) return segment.text;
+    if ('group' in segment) return <span key={`${key}-${index}`} className="kh-mention kh-hm kh-mgroup" style={{ '--mh': 45 } as CSSProperties}>@{segment.group}</span>;
     const open = () => options.onOpenParticipant?.(segment.participantId);
     return <span key={`${key}-${index}`} className={`kh-mention${segment.kind === 'human' ? ' kh-hm' : ''}`}
       style={{ '--mh': segment.hue } as CSSProperties} role="button" tabIndex={0} onClick={open}
