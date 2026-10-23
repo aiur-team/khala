@@ -2,6 +2,7 @@ import { retryUnexpired } from './decryption-retry';
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { memberArchived } from '@khala/contracts/m1/archive';
+import { IMAGE_MAX_BYTES } from '@khala/contracts/m1/image';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { randomUUID } from 'node:crypto';
@@ -459,8 +460,17 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
       const url = client.mxcUrlToHttp(mxc, undefined, undefined, undefined, false, true, true);
       if (!url) throw new Error('invalid_media_url');
       const res = await fetch(url, { headers: { authorization: `Bearer ${creds.accessToken}` }, signal: AbortSignal.timeout(60_000) });
-      if (!res.ok) throw new Error(`media_download_${res.status}`);
-      return new Uint8Array(await res.arrayBuffer());
+      if (!res.ok || !res.body) throw new Error(`media_download_${res.status}`);
+      // Stop reading past the cap: the media URL comes from untrusted channel content.
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      const reader = res.body.getReader();
+      for (let next = await reader.read(); !next.done; next = await reader.read()) {
+        size += next.value.length;
+        if (size > IMAGE_MAX_BYTES * 2) { void reader.cancel(); throw new Error('media_too_large'); }
+        chunks.push(next.value);
+      }
+      return Buffer.concat(chunks);
     },
     async sendContent(roomId, content) {
       if (stopped) throw new Error('session_stopped');

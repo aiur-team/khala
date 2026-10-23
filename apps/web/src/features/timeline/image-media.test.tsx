@@ -47,7 +47,15 @@ describe('encrypted upload and display', () => {
     const blob = await loadImage(media, image);
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(png(4, 3));
     expect(blob.type).toBe('image/png');
-    expect(loadedImage(image.url)).toBe(blob);
+    expect(loadedImage(image)).toBe(blob);
+  });
+
+  it('refuses decrypted bytes that are not the declared image type', async () => {
+    const media = memoryMedia();
+    const prepared = await prepareImage(file(png(4, 3), 'shot.png'));
+    if ('error' in prepared) throw new Error(prepared.error);
+    const image = await uploadImage(media, prepared);
+    await expect(loadImage(media, { ...image, mimetype: 'image/gif' })).rejects.toThrow('not_an_image');
   });
 
   it('round-trips an image message through the Matrix wire, reply parent included', async () => {
@@ -97,6 +105,12 @@ describe('saveImage', () => {
     const shared = (share.mock.calls[0] as unknown as [{ files: File[] }])[0].files[0]!;
     expect(shared.name).toBe('shot.png');
     expect(shared.type).toBe('image/png');
+  });
+
+  it('names the saved file by its verified type, never the sender extension', () => {
+    const share = vi.fn(async () => {});
+    saveImage(blob, 'invoice‮gnp.exe', { canShare: () => true, share }, {} as Document);
+    expect((share.mock.calls[0] as unknown as [{ files: File[] }])[0].files[0]!.name).toBe('invoicegnp.png');
   });
 
   it('falls back to a download link elsewhere', () => {

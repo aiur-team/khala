@@ -843,7 +843,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       try {
         const sealed = await encryptAttachment(bytes);
         const url = await session.uploadMedia(sealed.ciphertext);
-        const name = path.basename(file).replace(/[\p{Cc}\\]/gu, '_').slice(0, 255);
+        const name = path.basename(file).replace(/[\p{Cc}\p{Cf}\\]/gu, '_').slice(0, 255);
         const sent = await session.sendContent(credentials.roomId, imageEventContent({ name, ...checked.image, size: bytes.length, url,
           key: sealed.key, iv: sealed.iv, sha256: sealed.sha256 }, caption));
         if (current(attempt) && attempt.status.state === 'send_failed') await setStatus(attempt, 'connected');

@@ -516,7 +516,7 @@ export function TimelineScreen({
       setUploading(true);
       setAttachError(null);
       try { image = await uploadImage(media, pending.image); } catch { setAttachError(IMAGE_ERROR_TEXT.upload_failed); return; } finally { setUploading(false); }
-      rememberImage(image.url, new Blob([new Uint8Array(pending.image.bytes)], { type: pending.image.mimetype }));
+      rememberImage(image, new Blob([new Uint8Array(pending.image.bytes)], { type: pending.image.mimetype }));
       setAttachment(null);
     }
     const content = { v: 1 as const, kind: 'text' as const, body: body || image?.name || '',
@@ -942,9 +942,9 @@ export function TimelineScreen({
           </ol>
           {focus.mode === 'menu' ? <div className="kh-focus__menu" role="menu" aria-label="Message actions" onKeyDown={onMenuKeyDown}>
             <button type="button" role="menuitem" autoFocus onClick={() => setFocus({ mode: 'reply', eventId: focus.eventId })}>Reply</button>
-            {focusImage && loadedImage(focusImage.url) ? <button type="button" role="menuitem" onClick={() => {
+            {focusImage && loadedImage(focusImage) ? <button type="button" role="menuitem" onClick={() => {
               // Synchronous from the tap, so iOS keeps the activation the share sheet needs.
-              saveImage(loadedImage(focusImage.url)!, focusImage.name);
+              saveImage(loadedImage(focusImage)!, focusImage.name);
               closeFocus();
             }}>Save Image</button> : null}
             {!focusImage || focusTarget?.content.body !== focusImage.name ? <button type="button" role="menuitem" onClick={() => {
@@ -971,7 +971,8 @@ export function TimelineScreen({
       </div>
       {typers.length > 0 ? <p className="kh-typers" aria-live="polite">{typingLabel(typers)}</p> : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
-        disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={mentionTargets}
+        // While an image uploads the draft is locked: it is the caption being sent.
+        disabled={!canCompose || uploading} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={mentionTargets}
         {...(media ? { onAttach: (file: File) => void attach(file), attachment: attachment ? { url: attachment.url, name: attachment.image.name } : null,
           onRemoveAttachment: () => { setAttachment(null); setAttachError(null); }, attachError } : {})}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />

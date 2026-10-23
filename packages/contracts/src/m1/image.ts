@@ -125,7 +125,8 @@ export async function decryptAttachment(ciphertext: Uint8Array, ref: Pick<ImageR
 }
 
 const MXC = /^mxc:\/\/[A-Za-z0-9.:[\]-]{1,255}\/[A-Za-z0-9_-]{1,255}$/u;
-const NAME = /^[^\p{Cc}/\\]{1,255}$/u;
+// No control or format characters: U+202E could make "gnp.exe" read as "exe.png".
+const NAME = /^[^\p{Cc}\p{Cf}/\\]{1,255}$/u;
 
 /** A validated image reference, or null. Content from the room is untrusted. */
 export function readImageRef(value: unknown): ImageRef | null {
@@ -137,7 +138,7 @@ export function readImageRef(value: unknown): ImageRef | null {
   return typeof v.name === 'string' && NAME.test(v.name) && (IMAGE_MIME_TYPES as readonly unknown[]).includes(v.mimetype)
     && int(v.size, IMAGE_MAX_BYTES * 2) && int(v.w, MAX_DIMENSION) && int(v.h, MAX_DIMENSION)
     && typeof v.url === 'string' && MXC.test(v.url) && typeof v.key === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v.key)
-    && typeof v.iv === 'string' && /^[A-Za-z0-9+/]{22}(==)?$/u.test(v.iv) && typeof v.sha256 === 'string' && /^[A-Za-z0-9+/]{43}=?$/u.test(v.sha256)
+    && typeof v.iv === 'string' && /^[A-Za-z0-9+/]{22}(==)?$/u.test(v.iv) && typeof v.sha256 === 'string' && /^[A-Za-z0-9+/]{43}$/u.test(v.sha256)
     ? v as ImageRef : null;
 }
 
@@ -164,6 +165,12 @@ export function readImageEvent(content: Record<string, unknown>): { image: Image
 }
 
 /** The agent-facing one-line stand-in, `[image: name, WxH]`. */
+/** A safe file name for saving: the stem without format characters, and the extension of the sniffed type. */
+export function imageFileName(name: string, mimetype: ImageMimeType): string {
+  const stem = name.replace(/[\p{Cc}\p{Cf}/\\]/gu, '').replace(/\.[^.]*$/u, '') || 'image';
+  return `${stem}.${mimetype === 'image/jpeg' ? 'jpg' : mimetype.slice('image/'.length)}`;
+}
+
 export function imageLabel(image: Pick<ImageRef, 'name' | 'w' | 'h'>): string {
   return `[image: ${image.name}, ${image.w}x${image.h}]`;
 }

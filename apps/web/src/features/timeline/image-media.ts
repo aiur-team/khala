@@ -1,6 +1,6 @@
 // Image attachments in the browser: prepare (validate, drop metadata), encrypt
 // and upload, decrypt and cache for display, and save through the platform.
-import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, stripJpegMetadata, type ImageRef, type SniffedImage } from '@khala/contracts/m1/image';
+import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageFileName, sniffImage, stripJpegMetadata, type ImageRef, type SniffedImage } from '@khala/contracts/m1/image';
 import type { MediaPort } from '../channel/ports';
 
 export type PreparedImage = Readonly<SniffedImage & { bytes: Uint8Array; name: string }>;
@@ -42,7 +42,7 @@ export async function prepareImage(file: Blob & { name?: string }, reencode = re
     checked = checkImage(bytes);
     if (!checked.ok) return { error: checked.reason };
   }
-  const name = (file.name || 'image').replace(/[\p{Cc}/\\]/gu, '_').slice(0, 255);
+  const name = (file.name || 'image').replace(/[\p{Cc}\p{Cf}/\\]/gu, '_').slice(0, 255);
   return { ...checked.image, bytes, name };
 }
 
@@ -55,31 +55,39 @@ export async function uploadImage(media: MediaPort, image: PreparedImage): Promi
 // ponytail: decrypted images stay in memory for the page's life; add eviction if channels hold hundreds of images.
 const loading = new Map<string, Promise<Blob>>();
 const loaded = new Map<string, Blob>();
+// Keyed on the whole reference: another event may reuse a media URL with a different key.
+const cacheKey = (image: ImageRef) => JSON.stringify([image.url, image.key, image.iv, image.sha256, image.mimetype]);
 
-/** Downloads, verifies and decrypts once per mxc URL. A failure is forgotten so a later render retries. */
+/**
+ * Downloads, verifies and decrypts once per reference. The decrypted bytes must sniff as the
+ * declared allowed type: a sender cannot pass off another file as an image. A failure is
+ * forgotten so a later render retries.
+ */
 export function loadImage(media: MediaPort, image: ImageRef): Promise<Blob> {
-  let pending = loading.get(image.url);
+  const key = cacheKey(image);
+  let pending = loading.get(key);
   if (!pending) {
     pending = media.download(image.url).then(ciphertext => decryptAttachment(ciphertext, image)).then(bytes => {
+      if (sniffImage(bytes)?.mimetype !== image.mimetype) throw new Error('not_an_image');
       const blob = new Blob([new Uint8Array(bytes)], { type: image.mimetype });
-      loaded.set(image.url, blob);
+      loaded.set(key, blob);
       return blob;
     });
-    pending.catch(() => loading.delete(image.url));
-    loading.set(image.url, pending);
+    pending.catch(() => loading.delete(key));
+    loading.set(key, pending);
   }
   return pending;
 }
 
 /** Seeds the cache with an image this tab just sent, so its own echo never downloads it again. */
-export function rememberImage(url: string, blob: Blob): void {
-  loaded.set(url, blob);
-  loading.set(url, Promise.resolve(blob));
+export function rememberImage(image: ImageRef, blob: Blob): void {
+  loaded.set(cacheKey(image), blob);
+  loading.set(cacheKey(image), Promise.resolve(blob));
 }
 
 /** The decrypted image if it is already in memory; Save must not await, or iOS drops the tap's user activation. */
-export function loadedImage(url: string): Blob | undefined {
-  return loaded.get(url);
+export function loadedImage(image: ImageRef): Blob | undefined {
+  return loaded.get(cacheKey(image));
 }
 
 /**
@@ -89,14 +97,15 @@ export function loadedImage(url: string): Blob | undefined {
  */
 export function saveImage(blob: Blob, name: string, nav: Pick<Navigator, 'canShare' | 'share'> | undefined = globalThis.navigator,
   doc: Document = document): void {
-  const file = new File([blob], name, { type: blob.type });
+  // The extension follows the verified type; the sender's name is only a stem.
+  const file = new File([blob], imageFileName(name, blob.type as ImageRef['mimetype']), { type: blob.type });
   if (nav?.canShare?.({ files: [file] })) {
     void nav.share({ files: [file] }).catch(() => undefined); // A dismissed sheet rejects with AbortError.
     return;
   }
   const link = doc.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = name;
+  link.download = file.name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
 }
