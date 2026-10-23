@@ -48,7 +48,9 @@ export type MentionNotificationPreference = ReturnType<typeof createMentionNotif
 /** Follow the renderer: inline and fenced code do not contain active mentions. */
 export function mentionsViewer(body: string, roster: readonly MentionCandidate[], viewerId: string): boolean {
   const prose = body.replace(/```[^\n`]*\n[\s\S]*?```/gu, '').replace(/`[^`\n]+`/gu, '');
-  return segmentMentions(prose, roster).some(segment => 'participantId' in segment && segment.participantId === viewerId);
+  // The viewer is a person, so `@channel` and `@humans` reach them; `@agents` does not.
+  return segmentMentions(prose, roster).some(segment => 'group' in segment ? segment.group !== 'agents'
+    : 'participantId' in segment && segment.participantId === viewerId);
 }
 const label = (p: Pick<ParticipantView, 'kind' | 'displayName'>) => p.kind === 'agent'
   ? p.displayName.split(' · ')[0]!.trim() : p.displayName.trim().split(/\s+/u)[0]!;

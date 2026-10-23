@@ -11,6 +11,10 @@ export type MentionQuery = Readonly<{ start: number; end: number; query: string 
 /** Most suggestions shown at once. */
 const LIMIT = 8;
 
+/** `@channel`, `@humans` and `@agents`, offered after the people (see `MENTION_GROUPS`). */
+const GROUP_TARGETS: readonly MentionTarget[] = ([['channel', 'Everyone'], ['humans', 'All humans'], ['agents', 'All agents']] as const)
+  .map(([label, group]) => ({ id: `group-${label}`, kind: 'agent', label, display: label, group, hue: 0, ownerHue: 0, ownerInitials: '@', ownerId: '', isViewer: false }));
+
 /** The active `@query` ending at the caret, or null. An `@` inside a word (an email) never opens one. */
 export function activeMentionQuery(value: string, caret: number): MentionQuery | null {
   const before = value.slice(0, caret);
@@ -28,7 +32,9 @@ export function activeMentionQuery(value: string, caret: number): MentionQuery |
 export function filterMentionTargets(targets: readonly MentionTarget[], query: string): readonly MentionTarget[] {
   const base = flatMentionOrder(targets);
   const q = query.toLocaleLowerCase('en-US');
-  if (!q) return base.slice(0, LIMIT);
+  // Groups follow the people, by prefix only, and only where someone can be mentioned.
+  const groups = base.length ? GROUP_TARGETS.filter(group => group.label.startsWith(q)) : [];
+  if (!q) return [...base, ...groups].slice(0, LIMIT);
   const lower = (text: string) => text.toLocaleLowerCase('en-US');
   const tiers = [
     (target: MentionTarget) => lower(target.label).startsWith(q),
@@ -44,7 +50,7 @@ export function filterMentionTargets(targets: readonly MentionTarget[], query: s
       ranked.push(target);
     }
   }
-  return ranked.slice(0, LIMIT);
+  return [...ranked, ...groups].slice(0, LIMIT);
 }
 
 /** Replace `value[start, end)` with `@label `, reusing whitespace already after the caret. */
@@ -57,8 +63,9 @@ export function applyMention(value: string, range: MentionQuery, label: string):
   };
 }
 
-/** `Human`, `Your agent`, or `Agent of <owner's first name>` (owner initials when the owner isn't listed). */
+/** A group's audience, `Human`, `Your agent`, or `Agent of <owner's first name>` (owner initials when the owner isn't listed). */
 export function mentionKindLabel(target: MentionTarget, targets: readonly MentionTarget[]): string {
+  if (target.group) return target.group;
   if (target.kind === 'human') return 'Human';
   const viewer = targets.find(candidate => candidate.isViewer);
   if (viewer && viewer.ownerId === target.ownerId) return 'Your agent';

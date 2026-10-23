@@ -35,6 +35,16 @@ describe('segmentMentions', () => {
     ]);
   });
 
+  it('segments @channel, @humans and @agents groups, even with an empty roster', () => {
+    expect(segmentMentions('@Channel, @humans and @agents!', [])).toEqual([
+      { group: 'channel' }, { text: ', ' }, { group: 'humans' }, { text: ' and ' }, { group: 'agents' }, { text: '!' },
+    ]);
+    expect(segmentMentions('mail@channel.dev @channels', [])).toEqual([{ text: 'mail@channel.dev @channels' }]);
+    const channelOps = { ...opus, label: 'channel-ops', participantId: 'p-ops' };
+    expect(segmentMentions('@channel-ops', [channelOps])[0]).toMatchObject({ participantId: 'p-ops' });
+    expect(segmentMentions('@agents', [{ ...opus, label: 'agents' }])).toEqual([{ group: 'agents' }]);
+  });
+
   it('stays under 2 ms per message across a 500-message thread', () => {
     const roster = Array.from({ length: 40 }, (_, index) => ({ ...opus, label: `Agent${index}`, participantId: `p${index}` }));
     const body = 'Status for @Agent7 and @Agent31: nothing blocking, see mail@example.dev. '.repeat(4);

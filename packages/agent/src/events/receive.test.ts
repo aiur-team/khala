@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './receive';
+import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry, wakesAgent } from './receive';
 
 const base = { eventId: '$e1', roomId: '!r:khala.local', ts: '2026-10-02T10:06:00Z', sender: '@agent-kevin:khala.local', senderLabel: 'Claude · Kevin', senderKind: 'agent' as const };
 const content = { v: 1, kind: 'ci.failed', summary: 'CI failed: test', subject: { ticket: 'AIUR-395', branch: 'aiur/395-events-cursor' }, key: 'ci:395:failed:3f9c2ab', body: 'untrusted fallback' };
@@ -31,4 +31,16 @@ it('marks a handoff addressed to you as a mention', () => {
   expect(entry).toMatchObject({ eventKind: 'handoff', data: handoff.data, mention: true });
   expect(isWakeEntry(entry)).toBe(true);
   expect(toEventInboxEntry(base, handoff, 'PC')!.entry.mention).toBeUndefined();
+});
+it('@channel and @agents mention every agent; @humans does not', () => {
+  const message = (body: string) => ({ ...base, kind: 'message' as const, body });
+  for (const body of ['@channel ship it', 'hey @Agents.', '(@CHANNEL)']) {
+    expect(mentions(message(body), undefined)).toBe(true);
+    expect(wakesAgent(message(body), 'sync', 'Claude')).toBe(true);
+  }
+  for (const body of ['@humans review', 'mail@channel.dev', '@channels', 'channel agents']) {
+    expect(mentions(message(body), 'Claude')).toBe(false);
+    expect(wakesAgent(message(body), 'sync', 'Claude')).toBe(false);
+  }
+  expect(mentions({ ...message('@channel'), kind: 'event' }, undefined)).toBe(false);
 });

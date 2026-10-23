@@ -158,4 +158,8 @@ describe('permission preference', () => {
     expect(mentionsViewer('@kev hello', roster, 'viewer')).toBe(true);
     for (const body of ['x@Kev', '@Kevin', '`@Kev`', '```txt\n@Kev\n```']) expect(mentionsViewer(body, roster, 'viewer')).toBe(false);
   });
+  it('notifies the human viewer for @channel and @humans, not @agents', () => {
+    for (const body of ['@channel deploy done', 'hi @Humans']) expect(mentionsViewer(body, [], 'viewer')).toBe(true);
+    for (const body of ['@agents pick this up', '`@channel`']) expect(mentionsViewer(body, [], 'viewer')).toBe(false);
+  });
 });

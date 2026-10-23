@@ -51,24 +51,31 @@ describe('activeMentionQuery', () => {
 
 describe('filterMentionTargets', () => {
   it('ranks the label-prefix hits for @c in chip order', () => {
-    expect(ids(filterMentionTargets(targets, 'c'))).toEqual(['a1', 'a2', 'a3']);
+    expect(ids(filterMentionTargets(targets, 'c'))).toEqual(['a1', 'a2', 'a3', 'group-channel']);
+  });
+
+  it('offers @channel, @humans and @agents after people, never on an empty roster', () => {
+    expect(ids(filterMentionTargets(targets, 'h'))).toEqual(['group-humans']);
+    expect(ids(filterMentionTargets(targets, 'ag'))).toEqual(['group-agents']);
+    expect(mentionKindLabel(filterMentionTargets(targets, 'hum')[0]!, targets)).toBe('All humans');
+    expect(filterMentionTargets([targets[0]!], 'ch')).toEqual([]);
   });
 
   it('is case-insensitive', () => {
-    expect(ids(filterMentionTargets(targets, 'C'))).toEqual(['a1', 'a2', 'a3']);
+    expect(ids(filterMentionTargets(targets, 'C'))).toEqual(['a1', 'a2', 'a3', 'group-channel']);
     expect(ids(filterMentionTargets(targets, 'KA'))).toEqual(['p-kai']);
   });
 
   it('lists the whole chip order for an empty query, never the viewer', () => {
     const all = filterMentionTargets(targets, '');
-    expect(ids(all)).toEqual(ids(flatMentionOrder(targets)));
-    expect(ids(all)).toEqual(['a1', 'p-maya', 'a2', 'p-kai', 'a3']);
+    expect(ids(all)).toEqual([...ids(flatMentionOrder(targets)), 'group-channel', 'group-humans', 'group-agents']);
+    expect(ids(all).slice(0, 5)).toEqual(['a1', 'p-maya', 'a2', 'p-kai', 'a3']);
     expect(ids(filterMentionTargets(targets, 'kev'))).toEqual([]);
   });
 
   it('ranks a word-segment prefix after label-prefix hits', () => {
     const roster = [agent('kc', 'Kevin-Claude'), agent('co', 'Codex')];
-    expect(ids(filterMentionTargets(roster, 'c'))).toEqual(['co', 'kc']);
+    expect(ids(filterMentionTargets(roster, 'c'))).toEqual(['co', 'kc', 'group-channel']);
   });
 
   it('ranks substrings after prefix hits, matching display too', () => {
