@@ -31,6 +31,8 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
   let buffered = '';
   let discarding = false;
   const iterator = input[Symbol.asyncIterator]();
+  const inFlight = new Set<Promise<void>>();
+  let failed: { error: unknown } | undefined;
   while (!signal?.aborted) {
     const next = await nextChunk(iterator, signal);
     if (next.done) break;
@@ -50,7 +52,13 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
       if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
         await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
       } else if (line.trim().length > 0) {
-        await processLine(line, output, context, signal);
+        if (waitCall(line)) {
+          // A khala_read wait blocks up to 50 s; it must not stall other tool calls (responses carry their ids).
+          const task: Promise<void> = processLine(line, output, context, signal).catch(error => { failed ??= { error }; }).finally(() => inFlight.delete(task));
+          inFlight.add(task);
+        } else {
+          await processLine(line, output, context, signal);
+        }
       }
       newline = buffered.indexOf('\n');
     }
@@ -66,6 +74,16 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
   if (!discarding && buffered.trim().length > 0) {
     await processLine(buffered.replace(/\r$/, ''), output, context, signal);
   }
+  await Promise.all(inFlight);
+  if (failed) throw failed.error;
+}
+
+function waitCall(line: string): boolean {
+  if (!line.includes('"wait"')) return false;
+  try {
+    const message = JSON.parse(line);
+    return message?.method === 'tools/call' && message.params?.arguments?.wait !== undefined;
+  } catch { return false; }
 }
 
 async function processLine(

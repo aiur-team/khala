@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import * as inbox from './inbox';
 import { appendEntries, readCursor, unreadCounts } from './inbox';
 import { filesForDir, type SessionFiles } from './state';
-import { applyArchived, applyListeningMode, readListeningMode, readModeState } from './mode';
+import { applyArchived, applyListeningMode, delegateChannel, isDelegated, readListeningMode, readModeState } from './mode';
 let files: SessionFiles;
 beforeEach(async () => { files = filesForDir(await fs.mkdtemp(path.join(os.tmpdir(), 'khala-mode-947-'))); });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(files.dir, { recursive: true, force: true }); });
@@ -16,6 +16,15 @@ it('defaults missing and invalid files to sync', async () => {
   for (const content of ['broken', 'null', '{"mode":"loud"}']) {
     await fs.writeFile(files.mode, content); expect(await readListeningMode(files)).toBe('sync');
   }
+});
+it('a live delegation lease makes the session see async, without changing the owner mode', async () => {
+  await applyListeningMode(files, 'steer', meta);
+  await delegateChannel(files, 60_000);
+  expect(await readListeningMode(files)).toBe('async');
+  expect((await readModeState(files)).mode).toBe('steer');
+  await delegateChannel(files, -1);
+  expect(await isDelegated(files)).toBe(false);
+  expect(await readListeningMode(files)).toBe('steer');
 });
 it('round trips mode and metadata', async () => {
   expect(await applyListeningMode(files, 'async', meta, now)).toEqual({ previous: 'sync', next: 'async' });

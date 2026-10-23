@@ -8,6 +8,7 @@ import { recordHookSession, resolveSources } from './session-sources';
 import { openSessionDir, channelFiles, writeStateFile, ensureStateDir } from '../state';
 import { appendEntries, unread } from '../inbox';
 import { STOP_NUDGE } from './adapter';
+import { delegateChannel } from '../mode';
 
 it('resolves the native resume session without a hook map', async () => {
   expect(await resolveSources(copilot.sessionSources, undefined,
@@ -64,6 +65,43 @@ it('maps real event-less hook payloads to the MCP sibling and guards continuatio
     expect((await unread(channel)).entries).toHaveLength(0);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+it('nudges for news in either joined channel, but not for a channel a background agent owns', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-copilot-multi-'));
+  const env = { XDG_STATE_HOME: root };
+  const readProcess = async (pid: number) => ({ pid, ppid: pid === 300 ? 100 : 0, command: pid === 100 ? 'copilot' : 'node', startTime: `start-${pid}` });
+  let stdout = '';
+  const io = { env, pid: 300, readProcess, now: () => new Date('2026-10-05T12:00:00Z'),
+    stdout: { write: (text: string) => { stdout += text; } }, stderr: { write: () => {} } };
+  const run = async (event: string) => {
+    stdout = '';
+    await deliver(JSON.stringify({ sessionId: 'session', cwd: '/work' }), ['--harness', 'copilot', '--event', event], io);
+    return JSON.parse(stdout);
+  };
+  try {
+    await run('userPromptSubmitted');
+    const files = await openSessionDir('copilot', 'session', env);
+    const join = async (roomId: string, channelName: string) => {
+      const channel = channelFiles(files, roomId);
+      await ensureStateDir(channel.dir);
+      await writeStateFile(channel.dir, 'channel.json', { roomId, channelName, joinedAt: '2026-10-05T12:00:00Z' });
+      await writeStateFile(channel.dir, 'mode.json', { mode: 'sync' });
+      return channel;
+    };
+    const say = (channel: Awaited<ReturnType<typeof join>>, roomId: string, eventId: string) => appendEntries(channel, [{ eventId, roomId, ts: '2026-10-05T12:00:00Z',
+      sender: '@maya:local', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'secret plan' }]);
+    const a = await join('!a:local', 'A'), b = await join('!b:local', 'B');
+    for (const [channel, roomId, eventId] of [[a, '!a:local', '$a'], [b, '!b:local', '$b']] as const) {
+      await say(channel, roomId, eventId);
+      expect(await run('agentStop')).toEqual({ decision: 'block', reason: STOP_NUDGE });
+      expect((await unread(channel)).entries).toHaveLength(0);
+    }
+    await delegateChannel(b, 60_000);
+    await say(b, '!b:local', '$b2');
+    expect(await run('agentStop')).toEqual({});
+    expect((await unread(b)).entries).toHaveLength(1);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 it('only matches the captured empty terminal prompt', () => {
   expect(copilot.emptyPrompt?.pattern.test('❯ ')).toBe(true);
   expect(copilot.emptyPrompt?.pattern.test('❯ draft')).toBe(false);
