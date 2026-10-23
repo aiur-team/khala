@@ -48,6 +48,8 @@ function errorDetail(error: unknown, fallback: string): string {
 }
 
 const TYPING_CAP_MS = 10 * 60_000;
+const TYPING_STALE_BUSY_MS = 120_000;
+const TYPING_WAKE_GRACE_MS = 10_000;
 
 export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaAgentClient {
   const asyncOnly = !adapterFor(options.harness)?.codec;
@@ -114,7 +116,14 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     const { session, credentials } = attempt;
     if (attempt.typingSince === undefined || !session?.setTyping || !credentials) return;
     const activity = await readActivity(filesForDir(dir)).catch(() => undefined);
-    const working = activity?.state === 'busy' && Date.parse(activity.updatedAt) > 0 && now().getTime() - attempt.typingSince < TYPING_CAP_MS;
+    const since = attempt.typingSince;
+    if (since === undefined) return; // khala_send cleared it during the read.
+    const t = now().getTime();
+    const at = activity ? Date.parse(activity.updatedAt) : 0;
+    // Busy goes stale like the hooks' own fallback (Esc skips Stop). Idle since before typing started is a
+    // wake still landing: it gets one heartbeat to turn busy. Idle after the start is the turn's end.
+    const working = t - since < TYPING_CAP_MS && (activity?.state === 'busy'
+      ? t - Math.max(at, since) < TYPING_STALE_BUSY_MS : at <= since && t - since < TYPING_WAKE_GRACE_MS);
     if (!working) attempt.typingSince = undefined;
     await session.setTyping(credentials.roomId, working).catch(() => {});
   }
