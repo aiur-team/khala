@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { TimelineController, TimelineData } from './controller';
-import { TimelineScreen } from './TimelineScreen';
+import { TimelineScreen, typingLabel } from './TimelineScreen';
 import { HumanColorsProvider, resolveChannelColors } from '../../ui/khala/human-colors';
 import type { PendingSend } from './send';
 
@@ -596,4 +596,9 @@ describe('thread design (KM-182)', () => {
     expect(html.match(/class="kh-seen"/g)).toHaveLength(1);
     expect(html).toContain('<p class="kh-seen">Seen by Opus</p>');
   });
+});
+
+it('labels one, two and several typers', () => {
+  expect([typingLabel(['Alice']), typingLabel(['Alice', 'claude-1']), typingLabel(['Alice', 'Bob', 'Cy'])])
+    .toEqual(['Alice is typing…', 'Alice and claude-1 are typing…', 'Alice, Bob and Cy are typing…']);
 });

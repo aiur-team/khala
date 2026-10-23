@@ -65,6 +65,7 @@
 .kh-rcpt b { color: var(--muted); font-weight: 600; }
 .kh-rcpt.kh-fail { color: var(--block); font-weight: 600; }
 .kh-seen { margin: .1rem 0 0; font-size: .7rem; color: var(--faint); }
+.kh-typers { margin: 0; padding: .15rem 1rem; font-size: .72rem; color: var(--faint); }
 .kh-row.pending .kh-b { opacity: .7; }
 
 /* §7.5 pop (source:543-544) */

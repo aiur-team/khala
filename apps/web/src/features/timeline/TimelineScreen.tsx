@@ -21,6 +21,7 @@ import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
+import type { TypingPort } from '../channel/ports';
 import { ChatComposer, ChatMessage, insertMention, type MentionTarget } from '../../ui/conversation';
 import { ChatSystemEvent } from '../../ui/conversation';
 import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
@@ -69,6 +70,8 @@ export interface TimelineScreenProps {
   onMentionRoster?: (roster: readonly MentionCandidate[]) => void;
   /** Participants whose read receipt covers `eventId`; a message shows "Seen by" for the ones it @mentions. */
   seenBy?: (eventId: EventId) => readonly string[];
+  /** Hosted only: shows who else is typing and sends the viewer's own typing state. */
+  typing?: TypingPort;
   /** The empty thread's Invite button. KM-183 opens the invite popover. */
   onInvite?: () => void;
   /** The clock for day separator labels; tests pin it. */
@@ -228,7 +231,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, now = () => new Date(), timeOptions = {},
+  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, typing, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -273,6 +276,10 @@ export function TimelineScreen({
     heading?.focus();
   }
   const [draft, setDraft] = useState('');
+  const [typers, setTypers] = useState<readonly string[]>([]);
+  useEffect(() => typing?.subscribe(roomId, setTypers), [typing, roomId]);
+  useEffect(() => { typing?.set(roomId, draft.trim().length > 0); }, [typing, roomId, draft]);
+  useEffect(() => () => typing?.set(roomId, false), [typing, roomId]);
   const [chipsOpen, setChipsOpen] = useState(false);
   useImperativeHandle(composerRef, () => ({
     insertMention: label => setDraft(current => insertMention(current, label)),
@@ -818,10 +825,16 @@ export function TimelineScreen({
           ) : null}
         </div>
       </div>
+      {typers.length > 0 ? <p className="kh-typers" aria-live="polite">{typingLabel(typers)}</p> : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked} mentionTargets={mentionTargets}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
     </section>
   );
+}
+
+/** `Alice is typing…`, `Alice and Bob are typing…`, `Alice, Bob and Cy are typing…`. */
+export function typingLabel(names: readonly string[]): string {
+  return names.length === 1 ? `${names[0]} is typing…` : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} are typing…`;
 }

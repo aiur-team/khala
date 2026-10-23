@@ -75,6 +75,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     setChannelColors: matrix.setChannelColors,
     presence: matrix.presence,
     hasRead: matrix.hasRead,
+    typing: matrix.typing,
     limits: decodedLimits.value,
   }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
   const mounted = mountKhalaContent({
