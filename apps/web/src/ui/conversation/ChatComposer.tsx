@@ -1,6 +1,6 @@
 import { type SyntheticEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { detectSecret } from '@khala/contracts/m1/secrets';
-import { SendIcon } from '../khala/icons';
+import { PlusIcon, SendIcon, XIcon } from '../khala/icons';
 import { insertMentionAt, MentionChips, type MentionTarget } from '../khala/MentionChips';
 import { MENTION_LIST_ID, MentionPopup, mentionOptionId } from '../khala/MentionPopup';
 import { activeMentionQuery, applyMention, filterMentionTargets } from '../khala/mention-autocomplete';
@@ -14,17 +14,24 @@ export { insertMention, type MentionTarget } from '../khala/MentionChips';
  * `@` at a word boundary opens the mention suggestions above the form.
  */
 export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId,
-  placeholder = 'Message the Khala', mentionTargets = [], chipsOpen, onChipsOpenChange }: Readonly<{
+  placeholder = 'Message the Khala', mentionTargets = [], chipsOpen, onChipsOpenChange, onAttach, attachment = null, onRemoveAttachment, attachError = null }: Readonly<{
   value: string; onChange(value: string): void; onSend(): void;
   disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string;
   placeholder?: string;
   mentionTargets?: readonly MentionTarget[];
   chipsOpen?: boolean; onChipsOpenChange?(open: boolean): void;
+  /** Shows the "+" image button; called with a picked or pasted file. */
+  onAttach?(file: File): void;
+  /** The image waiting to send: a preview URL and its name. The draft becomes its caption. */
+  attachment?: Readonly<{ url: string; name: string }> | null;
+  onRemoveAttachment?(): void;
+  attachError?: string | null;
 }>) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   // E2EE: the server cannot see the draft, so the composer refuses secrets itself.
   const secret = detectSecret(value);
-  const blocked = disabled || sendDisabled || secret !== null || !value.trim();
+  const blocked = disabled || sendDisabled || secret !== null || (!value.trim() && !attachment);
   const [localChipsOpen, setLocalChipsOpen] = useState(false);
   const open = chipsOpen ?? localChipsOpen;
   const setOpen = (next: boolean) => {
@@ -102,11 +109,26 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
 
   return <>
     {secret ? <p className="kh-secret-warning" role="alert">This message looks like it contains a secret ({secret}). Remove it to send.</p> : null}
+    {attachError ? <p className="kh-secret-warning" role="alert">{attachError}</p> : null}
     <MentionChips targets={mentionTargets} open={open} onOpenChange={setOpen} onPick={pickChip} />
+    {attachment ? <div className="kh-attach-chip">
+      <img src={attachment.url} alt="" />
+      <span dir="auto">{attachment.name}</span>
+      <button type="button" className="kh-ib sm" aria-label="Remove image" onClick={onRemoveAttachment}><XIcon /></button>
+    </div> : null}
     <form className="kh-comp" onSubmit={event => { event.preventDefault(); if (!blocked) onSend(); }}>
       {mentionOpen ? <MentionPopup options={options} active={active} onPick={pick} onHover={setActive} targets={mentionTargets} /> : null}
+      {onAttach ? <>
+        {/* image/* lets iOS offer Photo Library, Take Photo and Files, and hands HEIC over as JPEG. */}
+        <input ref={picker} type="file" accept="image/*" hidden aria-hidden="true" tabIndex={-1} onChange={event => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) onAttach(file);
+        }} />
+        <button type="button" className="kh-attach" aria-label="Add image" disabled={disabled} onClick={() => picker.current?.click()}><PlusIcon /></button>
+      </> : null}
       <label className="sr-only" htmlFor="kh-input">Message</label>
-      <textarea ref={input} className="kh-input" id="kh-input" rows={1} placeholder={placeholder} value={value}
+      <textarea ref={input} className="kh-input" id="kh-input" rows={1} placeholder={attachment ? 'Add a caption' : placeholder} value={value}
         onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); }}
         disabled={disabled} aria-describedby={sendDescriptionId}
         role={mentionable ? 'combobox' : undefined} aria-autocomplete={mentionable ? 'list' : undefined}
@@ -114,6 +136,12 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
         aria-controls={mentionOpen ? MENTION_LIST_ID : undefined}
         aria-activedescendant={mentionOpen ? mentionOptionId(options[active]!) : undefined}
         onSelect={syncCaret} onKeyUp={syncCaret} onClick={syncCaret}
+        onPaste={event => {
+          const file = onAttach ? [...event.clipboardData.files].find(item => item.type.startsWith('image/')) : undefined;
+          if (!file) return;
+          event.preventDefault();
+          onAttach!(file);
+        }}
         onBlur={() => setDismissedAt(query?.start ?? null)}
         onKeyDown={event => {
           const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;

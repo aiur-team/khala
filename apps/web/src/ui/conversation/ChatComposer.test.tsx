@@ -34,6 +34,30 @@ function keyDown(tree: ReactNode, init: Partial<{ key: string; shiftKey: boolean
 }
 
 describe('ChatComposer', () => {
+  it('shows the "+" image button only with an attach handler, and hands the picked file over', () => {
+    expect(render().html).not.toContain('Add image');
+    const onAttach = vi.fn();
+    const { html, tree } = render({ onAttach });
+    expect(html).toContain('accept="image/*"');
+    expect(html.indexOf('aria-label="Add image"')).toBeLessThan(html.indexOf('<textarea'));
+    const picker = hosts(tree).find(element => element.type === 'input')!;
+    const target = { files: [new File(['x'], 'x.png')], value: 'C:\\fakepath\\x.png' };
+    (picker.props.onChange as (event: unknown) => void)({ target });
+    expect(onAttach).toHaveBeenCalledWith(target.files[0]);
+    expect(target.value).toBe('');
+  });
+
+  it('sends an attached image without text, shows its chip and removes it', () => {
+    const onRemoveAttachment = vi.fn();
+    const { html, tree } = render({ onAttach: () => {}, attachment: { url: 'blob:preview', name: 'shot.png' }, onRemoveAttachment });
+    expect(html).toContain('<img src="blob:preview" alt=""/>');
+    expect(html).toContain('placeholder="Add a caption"');
+    expect(html).not.toContain('disabled="" aria-label="Send"');
+    (hosts(tree).find(element => element.props['aria-label'] === 'Remove image')!.props.onClick as () => void)();
+    expect(onRemoveAttachment).toHaveBeenCalled();
+    expect(render({ onAttach: () => {}, attachError: 'Only JPEG, PNG, GIF or WebP images can be sent.' }).html).toContain('role="alert"');
+  });
+
   it('disables send while the draft is empty', () => {
     expect(render().html).toMatch(/<button class="kh-send" type="submit" disabled="" aria-label="Send">/u);
     expect(render({ value: '   ' }).html).toContain('disabled="" aria-label="Send"');

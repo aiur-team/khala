@@ -63,6 +63,8 @@ describe('contentSecurityPolicy', () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    // Decrypted image messages render from blob: URLs; no remote image origin is admitted.
+    expect(csp).toContain("img-src 'self' data: blob:;");
   });
 
   it('admits Google Fonts stylesheets and font files and nothing broader', () => {

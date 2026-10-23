@@ -59,7 +59,8 @@ export function contentSecurityPolicy(homeserverOrigin: string | null): string {
     "script-src 'self' 'wasm-unsafe-eval'",
     "worker-src 'self' blob:",
     `connect-src ${connectSources}`,
-    "img-src 'self' data:",
+    // Decrypted image messages render from blob: URLs.
+    "img-src 'self' data: blob:",
     // The design's fonts load from Google Fonts (RECREATION-SPEC §2.1).
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",

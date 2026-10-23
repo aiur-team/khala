@@ -334,6 +334,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
             return userId && context.hasRead!(roomId, userId, eventId) ? [agent.participantId] : [];
           }) } : {})}
           {...(context.typing ? { typing: context.typing } : {})}
+          {...(context.media ? { media: context.media } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

@@ -18,6 +18,12 @@ export type TypingPort = Readonly<{
   set(roomId: RoomId, typing: boolean): void;
 }>;
 
+/** Hosted Matrix media repo. Bytes are ciphertext both ways: callers encrypt before upload and decrypt after download. */
+export type MediaPort = Readonly<{
+  upload(ciphertext: Uint8Array): Promise<string>;
+  download(mxc: string): Promise<Uint8Array>;
+}>;
+
 export type AgentPresence = Readonly<{
   participantId: ParticipantId;
   /** Server-attested owner binding; absent on older status sources, which cannot authorize edits. */
