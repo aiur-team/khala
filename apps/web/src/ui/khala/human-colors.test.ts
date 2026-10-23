@@ -76,7 +76,7 @@ describe('colorOf and humanColorStyle', () => {
   it('draws a base colour from the palette and a shade from its generated tint', () => {
     expect(colorOf('blue')).toMatchObject({ key: 'blue', label: 'Blue', hue: 214, solid: '#276ecb', bubbleDark: '#294365', bubbleLight: '#bdd3ef', ink: '#10233c', tint: '#276ecb' });
     const shade = colorOf('blue.2');
-    expect(shade).toMatchObject({ key: 'blue.2', label: 'Blue shade 2', bubbleLight: '#bdd3ef', solid: shade.tint, bubbleDark: shade.tint });
+    expect(shade).toMatchObject({ key: 'blue.2', label: 'Blue shade 2', solid: shade.tint, bubbleDark: shade.tint });
     expect(shade.tint).not.toBe(colorOf('blue').tint);
   });
 
@@ -116,6 +116,13 @@ describe('palette contrast (WCAG 2.x)', () => {
     expect(ratio(rgb('#2a2520'), mix(color.tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
     expect(colorSwatch(color)).toBe(color.tint);
     expect(ratio(white, rgb(color.tint))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('gives every shade its own light-theme bubble, not its base colour\'s', () => {
+    for (const id of HUMAN_COLOR_IDS) {
+      const lights = keys.filter(key => key.split('.')[0] === id).map(key => colorOf(key).bubbleLight);
+      expect(new Set(lights).size, id).toBe(lights.length);
+    }
   });
 
   it('generates 8 distinct shades of every base colour', () => {

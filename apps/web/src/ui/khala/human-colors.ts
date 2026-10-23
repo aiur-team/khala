@@ -100,13 +100,16 @@ function shadesOf(id: HumanColorId): readonly Readonly<{ hue: number; tint: stri
   return shades;
 }
 
-/** The colours a palette key draws with. A shade fills its own bubble in the dark theme; the light bubble stays its base colour's. */
+/** `tint` blended 35% over white: a light-theme bubble that keeps the base colour's `ink` text >= 4.5:1. */
+const paleOf = (tint: string) => `#${rgbOf(tint).map(value => Math.round(value * 0.35 + 255 * 0.65).toString(16).padStart(2, '0')).join('')}`;
+
+/** The colours a palette key draws with. A shade fills its own dark bubble, and a pale tint of it (`ink` text) in the light theme. */
 export function colorOf(key: ChannelColorKey): ResolvedHumanColor {
   const [id, n] = key.split('.') as [HumanColorId, string | undefined];
   const entry = HUMAN_PALETTE[id];
   const base = { key: id, label: entry.label, hue: entry.hue, solid: entry.solid, bubbleDark: entry.dark, bubbleLight: entry.light, ink: entry.ink, tint: entry.solid };
   const shade = n === undefined ? undefined : shadesOf(id)[Number(n) - 1];
-  return shade ? { ...base, key, label: `${entry.label} shade ${n}`, hue: shade.hue, solid: shade.tint, bubbleDark: shade.tint, tint: shade.tint } : base;
+  return shade ? { ...base, key, label: `${entry.label} shade ${n}`, hue: shade.hue, solid: shade.tint, bubbleDark: shade.tint, bubbleLight: paleOf(shade.tint), tint: shade.tint } : base;
 }
 
 /**
