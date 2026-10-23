@@ -1,12 +1,13 @@
 import { retryUnexpired } from './decryption-retry';
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
+import { memberArchived } from '@khala/contracts/m1/archive';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { randomUUID } from 'node:crypto';
 import { StateError } from '../state';
 import { memberRenameContent } from '../events/member-rename';
-import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, SetPresence, Direction, Method, EventType } from 'matrix-js-sdk';
+import { createClient, ClientEvent, RoomEvent, RoomStateEvent, MatrixEventEvent, SyncState, SetPresence, Direction, Method, EventType } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
 
 export type { SessionMessage, SessionModeCommand } from '../transport';
@@ -34,6 +35,20 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const ended = new Set<(reason: SessionEndReason) => void>();
   const modeHandlers = new Set<(c: SessionModeCommand) => void>();
   const inviters = new Map<string, string>();
+  const archiveHandlers = new Set<(roomId: string, archived: boolean) => void>();
+  // Only the inviter (the agent's owner) can quiet it; Matrix lets a user set only their own member event.
+  const ownerArchived = (roomId: string) => {
+    const inviter = inviters.get(roomId);
+    return !!inviter && memberArchived(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', inviter)?.getContent());
+  };
+  const ownerState = (event: MatrixEvent) => {
+    const roomId = event.getRoomId();
+    if (stopped || !roomId || event.getType() !== EventType.RoomMember || event.getStateKey() !== inviters.get(roomId)) return;
+    const archived = ownerArchived(roomId);
+    for (const handler of archiveHandlers) {
+      try { handler(roomId, archived); } catch { log('archive_handler_error'); }
+    }
+  };
   const emitted = new Set<string>();
   // Only events originating in a live timeline may later be emitted by Decrypted.
   const liveEvents = new Set<MatrixEvent>();
@@ -199,6 +214,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     client.removeListener(RoomEvent.Timeline, timeline);
     client.removeListener(MatrixEventEvent.Decrypted, decrypted);
     client.removeListener(ClientEvent.Sync, syncLog);
+    client.removeListener(RoomStateEvent.Events, ownerState);
     client.removeListener(RoomEvent.MyMembership, membershipEnded);
     for (const cancel of [...cancellations]) cancel();
     liveEvents.clear();
@@ -250,6 +266,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     client.on(RoomEvent.Timeline, timeline);
     client.on(MatrixEventEvent.Decrypted, decrypted);
     client.on(ClientEvent.Sync, syncLog);
+    client.on(RoomStateEvent.Events, ownerState);
     const prepared = wait((check) => {
       client.on(ClientEvent.Sync, check);
       return () => { client.removeListener(ClientEvent.Sync, check); };
@@ -281,6 +298,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     listeningMode: roomId => memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent()),
     inviter(roomId) { return inviters.get(roomId); },
+    ownerArchived,
+    onOwnerArchived(handler) { archiveHandlers.add(handler); return () => { archiveHandlers.delete(handler); }; },
     onListeningModeCommand(handler) { modeHandlers.add(handler); return () => { modeHandlers.delete(handler); }; },
     async publishListeningMode(roomId, mode, signal) {
       if (stopped) throw new Error('session_stopped');

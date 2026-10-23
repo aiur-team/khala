@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import * as inbox from './inbox';
 import { appendEntries, readCursor, unreadCounts } from './inbox';
 import { filesForDir, type SessionFiles } from './state';
-import { applyListeningMode, readListeningMode } from './mode';
+import { applyArchived, applyListeningMode, readListeningMode, readModeState } from './mode';
 let files: SessionFiles;
 beforeEach(async () => { files = filesForDir(await fs.mkdtemp(path.join(os.tmpdir(), 'khala-mode-947-'))); });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(files.dir, { recursive: true, force: true }); });
@@ -55,4 +55,24 @@ it('preserves async after two cursor conflicts without a third attempt', async (
   await expect(applyListeningMode(files, 'sync', meta)).rejects.toMatchObject({ code: 'storage_failed' });
   expect(advance).toHaveBeenCalledTimes(2); expect(await readListeningMode(files)).toBe('async');
   expect((await unreadCounts(files)).total).toBe(3);
+});
+
+it('archiving turns the channel async and unarchiving restores the stored mode', async () => {
+  await applyListeningMode(files, 'steer', meta, now);
+  await applyArchived(files, true);
+  expect(await readListeningMode(files)).toBe('async');
+  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
+  await applyArchived(files, false);
+  expect(await readListeningMode(files)).toBe('steer');
+});
+it('keeps the archive flag across an owner mode change without skipping backlog', async () => {
+  await applyArchived(files, true); await backlog();
+  await applyListeningMode(files, 'steer', meta, now);
+  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
+  expect((await unreadCounts(files)).total).toBe(3);
+});
+it('skips the archived-period backlog on unarchive, like leaving async', async () => {
+  await applyArchived(files, true); await backlog();
+  await applyArchived(files, false);
+  expect((await unreadCounts(files)).total).toBe(0);
 });

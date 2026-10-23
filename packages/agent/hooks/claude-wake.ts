@@ -55,7 +55,7 @@ export async function unreadMessages(dir: string): Promise<number> {
   }
   let messages = 0;
   for (const directory of directories) {
-    if ((await readJson(path.join(directory, 'mode.json')))?.mode === 'async') continue;
+    if (await readListeningMode(filesForDir(directory)) === 'async') continue;
     messages += await unreadChannelMessages(directory);
   }
   return messages;
@@ -119,7 +119,7 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       if (input.hook_event_name !== 'SessionStart') return unreadMessages(dir);
       let messages = 0;
       for (const channel of await sessionStartWakeChannels(filesForDir(dir), io.env)) {
-        if (channel.connected && (await readJson(channel.files.mode))?.mode !== 'async') messages += await unreadChannelMessages(channel.files.dir);
+        if (channel.connected && await readListeningMode(channel.files) !== 'async') messages += await unreadChannelMessages(channel.files.dir);
       }
       return messages;
     };

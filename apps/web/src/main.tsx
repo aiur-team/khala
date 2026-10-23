@@ -73,6 +73,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     memberSince: matrix.memberSince,
     channelColors: matrix.channelColors,
     setChannelColors: matrix.setChannelColors,
+    setArchived: matrix.setArchived,
     presence: matrix.presence,
     hasRead: matrix.hasRead,
     typing: matrix.typing,

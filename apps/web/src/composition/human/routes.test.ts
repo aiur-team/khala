@@ -8,6 +8,9 @@ describe('createHumanRouteCodec', () => {
     expect(codec.parse('https://khala.aiur.team/new')).toEqual({ kind: 'conversations', path: '/new' });
     expect(codec.conversationsPath()).toBe('/conversations');
     expect(codec.parse('/conversations')).toEqual({ kind: 'conversations', path: '/conversations' });
+    expect(codec.archivedPath()).toBe('/archived');
+    expect(codec.parse('/archived')).toEqual({ kind: 'archived', path: '/archived' });
+    expect(codec.parse('/archived?x=1')).toEqual({ kind: 'not_found', path: '/archived?x=1' });
     expect(codec.parse('https://khala.aiur.team/')).toEqual({ kind: 'not_found', path: '/' });
     expect(codec.parse('/join?invite=invite_1')).toEqual({ kind: 'join', path: '/join?invite=invite_1', inviteRef: 'invite_1' });
     expect(codec.parse('/channels/room_1')).toEqual({ kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
@@ -30,6 +33,7 @@ describe('createHumanRouteCodec', () => {
     const based = createHumanRouteCodec({ origin: 'https://preview.example', basePath: '/khala' });
     expect(based.createPath()).toBe('/khala/new');
     expect(based.conversationsPath()).toBe('/khala/conversations');
+    expect(based.parse(based.archivedPath())).toEqual({ kind: 'archived', path: '/khala/archived' });
     expect(based.joinPath('invite 1')).toBe('/khala/join?invite=invite%201');
     expect(based.roomPath('room_1')).toBe('/khala/channels/room_1');
     expect(based.parse('/khala/channels/room_1')).toEqual({ kind: 'channel', path: '/khala/channels/room_1', roomId: 'room_1' });

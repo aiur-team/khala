@@ -4,6 +4,7 @@ import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../.
 
 export type HumanRoute =
   | Readonly<{ kind: 'conversations'; path: string }>
+  | Readonly<{ kind: 'archived'; path: string }>
   | Readonly<{ kind: 'agent_confirm'; path: string; joinId: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
@@ -14,6 +15,7 @@ export interface HumanRouteCodec extends RouteCodec {
   createPath(): string;
   agentConfirmPath(joinId: string): string;
   conversationsPath(): string;
+  archivedPath(): string;
   joinPath(inviteRef: string): string;
   roomPath(roomId: string): string;
 }
@@ -56,6 +58,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   // application's legacy entry route lives one segment below the base path.
   const createPath = () => `${base}/new`;
   const conversationsPath = () => `${base}/conversations`;
+  const archivedPath = () => `${base}/archived`;
   const agentConfirmPath = (joinId: string) => `${base}${agentConfirmPagePath(joinId)}`;
   const joinRoot = `${base}/join`;
   const roomsRoot = `${base}/channels/`;
@@ -85,6 +88,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     if (parsed.origin !== origin || parsed.username || parsed.password) return notFound(requestedPath);
     if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'conversations', path: createPath() };
     if (parsed.pathname === conversationsPath() && parsed.search === '') return { kind: 'conversations', path: conversationsPath() };
+    if (parsed.pathname === archivedPath() && parsed.search === '') return { kind: 'archived', path: archivedPath() };
     if (parsed.pathname === `${base}/agent/confirm`) {
       const keys = [...parsed.searchParams.keys()];
       const joinId = parsed.searchParams.get('joinId');
@@ -133,6 +137,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     createPath,
     agentConfirmPath,
     conversationsPath,
+    archivedPath,
     joinPath,
     roomPath,
     parseJoinLocation(location: string): ReturnType<RouteCodec['parseJoinLocation']> {

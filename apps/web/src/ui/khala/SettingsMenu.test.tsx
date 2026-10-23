@@ -36,6 +36,14 @@ describe('SettingsMenu', () => {
     expect(settingsItems({ theme: 'dark', username: 'Kevin' }).map(item => item.label)).toEqual(['Light mode']);
   });
 
+  it('lists Archived channels only when it can open them', () => {
+    const onOpenArchived = vi.fn();
+    const built = settingsItems({ theme: 'dark', username: 'Kevin', onOpenArchived });
+    expect(built.map(item => item.label)).toEqual(['Light mode', 'Archived channels']);
+    built[1]!.run();
+    expect(onOpenArchived).toHaveBeenCalledOnce();
+  });
+
   it('switches to the other theme from Mode', () => {
     const onThemeChange = vi.fn();
     items({ onThemeChange }).built[0]!.run();
