@@ -85,6 +85,9 @@ const transitions: Record<string, (agent: Agent) => Promise<void>> = {
   'listening-mode change': async ({ call, auth, room }) => {
     expect((await call('PUT', room(`members/${encodeURIComponent(AGENT)}`), auth, { listeningMode: 'async' })).status).toBe(204);
   },
+  'mute listening-mode change': async ({ call, auth, room }) => {
+    expect((await call('PUT', room(`members/${encodeURIComponent(AGENT)}`), auth, { listeningMode: 'mute' })).status).toBe(204);
+  },
   'roster rename': async ({ call }) => {
     expect((await call('POST', `/api/local/agents/${encodeURIComponent(AGENT)}/name`, ADMIN, { name: 'reviewer' })).status).toBe(200);
   },
@@ -120,6 +123,18 @@ describe('local helper default wire stays decodable by pre-#1078 CLIs', () => {
     expect(decodeLocalEventsPage(opted.json)).toMatchObject({ ok: true });
     expect(releasedEventsPage(opted.json)).toMatchObject({ ok: true });
     expect(frozenEventsPage(opted.json)).toMatchObject({ ok: false, error: { code: 'unknown_field' } });
+  });
+
+  it('shows mute as async to clients that did not opt in with mute=1', async () => {
+    const agent = await joinedAgent();
+    await transitions['mute listening-mode change']!(agent);
+    const modes = async (query: string) => {
+      const page = decodeLocalEventsPage((await agent.call('GET', agent.room(`events?after=${agent.after}${query}`), agent.auth)).json);
+      const members = (await agent.call('GET', agent.room(`members${query.replace('&', '?')}`), agent.auth)).json as { members: { listeningMode?: string }[] };
+      return [page.ok && page.value.events.at(-1)?.content['com.khala.listening_mode'], members.members.find(m => m.listeningMode)?.listeningMode];
+    };
+    expect(await modes('&wire=2')).toEqual(['async', 'async']);
+    expect(await modes('&wire=2&mute=1')).toEqual(['mute', 'mute']);
   });
 
   it('history carries renames as channel events old CLIs already accept, never mode changes', async () => {

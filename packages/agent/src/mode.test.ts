@@ -17,10 +17,10 @@ it('defaults missing and invalid files to sync', async () => {
     await fs.writeFile(files.mode, content); expect(await readListeningMode(files)).toBe('sync');
   }
 });
-it('a live delegation lease makes the session see async, without changing the owner mode', async () => {
+it('a live delegation lease makes the session see mute, without changing the owner mode', async () => {
   await applyListeningMode(files, 'steer', meta);
   await delegateChannel(files, 60_000);
-  expect(await readListeningMode(files)).toBe('async');
+  expect(await readListeningMode(files)).toBe('mute');
   expect((await readModeState(files)).mode).toBe('steer');
   await delegateChannel(files, -1);
   expect(await isDelegated(files)).toBe(false);
@@ -66,10 +66,10 @@ it('preserves async after two cursor conflicts without a third attempt', async (
   expect((await unreadCounts(files)).total).toBe(3);
 });
 
-it('archiving turns the channel async and unarchiving restores the stored mode', async () => {
+it('archiving turns the channel mute and unarchiving restores the stored mode', async () => {
   await applyListeningMode(files, 'steer', meta, now);
   await applyArchived(files, true);
-  expect(await readListeningMode(files)).toBe('async');
+  expect(await readListeningMode(files)).toBe('mute');
   expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
   await applyArchived(files, false);
   expect(await readListeningMode(files)).toBe('steer');
@@ -90,4 +90,10 @@ it('records an agent change with its reason and keeps the async backlog on reque
   await applyListeningMode(files, 'sync', { changedBy: 'agent', reason: 'owner asked', eventTs: 5, keepBacklog: true }, now);
   expect((await unreadCounts(files)).total).toBe(3);
   expect(JSON.parse(await fs.readFile(files.mode, 'utf8'))).toEqual({ mode: 'sync', changedBy: 'agent', reason: 'owner asked', eventTs: 5, updatedAt: now().toISOString() });
+});
+it("does not nudge for pings that arrived while muted, and keeps them as backlog", async () => {
+  await applyListeningMode(files, "mute", meta); await backlog();
+  await applyListeningMode(files, "async", meta);
+  expect(await readCursor(files)).toMatchObject({ deliveredCount: 0, nudgedCount: 3 });
+  expect((await unreadCounts(files)).total).toBe(3);
 });

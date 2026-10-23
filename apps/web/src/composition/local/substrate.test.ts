@@ -38,11 +38,11 @@ function fixture() {
   const cache: LocalMembersCache = { members: () => members, describe: () => undefined, subscribe: () => () => {}, refresh: vi.fn(async () => {}) };
   const sleep = vi.fn(async (ms: number, signal: AbortSignal) => { void ms; void signal; });
   const substrate = createLocalSubstrate({ http, members: cache, limits, generation: () => 1, sleep, now: () => new Date('2026-10-02T00:00:00Z') });
-  const init = (events: LocalEvent[] = []) => { enqueue(localChannelPath(roomId, '?wire=2'), { kind: 'ok', value: summary }); enqueue(localRoomPath(roomId, '/messages?limit=50&wire=2'), { kind: 'ok', value: { events } }); };
+  const init = (events: LocalEvent[] = []) => { enqueue(localChannelPath(roomId, '?wire=2&mute=1'), { kind: 'ok', value: summary }); enqueue(localRoomPath(roomId, '/messages?limit=50&wire=2'), { kind: 'ok', value: { events } }); };
   return { calls, enqueue, http, cache, sleep, substrate, init };
 }
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const poll = (after: number) => localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1&wire=2`);
+const poll = (after: number) => localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1&wire=2&mute=1`);
 const error = (status: number): LocalHttpResult<never> => ({ kind: 'error', status, code: `http_${status}` });
 
 describe('local substrate', () => {
@@ -103,11 +103,11 @@ describe('local substrate', () => {
   it('retries initialization with backoff and cancels the default timer on dispose', async () => {
     vi.useFakeTimers();
     try {
-      const f = fixture(); f.enqueue(localChannelPath(roomId, '?wire=2'), { kind: 'unavailable' }); f.init([event(4)]);
+      const f = fixture(); f.enqueue(localChannelPath(roomId, '?wire=2&mute=1'), { kind: 'unavailable' }); f.init([event(4)]);
       const substrate = createLocalSubstrate({ http: f.http, members: f.cache, limits, generation: () => 1 });
       const updates: SubstrateUpdate[] = []; const stop = substrate.subscribe(roomId, value => updates.push(value)); await tick();
       expect(vi.getTimerCount()).toBe(1); await vi.advanceTimersByTimeAsync(1000); expect(updates[0]?.events).toHaveLength(1); stop();
-      const second = fixture(); second.enqueue(localChannelPath(roomId, '?wire=2'), { kind: 'unavailable' });
+      const second = fixture(); second.enqueue(localChannelPath(roomId, '?wire=2&mute=1'), { kind: 'unavailable' });
       const stopSecond = createLocalSubstrate({ http: second.http, members: second.cache, limits, generation: () => 1 }).subscribe(roomId, () => {}); await tick();
       expect(vi.getTimerCount()).toBe(1); stopSecond(); await tick(); expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(10_000); expect(second.calls).toHaveLength(1);
@@ -197,7 +197,7 @@ describe('local substrate', () => {
     expect(f.calls[0]!.body).toEqual({ name: 'local-2026-10-02', operationId: 'op-1' });
     f.enqueue('/api/local/channels', { kind: 'unavailable' }); expect(await f.substrate.createRoom({ operationId: 'op-1', title: null })).toEqual({ kind: 'unknown' });
     f.enqueue('/api/local/channels/by-operation/op-1', error(404)); expect(await f.substrate.findCreatedRoom({ operationId: 'op-1' })).toEqual({ kind: 'absent' });
-    f.enqueue('/api/local/channels/by-operation/op-1', { kind: 'ok', value: { roomId } }); f.enqueue(localChannelPath(roomId, '?wire=2'), { kind: 'ok', value: summary });
+    f.enqueue('/api/local/channels/by-operation/op-1', { kind: 'ok', value: { roomId } }); f.enqueue(localChannelPath(roomId, '?wire=2&mute=1'), { kind: 'ok', value: summary });
     expect(await f.substrate.findCreatedRoom({ operationId: 'op-1' })).toMatchObject({ kind: 'found', room: { membership: 'joined' } });
   });
   it.each([[413, 'rejected', 'too_large'], [403, 'rejected', 'forbidden'], [401, 'unavailable', undefined], [500, 'unknown', undefined], [0, 'unknown', undefined]])('maps send failure %s', async (status, kind, code) => {
@@ -223,7 +223,7 @@ describe('local substrate', () => {
   });
   it('removes an uncertain pending send when the owner echo carries its transaction id', async () => {
     vi.stubGlobal('crypto', webcrypto);
-    const f = fixture(); f.init(); f.enqueue(localChannelPath(roomId, '?wire=2'), { kind: 'ok', value: summary });
+    const f = fixture(); f.init(); f.enqueue(localChannelPath(roomId, '?wire=2&mute=1'), { kind: 'ok', value: summary });
     let resolve!: (value: LocalHttpResult<unknown>) => void; f.enqueue(poll(5), new Promise(value => { resolve = value; }));
     const session = createLocalSession(f.http); session.noteUsername('kevin'); await session.device.ensureReady(LOCAL_PRINCIPAL.ownerId);
     const service = createLocalChannelService({ principal: LOCAL_PRINCIPAL, actor: session.participant, device: session.device, substrate: f.substrate, limits, journal: () => createMemoryChannelJournal() });

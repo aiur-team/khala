@@ -6,7 +6,8 @@ import { type Decoded, array, decodeWith, displayText, elementPath, fail, identi
 import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHttpUrl, readMatrixUserId, readRoomId } from '@khala/contracts/m1/agent-join';
 import { type HumanColorId, readHumanColorId } from '@khala/contracts/m1/colors';
 import { readHumanInitials } from '@khala/contracts/m1/initials';
-import { LISTENING_MODES } from '@khala/contracts/m1/listening-mode';
+// Pinned: the released decoders knew only these modes (mute came later).
+const LISTENING_MODES = ['steer', 'sync', 'async'] as const;
 import { checkName } from '@khala/contracts/m1/names';
 
 function readHarness(input: unknown, path: string): Harness {

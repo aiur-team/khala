@@ -1,6 +1,6 @@
 import { decodeListeningMode, DEFAULT_LISTENING_MODE, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import path from 'node:path';
-import { advanceCursor, unread } from './inbox';
+import { advanceCursor, markNudged, readCursor, readEntries, unread } from './inbox';
 import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
 /** The owner-chosen mode and whether the owner archived the channel. */
@@ -20,17 +20,24 @@ export async function isDelegated(files: SessionFiles): Promise<boolean> {
   return typeof lease?.until === 'number' && lease.until > Date.now();
 }
 /** The effective mode for the session's own hooks and wakes: an archived channel, or one a background
- * agent owns (its live lease), behaves as `async`, so nothing wakes the session or delivers frames. */
+ * agent owns (its live lease), behaves as `mute`, so nothing wakes the session or delivers frames. */
 export async function readListeningMode(files: SessionFiles): Promise<ListeningMode> {
   const state = await readModeState(files);
-  return state.archived || await isDelegated(files) ? 'async' : state.mode;
+  return state.archived || await isDelegated(files) ? 'mute' : state.mode;
 }
-/** Mirrors the owner's archive flag; the stored mode is kept for unarchive. Like leaving `async`, unarchiving skips the backlog. */
+/** Mirrors the owner's archive flag; the stored mode is kept for unarchive. Like leaving a quiet mode, unarchiving skips the backlog. */
 export async function applyArchived(files: SessionFiles, archived: boolean): Promise<void> {
   const content = await readJson<Record<string, unknown>>(files.mode);
   if ((content?.archived === true) === archived) return;
-  if (!archived && (await readModeState(files)).mode !== 'async') await skipBacklog(files);
+  const stored = (await readModeState(files)).mode;
+  if (!archived && !QUIET.has(stored)) await skipBacklog(files);
+  if (!archived && stored === 'async') await skipPings(files);
   await writeJsonAtomic(files.mode, { ...(content ?? {}), archived });
+}
+/** Pings that arrived while muted (or archived) were ignored; they must not nudge once async resumes. */
+async function skipPings(files: SessionFiles): Promise<void> {
+  const cursor = await readCursor(files);
+  await markNudged(files, cursor, (await readEntries(files)).length);
 }
 async function skipBacklog(files: SessionFiles): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -39,17 +46,19 @@ async function skipBacklog(files: SessionFiles): Promise<void> {
   }
   throw new StateError('storage_failed');
 }
-/** Attention order for agent self-changes: a `self` change may only move down this scale. A future
- * lower rung (the planned `mute`) gets its own number here; the Record type forces it when the mode set grows. */
-export const ATTENTION: Readonly<Record<ListeningMode, number>> = { async: 0, sync: 1, steer: 2 };
+/** Attention order for agent self-changes: a `self` change may only move down this scale. */
+export const ATTENTION: Readonly<Record<ListeningMode, number>> = { mute: 0, async: 1, sync: 2, steer: 3 };
+/** Modes that never deliver frames, so their backlog builds up behind the cursor. */
+const QUIET: ReadonlySet<ListeningMode> = new Set(['async', 'mute']);
 /** An agent change records `eventTs` (its own time) so a replayed older owner command cannot undo it.
- * Leaving `async` skips the queued backlog unless `keepBacklog` is set. */
+ * Leaving a quiet mode (`async`, `mute`) skips the queued backlog unless `keepBacklog` is set. */
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
   meta: ({ changedBy: 'owner'; eventId: string } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
   now: () => Date = () => new Date()) {
   const { keepBacklog, ...record } = meta;
   const { mode: previous, archived } = await readModeState(files);
-  if (previous === 'async' && next !== 'async' && !keepBacklog) await skipBacklog(files);
+  if (QUIET.has(previous) && !QUIET.has(next) && !keepBacklog) await skipBacklog(files);
+  if (previous === 'mute' && next === 'async') await skipPings(files);
   await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...record, updatedAt: now().toISOString() });
   return { previous, next };
 }

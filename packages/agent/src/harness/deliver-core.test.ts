@@ -1,12 +1,12 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deliverCore, type HookIO } from './deliver-core';
 import { adapterFor } from './index';
 import { hookMapSource } from './session-sources';
 import type { DeliverCodec } from './adapter';
-import { openSessionDir, type SessionFiles } from '../state';
+import { openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
 import { appendEntries, readCursor } from '../inbox';
 import { readActivity, writeActivity, usageLimited } from '../activity';
 import { STOP_NUDGE } from './adapter';
@@ -270,4 +270,39 @@ it('records a usage limit without delivering, and clears it on the next working 
   await hook('Stop', { stop_hook_active: true });
   expect(await usageLimited(files.dir)).toBe(false);
   expect(stderr).toBe('');
+});
+
+describe("async pings and mute", () => {
+  const prompt = "{\"session_id\":\"session\",\"hook_event_name\":\"UserPromptSubmit\"}";
+  const ping = (eventId: string, body: string) => appendEntries(files, [{ eventId, roomId: "!room", ts: instant.toISOString(),
+    sender: "@maya", senderLabel: "Maya", senderKind: "human", kind: "message", body }]);
+  const setMode = (mode: string) => writeJsonAtomic(files.mode, { mode });
+
+  it("nudges once for a direct ping in async, without content or moving the backlog cursor", async () => {
+    await setMode("async");
+    await ping("$plain", "ordinary chatter");
+    await ping("$ping", "@agents please look secret-body");
+    await deliverCore(prompt, adapterFor("codex")!, io);
+    expect(stdout).toContain(STOP_NUDGE);
+    expect(stdout).not.toContain("secret-body");
+    expect(stdout).not.toContain("ordinary chatter");
+    expect(await readCursor(files)).toMatchObject({ deliveredCount: 0, nudgedCount: 3 });
+    stdout = "";
+    await deliverCore(prompt, adapterFor("codex")!, io);
+    expect(stdout).toBe("");
+  });
+  it("stays silent for ordinary traffic in async", async () => {
+    await setMode("async");
+    await ping("$plain", "ordinary chatter");
+    await deliverCore(prompt, adapterFor("codex")!, io);
+    expect(stdout).toBe("");
+    expect((await readCursor(files)).deliveredCount).toBe(0);
+  });
+  it("ignores a direct ping in mute", async () => {
+    await setMode("mute");
+    await ping("$ping", "@channel everyone look");
+    await deliverCore(prompt, adapterFor("codex")!, io);
+    expect(stdout).toBe("");
+    expect(await readCursor(files)).toEqual({ lastDeliveredEventId: null, deliveredCount: 0 });
+  });
 });

@@ -95,7 +95,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await scout.locator('[role="radio"]:not([disabled]):not([title])').count(), 3);
     assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'sync');
     const builderMode = page.locator('.kh-rai[data-kh-agent="agent_builder"]').locator('..').locator('.kh-mode-ro');
-    assert.equal(await builderMode.getAttribute('data-tip'), 'Async · on demand', 'another person’s agent shows its actual mode');
+    assert.equal(await builderMode.getAttribute('data-tip'), 'Async · pings only', 'another person’s agent shows its actual mode');
 
     // Listening modes are live: the request shows at once, then the agent confirms.
     await scout.locator('[role="radio"][data-v="steer"]').click();
@@ -233,13 +233,13 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     const menu = page.locator('.kh-pop.menu');
     await menu.waitFor();
     assert.equal(await menu.locator('.kh-mi').count(), 3);
-    assert.deepEqual(await menu.locator('.kh-mi').allTextContents(), ['Steerinterrupts', 'Syncnext turn', 'Asyncon demand']);
+    assert.deepEqual(await menu.locator('.kh-mi').allTextContents(), ['Steerinterrupts', 'Syncnext turn', 'Asyncpings only', 'Mutesilent']);
     assert.equal(await menu.locator('.kh-mi.on').getAttribute('data-v'), 'steer');
     await menu.locator('.kh-mi[data-v="async"]').click();
     assert.equal(await menu.isHidden(), true);
-    assert.equal(await modeButton.getAttribute('data-tip'), 'Async · on demand');
+    assert.equal(await modeButton.getAttribute('data-tip'), 'Async · pings only');
     await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
-    assert.equal(await modeButton.getAttribute('aria-label'), 'Listening mode for Dolan: Async · on demand');
+    assert.equal(await modeButton.getAttribute('aria-label'), 'Listening mode for Dolan: Async · pings only');
     // Keyboard: Enter opens the menu on the active item, arrows move, Escape returns to the trigger.
     assert.equal(await modeButton.getAttribute('aria-haspopup'), 'menu');
     await modeButton.focus();

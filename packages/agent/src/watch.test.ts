@@ -63,8 +63,8 @@ it.each(['sync', 'steer'])('emits one content-free line per channel batch in %s'
   expect(lines).toHaveLength(1);
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it('stays silent in Async, including mentions, and never replays its observed messages', async () => {
-  await writeJsonAtomic(files.mode, { mode: 'async' });
+it('stays silent in Mute, including mentions, and never replays its observed messages', async () => {
+  await writeJsonAtomic(files.mode, { mode: 'mute' });
   await armed();
   await appendEntries(files, [entry(1)]);
   await new Promise(resolve => setTimeout(resolve, 100));
@@ -159,7 +159,7 @@ it('ignores a stale ownership marker whose process is still alive without its le
   await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { nonce: '11111111-1111-1111-1111-111111111111', pid: process.pid });
   expect(await monitorArmed(files)).toBe(false);
 });
-it.each(['async', 'remove'])('rechecks a %s change racing the inbox read before notifying', async race => {
+it.each(['mute', 'remove'])('rechecks a %s change racing the inbox read before notifying', async race => {
   await armed();
   const realRead = (await vi.importActual<typeof fs>('node:fs/promises')).readFile;
   let raced = false;
@@ -167,7 +167,7 @@ it.each(['async', 'remove'])('rechecks a %s change racing the inbox read before 
     const content = await realRead(...args);
     if (args[0] === files.inbox && !raced) {
       raced = true;
-      if (race === 'async') await writeJsonAtomic(files.mode, { mode: 'async' });
+      if (race === 'mute') await writeJsonAtomic(files.mode, { mode: 'mute' });
       else await writeStatus(files, 'disconnected', 'removed');
     }
     return content;
@@ -224,9 +224,9 @@ async function joined(roomId: string, name: string, mode = 'sync') {
   await writeJsonAtomic(target.mode, { mode });
   return target;
 }
-it('reports each channel batch, ignores async, and leaves every delivery cursor unchanged', async () => {
+it('reports each channel batch, ignores mute, and leaves every delivery cursor unchanged', async () => {
   const a = await joined('!a:local', 'optimism');
-  const b = await joined('!b:local', 'research', 'async');
+  const b = await joined('!b:local', 'research', 'mute');
   await appendEntries(files, [entry(1)]);
   await appendEntries(a, [1, 2].map(id => ({ ...entry(id, id === 1 ? '@Owner-Claude BODYMARK' : 'BODYMARK'), roomId: '!a:local' })));
   await appendEntries(b, [{ ...entry(1), roomId: '!b:local' }]);

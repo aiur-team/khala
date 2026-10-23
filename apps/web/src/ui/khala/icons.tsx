@@ -27,6 +27,7 @@ export const CrownIcon = filled(<path d="M3 7.5 7.5 11 12 4l4.5 7L21 7.5 19 19H5
 export const SteerIcon = stroke(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.2" /><path d="M3.3 10.5c3 .9 5.6 1.4 6.5 1.5M20.7 10.5c-3 .9-5.6 1.4-6.5 1.5M12 14.2V21" /></>);
 export const SyncIcon = stroke(<><path d="M20 11a8 8 0 0 0-14.6-4.5M4 13a8 8 0 0 0 14.6 4.5" /><path d="M5 3v4h4M19 21v-4h-4" /></>);
 export const AsyncIcon = stroke(<><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z" /></>);
+export const MuteIcon = stroke(<><path d="M6 8a6 6 0 0 1 9.3-5M18 13v-5M4 4l16 16" /><path d="M8 8v5l-2 3h11M10 20a2 2 0 0 0 4 0" /></>);
 export const ShieldIcon = stroke(<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />);
 export const RestoreIcon = stroke(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></>);
 export const AgentIcon = stroke(<><rect x="3" y="8" width="13" height="11" rx="3" /><path d="M9.5 4v4M7 13.5h.01M12 13.5h.01M20 4v6M17 7h6" /></>);

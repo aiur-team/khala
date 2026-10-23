@@ -158,7 +158,7 @@ describe('ChannelScreen roster', () => {
   it('makes the viewer’s agent modes live, on the reported mode', () => {
     const own = liveRow('agent_own');
     expect(own).toContain('class="kh-seg ic" role="radiogroup" aria-label="Listening mode for Claude"');
-    expect(own.match(/role="radio"/g)).toHaveLength(3);
+    expect(own.match(/role="radio"/g)).toHaveLength(4);
     expect(own).not.toContain('disabled');
     expect(own).not.toContain('title="Coming soon"');
     expect(own).toMatch(/aria-checked="true" class="on" data-v="steer"/);
@@ -174,7 +174,7 @@ describe('ChannelScreen roster', () => {
   });
 
   it('shows another person’s agent’s actual mode read-only', () => {
-    expect(liveRow('agent_theo')).toContain('class="kh-mode-ro" role="img" data-tip="Async · on demand" aria-label="Async · on demand"');
+    expect(liveRow('agent_theo')).toContain('class="kh-mode-ro" role="img" data-tip="Async · pings only" aria-label="Async · pings only"');
     expect(liveRow('agent_theo')).not.toContain('kh-seg');
     expect(row('agent_theo')).toContain('class="kh-mode-ro" role="img" data-tip="Sync · next turn"');
   });

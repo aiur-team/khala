@@ -79,7 +79,7 @@ export type LocalMemberContent = {                                              
   user: string; membership: 'invite' | 'join' | 'leave';
   displayname: string; kind: 'human' | 'agent';
   harness?: Harness; invitedBy?: string;
-  'com.khala.listening_mode'?: 'steer' | 'sync' | 'async';
+  'com.khala.listening_mode'?: 'steer' | 'sync' | 'async' | 'mute';
 };
 // m.room.message content: { msgtype: 'm.text', body: string }                 (body 1..8000 chars, as khala_send)
 // com.khala.event.v1 content: ChannelEventContent from '@khala/contracts/m1/channel-event' (encoded by encodeChannelEvent)
@@ -113,7 +113,7 @@ export type LocalMember = {
   displayName: string; kind: 'human' | 'agent'; harness?: Harness;
   ownerLabel?: string;               // agents: the owner's username (Participant.ownerLabel)
   membership: 'invite' | 'join';
-  listeningMode?: 'steer' | 'sync' | 'async';   // agents only; DEFAULT_LISTENING_MODE when never echoed
+  listeningMode?: 'steer' | 'sync' | 'async' | 'mute';   // agents only; DEFAULT_LISTENING_MODE when never echoed
 };
 export type LocalMembersResponse = { members: LocalMember[] };   // present members only
 export const LOCAL_OWNER_ID = 'local-owner' as const;             // the web's OwnerId / AuthPrincipal.ownerId

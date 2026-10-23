@@ -628,7 +628,7 @@ it('goes quiet while its owner archives the channel and listens again on unarchi
   session.onOwnerArchived = callback => { onArchived = callback; return () => { onArchived = undefined; }; };
   await connected();
   expect(await client.status()).toMatchObject({ listeningMode: 'sync', archived: true });
-  expect(await readListeningMode(channelFiles(filesForDir(dir), credentials.roomId))).toBe('async');
+  expect(await readListeningMode(channelFiles(filesForDir(dir), credentials.roomId))).toBe('mute');
   archived = false; onArchived!(credentials.roomId, false);
   await vi.waitFor(async () => expect(await client.status()).not.toHaveProperty('archived'));
   expect(await readListeningMode(channelFiles(filesForDir(dir), credentials.roomId))).toBe('sync');
@@ -656,6 +656,12 @@ describe('agent-initiated listening mode', () => {
     await expect(client.setMode('sync', { trigger: 'self', reason: 'interesting again' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'raise_requires_owner_request' } });
     expect(session.publishListeningMode).toHaveBeenCalledTimes(1);
     expect((await client.status()).listeningMode).toBe('async');
+  });
+  it('lets the agent lower itself to mute but never raise from it', async () => {
+    await connected();
+    expect(await client.setMode('mute', { trigger: 'self', reason: 'done here' })).toMatchObject({ previous: 'sync', mode: 'mute' });
+    await expect(client.setMode('async', { trigger: 'self', reason: 'pings again' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'raise_requires_owner_request' } });
+    expect((await client.status()).listeningMode).toBe('mute');
   });
   it('a newer owner command wins over the agent change; a replayed older one does not undo it', async () => {
     await connected();
@@ -903,7 +909,7 @@ it('wait returns when its channel has news, consumes it, and delegates the chann
   await Promise.all([f.join(0), f.join(1)]);
   const b = channelFiles(f.files, '!B:local');
   const waiting = client.read(10, undefined, 'B', { wait: 5 });
-  await vi.waitFor(async () => expect(await readListeningMode(b)).toBe('async'));
+  await vi.waitFor(async () => expect(await readListeningMode(b)).toBe('mute'));
   f.controls[0]!.receive({ ...message('$for-A'), roomId: '!A:local' });
   f.controls[1]!.receive({ ...message('$for-B'), roomId: '!B:local' });
   await expect(waiting).resolves.toMatchObject({ you: 'owner-Codex-1' });

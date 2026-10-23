@@ -9,7 +9,7 @@ import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/n
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
 import { harnessDisplayName, harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, AsyncIcon, PaletteIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
+import { AgentIcon, AsyncIcon, MuteIcon, PaletteIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
@@ -152,8 +152,8 @@ export type SetModeHandler = (participantId: string, mode: ListeningMode) => Pro
 export const MODE_CONFIRM_MS = 15_000;
 
 // `KH_MODES` (source:4394): value, label, description.
-const MODE_COPY = [['steer', 'Steer', 'interrupts'], ['sync', 'Sync', 'next turn'], ['async', 'Async', 'on demand']] as const;
-const MODE_ICONS: Readonly<Record<ListeningMode, () => ReactNode>> = { steer: SteerIcon, sync: SyncIcon, async: AsyncIcon };
+const MODE_COPY = [['steer', 'Steer', 'interrupts'], ['sync', 'Sync', 'next turn'], ['async', 'Async', 'pings only'], ['mute', 'Mute', 'silent']] as const;
+const MODE_ICONS: Readonly<Record<ListeningMode, () => ReactNode>> = { steer: SteerIcon, sync: SyncIcon, async: AsyncIcon, mute: MuteIcon };
 const MODE_TIPS = Object.fromEntries(MODE_COPY.map(([value, label, desc]) => [value, `${label} · ${desc}`])) as Readonly<Record<ListeningMode, string>>;
 const modeTip = (mode: ListeningMode) => MODE_TIPS[mode];
 const MODES = MODE_COPY.map(([value]) => ({ value, label: <ModeIcon mode={value} />, tip: modeTip(value) }));
@@ -264,7 +264,7 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   const capabilities = agent.harness ? harnessInfo(agent.harness) : null;
   const asyncOnly = capabilities !== null && !capabilities.steer && !capabilities.sync;
   // Generic-tier clients cannot apply mode changes, even if member state is stale.
-  const shownMode = asyncOnly ? 'async' : mode;
+  const shownMode = asyncOnly && mode !== 'mute' ? 'async' : mode;
   const fixedModeTip = asyncOnly ? 'This client has no hooks or wake.' : undefined;
   const label = agentLabel(agent);
   const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
