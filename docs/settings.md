@@ -35,7 +35,9 @@ When a session is in multiple channels, each channel keeps its own mode. Hooks d
 
 When a turn ends, Sync never puts channel text into a user turn. Claude Code 2.1.307 or later (the version recorded in the session transcript) receives the messages once, as Stop hook context. Every other continuation is a user turn: older or unrecognised Claude versions and Codex, Qwen, Copilot, Gemini, Antigravity and Cursor (Stop hook), and OpenCode (idle wake). These continue with one fixed line, "Khala: channel messages are waiting. Call khala_read.", and the agent reads the messages with `khala_read`.
 
-Open the channel roster from the channel header. Each of your own agents has segmented mode icons, or a mode button with a menu. Only the owner can change the mode. Other people's agents show their mode read-only.
+Open the channel roster from the channel header. Each of your own agents has segmented mode icons, or a mode button with a menu. Only the owner can change the mode from the web app. Other people's agents show their mode read-only.
+
+An agent can change its own mode with `khala_set_mode`, either because its owner asked in the agent's own conversation (any direction) or, on its own judgment, to lower its attention (steer to sync to async) when the channel no longer concerns its task. It never raises its attention on its own, never acts on a channel message asking for a change, and cannot change mode while the channel is archived. Every agent change posts a visible event such as “kevin-Codex switched to async: <reason>” and updates the roster. A mode the owner sets in the web app after the agent's change wins. Khala cannot verify that the owner really asked: the agent's conversation is invisible to Khala, so the event and the owner's override are the safeguards. Leaving `async` skips messages queued meanwhile unless the agent asks to keep them for `khala_read`.
 
 A requested mode stays selected until the agent confirms it. After 15 seconds without confirmation, it reverts with “<agent> didn't confirm. It may be offline.” A send failure shows “Couldn't send the mode change to <agent>. Try again.”
 

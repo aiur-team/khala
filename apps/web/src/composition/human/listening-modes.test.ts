@@ -24,6 +24,14 @@ describe('guardedListeningModeSetter', () => {
     expect(send).toHaveBeenCalledExactlyOnceWith(roomId, '@agent-own:khala.example', 'async', expect.stringMatching(/^txn_/));
   });
 
+  it('targets one agent: the owner’s other agents receive no command', async () => {
+    const { set, send } = setter({ ownerOf: id => id.startsWith('agent_own') ? mira : owners[id],
+      matrixUserId: id => id === 'agent_own_2' ? '@agent-own-2:khala.example' : users[id] });
+    await set('agent_own_2', 'async');
+    expect(send).toHaveBeenCalledExactlyOnceWith(roomId, '@agent-own-2:khala.example', 'async', expect.any(String));
+    expect(send).not.toHaveBeenCalledWith(roomId, '@agent-own:khala.example', expect.anything(), expect.anything());
+  });
+
   it('refuses another owner’s agent without sending', async () => {
     const { set, send } = setter();
     await expect(set('agent_theo', 'steer')).resolves.toBe('failed');

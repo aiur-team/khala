@@ -118,7 +118,7 @@ export class McpProcess {
     agent.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const listed = await agent.rpc<{ tools?: { name: string }[] }>('tools/list', {});
     if (JSON.stringify(listed.tools?.map((tool: { name: string }) => tool.name)) !==
-      JSON.stringify(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event'])) {
+      JSON.stringify(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_set_mode', 'khala_event'])) {
       throw new Error('mcp_tool_set_changed');
     }
     return agent;

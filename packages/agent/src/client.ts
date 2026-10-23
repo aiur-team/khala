@@ -19,17 +19,21 @@ export interface KhalaAgentClient {
   send(text: string, channel?: string): Promise<{ eventId: string }>;
   /** A claim on a key someone else holds is not posted (or loses the race) and returns ClaimConflict. */
   sendChannelEvent(content: ChannelEventContent, channel?: string): Promise<{ eventId: string } | ClaimConflict>;
-  leave(channel: string): Promise<{ left: string; channels: string[] }>;
+  /** `reason` posts a visible "<you> left: <reason>" event before leaving. */
+  leave(channel: string, reason?: string): Promise<{ left: string; channels: string[] }>;
+  /** Agent-initiated listening mode change; `self` may only lower attention. Posts a visible channel event. */
+  setMode(mode: ListeningMode, input: SetModeInput, channel?: string): Promise<{ channel: string; previous: ListeningMode; mode: ListeningMode; notice?: 'failed' }>;
   close(): Promise<void>;
 }
 
+export type SetModeInput = { trigger: 'owner_request' | 'self'; reason: string; keepBacklog?: boolean };
 export type ChannelStatus = { channel: string; roomId?: string; link?: string; state: string; detail?: string; you?: string; agentUserId?: string; unread: number; listeningMode: ListeningMode; archived?: true; delegated?: true; members?: MemberPresence[] };
 export type ReadResult = { you?: string; members?: MemberPresence[]; messages: (InboxEntry & { seenBy?: string[]; channel?: string })[]; nextBefore?: string; wakeNotice?: string } & Partial<CoordinationState>;
 
-export type KhalaErrorCode = 'update_required' | 'channel_required' | 'channel_unknown' | 'channel_ambiguous' | 'channel_limit' | 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'secret_detected' | 'internal_error';
+export type KhalaErrorCode = 'update_required' | 'channel_required' | 'channel_unknown' | 'channel_ambiguous' | 'channel_limit' | 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'secret_detected' | 'mode_refused' | 'internal_error';
 export class KhalaClientError extends Error {
   readonly code: KhalaErrorCode;
-  constructor(code: KhalaErrorCode, message?: string, readonly extra?: { channels?: { channel: string; roomId: string }[]; kind?: string }) {
+  constructor(code: KhalaErrorCode, message?: string, readonly extra?: { channels?: { channel: string; roomId: string }[]; kind?: string; reason?: string }) {
     super(message ?? code);
     this.name = 'KhalaClientError';
     this.code = code;

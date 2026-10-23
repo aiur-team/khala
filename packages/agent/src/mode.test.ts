@@ -85,3 +85,9 @@ it('skips the archived-period backlog on unarchive, like leaving async', async (
   await applyArchived(files, false);
   expect((await unreadCounts(files)).total).toBe(0);
 });
+it('records an agent change with its reason and keeps the async backlog on request', async () => {
+  await applyListeningMode(files, 'async', meta); await backlog();
+  await applyListeningMode(files, 'sync', { changedBy: 'agent', reason: 'owner asked', eventTs: 5, keepBacklog: true }, now);
+  expect((await unreadCounts(files)).total).toBe(3);
+  expect(JSON.parse(await fs.readFile(files.mode, 'utf8'))).toEqual({ mode: 'sync', changedBy: 'agent', reason: 'owner asked', eventTs: 5, updatedAt: now().toISOString() });
+});
