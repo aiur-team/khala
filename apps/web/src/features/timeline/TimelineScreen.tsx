@@ -7,7 +7,7 @@ import { ChannelEventPill } from './ChannelEventPill';
 // review-action slot) render outside the message-content renderer, so
 // message syntax can never create them (KTD4).
 
-import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
@@ -33,6 +33,8 @@ import { humanColorOf, ownerColorOf, useHumanColor, colorSwatch, type ResolvedHu
 import { buildIdBadgeResolver, harnessLogo, humanInitials, initials, ownerInitials } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
+import { createLongPress } from './long-press';
+import { indexReplies, snippet } from './replies';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 
 export interface TimelineScreenProps {
@@ -217,6 +219,9 @@ type ThreadEntry =
   | Readonly<{ type: 'message'; key: string; run: RunInput; render: (run: RunPosition) => ReactNode; receipt?: PendingSend['phase'] | 'reconciled' }>
   | Readonly<{ type: 'break'; key: string; node: ReactNode }>;
 
+/** A message drawn alone in the focus layer: its own run, name and avatar shown. */
+const SOLO_RUN: RunPosition = { first: true, mid: false, lastOf: true, showName: true, showAvatar: true, ghost: false };
+
 const CAN_COMPOSE: ReadonlySet<string> = new Set(['joining', 'joined']);
 
 /**
@@ -281,6 +286,21 @@ export function TimelineScreen({
   useEffect(() => { typing?.set(roomId, draft.trim().length > 0); }, [typing, roomId, draft]);
   useEffect(() => () => typing?.set(roomId, false), [typing, roomId]);
   const [chipsOpen, setChipsOpen] = useState(false);
+  // iOS Messages: hold a bubble for its action menu; Reply keeps the thread in focus over a blurred timeline.
+  const [focus, setFocus] = useState<Readonly<{ mode: 'menu' | 'reply'; eventId: EventId }> | null>(null);
+  const press = useMemo(() => createLongPress(), []);
+  const menuTriggerRef = useRef<HTMLElement | null>(null);
+  const openMenu = (eventId: EventId, bubble: HTMLElement) => {
+    menuTriggerRef.current = bubble;
+    setFocus({ mode: 'menu', eventId });
+  };
+  const closeFocus = () => {
+    if (focus?.mode === 'menu') menuTriggerRef.current?.focus();
+    setFocus(null);
+  };
+  useEffect(() => {
+    if (focus?.mode === 'reply') document.getElementById('kh-input')?.focus();
+  }, [focus]);
   useImperativeHandle(composerRef, () => ({
     insertMention: label => setDraft(current => insertMention(current, label)),
     closeChips: () => setChipsOpen(false),
@@ -473,7 +493,8 @@ export function TimelineScreen({
     const body = draft.trim();
     if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
       entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
-    const content = { v: 1 as const, kind: 'text' as const, body };
+    const content = { v: 1 as const, kind: 'text' as const, body, ...(focus?.mode === 'reply' ? { inReplyTo: focus.eventId } : {}) };
+    setFocus(null);
     const clientTxnId = newClientTxnId();
     seenRef.current?.add(clientTxnId);
     followSendRef.current = clientTxnId;
@@ -638,6 +659,59 @@ export function TimelineScreen({
   useEffect(() => { onMentionRoster?.(mentionRoster); }, [mentionRoster, onMentionRoster]);
   const renderOptions: RenderOptions = { mentions: mentionRoster, ...(onOpenParticipant ? { onOpenParticipant } : {}) };
 
+  const itemsById = new Map(data.items.map(entry => [entry.ref.eventId as string, entry]));
+  const replies = useMemo(() => indexReplies(data.items.flatMap(entry => isReadableItem(entry)
+    ? [{ id: entry.ref.eventId as string, parent: entry.content.inReplyTo }] : [])), [data.items]);
+
+  /** Hold (pointer or touch), right-click, Enter or Shift+F10 opens the bubble's action menu. */
+  function bubbleFor(eventId: EventId): HTMLAttributes<HTMLDivElement> {
+    return {
+      tabIndex: 0, 'aria-haspopup': 'menu', 'aria-keyshortcuts': 'Shift+F10',
+      onPointerDown: event => {
+        if (event.button !== 0) return;
+        const bubble = event.currentTarget;
+        press.down(event.clientX, event.clientY, () => openMenu(eventId, bubble));
+      },
+      onPointerMove: event => press.move(event.clientX, event.clientY),
+      onPointerUp: press.cancel, onPointerCancel: press.cancel, onPointerLeave: press.cancel,
+      onClickCapture: event => {
+        if (!press.consumeClick()) return;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      onContextMenu: event => {
+        event.preventDefault();
+        press.cancel();
+        openMenu(eventId, event.currentTarget);
+      },
+      onKeyDown: event => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key !== 'Enter' && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return;
+        event.preventDefault();
+        openMenu(eventId, event.currentTarget);
+      },
+    };
+  }
+
+  /** The faded parent above a reply, iOS-style; activating it opens the thread. */
+  function quoteFor(parentId: EventId, replyId: EventId): ReactNode {
+    const parent = itemsById.get(parentId);
+    const who = parent ? identityFor(parent.participant, fullNameFor(parent.participant, parent.ref.eventId)).label : null;
+    const text = parent && isReadableItem(parent) ? snippet(parent.content.body) : 'Earlier message';
+    return <button type="button" className="kh-quote" aria-label={`Reply to ${who ?? 'an earlier message'}: ${text}. Open thread`}
+      onClick={() => setFocus({ mode: 'reply', eventId: parent ? parentId : replyId })}>
+      {who ? <b dir="auto">{who}</b> : null}<span className="kh-quote__text" dir="auto">{text}</span>
+    </button>;
+  }
+
+  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    items[(at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  }
+
   // A `failed` or `outcome_unknown` send keeps its body in the pending row, but
   // Send must stay disabled while it's unresolved: otherwise the reader could
   // submit the same text again under a fresh `clientTxnId`, duplicating a
@@ -695,6 +769,7 @@ export function TimelineScreen({
     const readers = seenBy && item.content.kind === 'text' && item.content.body.includes('@') ? seenBy(eventId) : [];
     const seen = readers.length === 0 ? [] : [...new Set(segmentMentions((item.content as { body: string }).body, mentionRoster)
       .flatMap(segment => 'mention' in segment && readers.includes(segment.participantId) ? [segment.mention] : []))];
+    const replyCount = replies.counts.get(eventId) ?? 0;
     entries.push({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
@@ -703,7 +778,11 @@ export function TimelineScreen({
           : { humanColor: identity.color })}
         time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
+        bubble={bubbleFor(eventId)}
+        quote={isReadableItem(item) && item.content.inReplyTo ? quoteFor(item.content.inReplyTo, eventId) : null}
         after={<>
+          {replyCount > 0 ? <button type="button" className="kh-replies" onClick={() => setFocus({ mode: 'reply', eventId })}>
+            {replyCount} {replyCount === 1 ? 'Reply' : 'Replies'}</button> : null}
           {isReadableItem(item) && renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
           {inlineEvidence ? <InlineEvidence unit={inlineEvidence} status={evidenceView.status} /> : null}
           {seen.length > 0 ? <p className="kh-seen">Seen by {seen.join(', ')}</p> : null}
@@ -739,17 +818,23 @@ export function TimelineScreen({
       render: run => <ChatMessage id={entry.clientTxnId} run={run} sender="me" live pending={entry.phase === 'pending'}
         failed={isUnresolved(entry.phase)} pop={popIds.has(entry.clientTxnId)} onPopEnd={() => dropPop(entry.clientTxnId)}
         className="timeline__row timeline__row--pending"
+        quote={entry.content.kind === 'text' && entry.content.inReplyTo ? quoteFor(entry.content.inReplyTo, entry.content.inReplyTo) : null}
         retry={isUnresolved(entry.phase) ? <button type="button" className="kh-ib sm kh-retry" aria-label={retryLabel}
           data-tip={retryLabel} disabled={sendBlocked} onClick={() => void handleRetry(entry)}><RestoreIcon /></button> : null}>
         {renderMessageContent(entry.content, renderOptions)}
       </ChatMessage>,
     });
   }
+  const renderById = new Map(entries.flatMap(entry => entry.type === 'message' ? [[entry.key, entry.render] as const] : []));
   const runs = computeRuns(entries.map(entry => entry.type === 'message' ? entry.run : { kind: 'break' as const }));
   const receiptAt = lastIndexOf(entries, entry => entry.type === 'message' && entry.receipt !== undefined);
 
   return (
-    <section className="timeline" aria-label="Conversation">
+    <section className="timeline" aria-label="Conversation" onKeyDown={event => {
+      if (event.key !== 'Escape' || !focus || event.defaultPrevented) return;
+      event.preventDefault();
+      closeFocus();
+    }}>
       {data.phase === 'unavailable' ? (
         <div className="kh-state-c timeline__state" role="alert">
           <b>Conversation history is unavailable right now.</b>
@@ -809,6 +894,28 @@ export function TimelineScreen({
             </Fragment>;
           })}
         </ol>
+        {focus ? <div className="kh-focus" data-mode={focus.mode}>
+          <button type="button" className="kh-focus__scrim" tabIndex={-1} aria-label={focus.mode === 'menu' ? 'Close menu' : 'Cancel reply'}
+            onClick={closeFocus} />
+          {focus.mode === 'reply' ? <p className="kh-focus__title">
+            <span>Reply</span>
+            <button type="button" className="kh-ib sm" aria-label="Cancel reply" onClick={closeFocus}>×</button>
+          </p> : null}
+          <ol className="kh-thread kh-focus__chain" aria-label={focus.mode === 'menu' ? 'Selected message' : 'Reply thread'}>
+            {(focus.mode === 'menu' ? [focus.eventId] : replies.thread(focus.eventId)).map(id => {
+              const render = renderById.get(id);
+              return render ? <Fragment key={id}>{render(SOLO_RUN)}</Fragment> : null;
+            })}
+          </ol>
+          {focus.mode === 'menu' ? <div className="kh-focus__menu" role="menu" aria-label="Message actions" onKeyDown={onMenuKeyDown}>
+            <button type="button" role="menuitem" autoFocus onClick={() => setFocus({ mode: 'reply', eventId: focus.eventId })}>Reply</button>
+            <button type="button" role="menuitem" onClick={() => {
+              const target = itemsById.get(focus.eventId);
+              if (target && isReadableItem(target)) void navigator.clipboard?.writeText(target.content.body).catch(() => undefined);
+              closeFocus();
+            }}>Copy</button>
+          </div> : null}
+        </div> : null}
         <div className="timeline__jump" aria-live="polite">
           {!atLatest && data.newMessageCount > 0 ? (
             <button

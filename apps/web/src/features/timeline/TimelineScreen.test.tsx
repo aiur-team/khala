@@ -514,7 +514,7 @@ describe('thread design (KM-182)', () => {
       roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
     expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first timeline__row"/);
     expect(html).not.toContain('Your machine');
-    expect(html).toMatch(/<li data-event-id="E2" class="kh-row me first timeline__row"[^>]*><div class="kh-col"><div class="kh-b">/);
+    expect(html).toMatch(/<li data-event-id="E2" class="kh-row me first timeline__row"[^>]*><div class="kh-col"><div class="kh-b"[^>]*>/);
   });
 
   it('renders exactly one Delivered receipt, right after the viewer\'s last message, and never Read', () => {
@@ -601,4 +601,31 @@ describe('thread design (KM-182)', () => {
 it('labels one, two and several typers', () => {
   expect([typingLabel(['Alice']), typingLabel(['Alice', 'claude-1']), typingLabel(['Alice', 'Bob', 'Cy'])])
     .toEqual(['Alice is typing…', 'Alice and claude-1 are typing…', 'Alice, Bob and Cy are typing…']);
+});
+
+describe('inline reply threads (#1321)', () => {
+  const maya = participant('maya', 'human', 'Maya');
+  const reply = (eventId: string, author: ReturnType<typeof participant>, body: string, parent: string) => {
+    const base = item(eventId, author, body);
+    return { ...base, content: { ...base.content, inReplyTo: parent as EventId } };
+  };
+
+  it('keeps a reply chain in the main flow with quotes, connectors and reply counts', () => {
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready', items: [
+      item('E1', maya, 'Ship it today?'), item('E2', maya, 'unrelated'), reply('E3', viewer, 'Yes, after CI', 'E1'),
+      reply('E4', maya, 'Great', 'E3'), reply('E5', maya, 'About that', '$gone'),
+    ], nextCursor: null, newMessageCount: 0 })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    const rows = html.split('<li data-event-id=').slice(1);
+    expect(rows.map(row => row.slice(1, 3))).toEqual(['E1', 'E2', 'E3', 'E4', 'E5']);
+    expect(rows[0]).toContain('class="kh-replies">1 Reply</button>');
+    expect(rows[1]).not.toContain('kh-replies');
+    expect(rows[2]).toContain('aria-label="Reply to Maya: Ship it today?. Open thread"');
+    expect(rows[2]).toMatch(/class="kh-quote"[^>]*><b dir="auto">Maya<\/b><span class="kh-quote__text" dir="auto">Ship it today\?<\/span><\/button><div class="kh-b"/);
+    expect(rows[2]).toContain('class="kh-replies">1 Reply</button>');
+    expect(rows[3]).toContain('<span class="kh-quote__text" dir="auto">Yes, after CI</span>');
+    expect(rows[4]).toContain('aria-label="Reply to an earlier message: Earlier message. Open thread"');
+    // Every bubble opens the action menu by hold, right-click or keyboard; the focus layer stays closed until then.
+    expect(html.match(/<div class="kh-b" tabindex="0" aria-haspopup="menu" aria-keyshortcuts="Shift\+F10">/g)).toHaveLength(5);
+    expect(html).not.toContain('kh-focus');
+  });
 });

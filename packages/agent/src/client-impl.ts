@@ -17,7 +17,7 @@ import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
 import { startChannelSession } from './transport';
-import { toInboxEntry } from './sender';
+import { toInboxEntry, withReplyContext } from './sender';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { TERMINAL_SESSION_DETAILS, stateRoot, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
@@ -717,7 +717,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             void session.setTyping(credentials.roomId, true).catch(() => {});
           }
           return { ...(you !== undefined ? { you } : {}), ...(session.members ? { members: session.members(credentials.roomId) } : {}),
-            messages: messages.map(entry => {
+            messages: withReplyContext(messages).map(entry => {
               const seenBy = entry.sender === session.userId ? session.seenBy?.(credentials.roomId, entry.eventId) ?? [] : [];
               return seenBy.length ? { ...entry, seenBy } : entry;
             }) };
