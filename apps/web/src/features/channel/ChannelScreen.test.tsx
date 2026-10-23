@@ -5,7 +5,7 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { renderMessageContent } from '../timeline/message-renderer';
 import { ChannelScreen, Recent, type ChannelScreenProps } from './ChannelScreen';
-import { awayLabel } from './AgentPresencePanel';
+import { agentLiveness, stoppedTip } from './AgentPresencePanel';
 import { colorOf } from '../../ui/khala/human-colors';
 import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
 
@@ -225,22 +225,44 @@ describe('ChannelScreen Recent in Khala', () => {
 });
 
 describe('ChannelScreen roster presence', () => {
-  it('dots online and offline agents, says how long one has been away, and omits the dot while unknown', () => {
-    const away = Date.now() - 2 * 3_600_000 - 60_000;
-    const html = render({ phase: 'ready', agents: [{ ...agent('agent_on', mira, 'Claude'), connection: 'connected' },
-      { ...agent('agent_off', theo, 'Codex'), connection: 'offline', awaySince: away, awayReason: 'session ended' }, agent('agent_new', theo, 'Muse')] });
+  const away = Date.now() - 2 * 3_600_000 - 60_000;
+  const rows = (agents: ChannelAgentView[]) => {
+    const html = render({ phase: 'ready', agents });
     const roster = html.slice(html.indexOf('id="kh-roster"'));
-    const row = (id: string) => roster.slice(roster.indexOf(`data-kh-agent="${id}"`)).split('</button>')[0]!;
+    return { html, row: (id: string) => roster.slice(roster.lastIndexOf('<button', roster.indexOf(`data-kh-agent="${id}"`))).split('</button>')[0]! };
+  };
+  it('dots online, away and stopped agents, greys a stopped one, and omits the dot while unknown', () => {
+    const { html, row } = rows([{ ...agent('agent_on', mira, 'Claude'), connection: 'connected' },
+      { ...agent('agent_off', theo, 'Codex'), connection: 'offline', awaySince: away, awayReason: 'session ended' },
+      { ...agent('agent_away', theo, 'Gemini'), connection: 'offline', awaySince: away, awayReason: 'usage limit' }, agent('agent_new', theo, 'Muse')]);
     expect(row('agent_on')).toContain('class="kh-st on"');
+    expect(row('agent_on')).not.toContain('kh-off');
     expect(row('agent_off')).toContain('class="kh-st off"');
-    expect(row('agent_off')).toContain('away 2h (session ended)');
+    expect(row('agent_off')).toContain('class="kh-rai kh-off"');
+    expect(row('agent_off')).toContain('title="Not running — last seen 2h ago"');
+    expect(row('agent_away')).toContain('class="kh-st away"');
+    expect(row('agent_away')).toContain('Away — usage limit · 2h');
+    expect(row('agent_away')).not.toContain('kh-off');
     expect(row('agent_new')).not.toContain('class="kh-st ');
+    expect(row('agent_new')).not.toContain('kh-off');
     expect(html.slice(0, html.indexOf('id="kh-roster"'))).not.toContain('class="kh-st ');
   });
-  it('labels minutes, hours and days away', () => {
-    const at = (ms: number) => awayLabel({ ...agent('a', mira), connection: 'offline', awaySince: 0 }, ms);
-    expect([at(5 * 60_000), at(3 * 3_600_000), at(3 * 86_400_000)]).toEqual(['away 5m', 'away 3h', 'away 3d']);
-    expect(awayLabel({ ...agent('a', mira), connection: 'connected' })).toBeNull();
+  it('greys a hard-killed agent (no reason) and un-greys it once presence says connected', () => {
+    const killed = rows([{ ...agent('agent_k', mira, 'Claude'), connection: 'offline', awaySince: away }]).row('agent_k');
+    expect(killed).toContain('kh-rai kh-off');
+    expect(killed).toContain('Not running — last seen 2h ago');
+    const back = rows([{ ...agent('agent_k', mira, 'Claude'), connection: 'connected' }]).row('agent_k');
+    expect(back).not.toContain('kh-off');
+    expect(back).not.toContain('Not running');
+  });
+  it('labels minutes, hours and days, and tells away from stopped', () => {
+    const at = (ms: number, awayReason?: string) => agentLiveness({ ...agent('a', mira), connection: 'offline', awaySince: 0, ...(awayReason ? { awayReason } : {}) }, ms);
+    expect([at(5 * 60_000), at(3 * 3_600_000), at(3 * 86_400_000)].map(item => item?.text))
+      .toEqual(['Not running — last seen 5m ago', 'Not running — last seen 3h ago', 'Not running — last seen 3d ago']);
+    expect(at(5 * 60_000, 'session ended')).toEqual({ state: 'stopped', text: 'Not running — last seen 5m ago' });
+    expect(at(5 * 60_000, 'usage limit')).toEqual({ state: 'away', text: 'Away — usage limit · 5m' });
+    expect(agentLiveness({ ...agent('a', mira), connection: 'connected' })).toBeNull();
+    expect(stoppedTip({ ...agent('a', mira), connection: 'offline', awaySince: 0, awayReason: 'usage limit' }, 60_000)).toBeUndefined();
   });
 });
 

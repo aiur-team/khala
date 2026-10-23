@@ -36,6 +36,21 @@ describe('registry mention avatars', () => {
   });
 });
 
+describe('agent chip liveness and mode (#1341)', () => {
+  it.each([['steer', 'Steer · interrupts'], ['sync', 'Sync · next turn'], ['async', 'Async · pings only'], ['mute', 'Mute · silent']] as const)(
+    'shows the %s mode icon with its label', (mode, tip) => {
+      const chip = html({ targets: [{ ...claude, mode }] });
+      expect(chip).toContain(`class="kh-chip-mode" role="img" aria-label="Listening mode: ${tip}" data-tip="${tip}"><svg`);
+    });
+  it('greys a not-running agent with a tooltip, and leaves a running or mode-less one alone', () => {
+    const offline = 'Not running — last seen 3m ago';
+    expect(html({ targets: [{ ...claude, offline }] })).toContain(`class="kh-chip kh-chip-a kh-off" style="--oh:214;--ah:210" data-kh-mention="a1" title="${offline}"`);
+    const running = html({ targets: [claude] });
+    expect(running).not.toContain('kh-off');
+    expect(running).not.toContain('kh-chip-mode');
+  });
+});
+
 describe('insertMention', () => {
   it('follows the khInsert spacing rule', () => {
     expect(insertMention('hi', 'Claude')).toBe('hi @Claude ');

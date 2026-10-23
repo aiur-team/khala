@@ -139,7 +139,9 @@
 .kh-more { font: 700 .66rem/1 "JetBrains Mono", monospace; color: var(--muted); background: var(--surface-3) !important; border-color: var(--line) !important; cursor: default; }
 .kh-gen { background: var(--surface-3) !important; border-color: var(--line) !important; color: var(--faint); font: 700 .9rem/1 "JetBrains Mono", monospace; }
 .kh-st { position: absolute; left: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--surface); background: var(--good); }
-.kh-st.off { background: var(--faint); } .kh-st.err { background: var(--block); }
+.kh-st.off { background: var(--faint); } .kh-st.away { background: var(--attn); } .kh-st.err { background: var(--block); }
+/* A not-running agent (#1341): its avatar, chip and roster name grey out. */
+.kh-av.kh-off, .kh-chip.kh-off, .kh-rai.kh-off > span:not(.kh-av) { opacity: .5; filter: grayscale(1); }
 .kh-ini { font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; color: hsl(var(--h) 75% 72%); }
 .khala-app[data-theme="light"] .kh-ini { color: hsl(var(--h) 60% 35%); }
 .kh-d-hero .kh-ini { font-size: 1.3rem; }

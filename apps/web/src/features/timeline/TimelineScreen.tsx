@@ -38,6 +38,11 @@ import { projectTimelineNames } from './names';
 import { createLongPress } from './long-press';
 import { indexReplies, snippet } from './replies';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+
+/** An agent chip's mode icon and not-running tooltip. */
+const agentTarget = (state: Readonly<{ mode: ListeningMode; offline?: string | undefined }> | undefined) =>
+  state ? { mode: state.mode, ...(state.offline ? { offline: state.offline } : {}) } : {};
 
 export interface TimelineScreenProps {
   describeParticipant?: (participantId: ParticipantId) => Participant | undefined;
@@ -74,6 +79,8 @@ export interface TimelineScreenProps {
   onMentionRoster?: (roster: readonly MentionCandidate[]) => void;
   /** Participants whose read receipt covers `eventId`; a message shows "Seen by" for the ones it @mentions. */
   seenBy?: (eventId: EventId) => readonly string[];
+  /** Hosted only: an agent's listening mode and, when it is not running, the tooltip that greys its chip and avatars. */
+  agentState?: (participantId: string) => Readonly<{ mode: ListeningMode; offline?: string | undefined }> | undefined;
   /** Hosted only: shows who else is typing and sends the viewer's own typing state. */
   typing?: TypingPort;
   /** Hosted only: the encrypted media repo. Without it there is no "+" button and images show by name. */
@@ -240,7 +247,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, typing, media, now = () => new Date(), timeOptions = {},
+  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, agentState, typing, media, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -661,7 +668,7 @@ export function TimelineScreen({
     }
     return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={identity.ownerSwatch} swatch={colorSwatch(identity.color)}
       ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}
-      initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
+      initials={initials(identity.label)} ghost={ghost} offline={agentState?.(identity.participantId)?.offline} onClick={open(identity.participantId)} />;
   }
 
   // The KM-184 chips and the renderer's `@mention` matching share one roster.
@@ -677,6 +684,7 @@ export function TimelineScreen({
       ...(identity.kind === 'agent' ? identity.ownerSwatch ? { swatch: identity.ownerSwatch } : {} : identity.color ? { swatch: identity.color.tint } : {}),
       ownerInitials: ownerBadge(identity),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
+      ...(identity.kind === 'agent' ? agentTarget(agentState?.(identity.participantId)) : {}),
     }];
   });
   const mentionKey = JSON.stringify(mentionTargets.map(target => [target.label, target.id, target.kind, target.hue]));

@@ -3,7 +3,7 @@ import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { EventId, OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
-import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
+import { stoppedTip, type RenameAgentResult } from '../../features/channel/AgentPresencePanel';
 import { createChannelController, type ChannelController, type ChannelView } from '../../features/channel/controller';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 import type { ChannelNameResult, ChannelUiPort } from '../../features/channel/ports';
@@ -333,6 +333,10 @@ function HumanRoom({ context, roomId, navigate, routes }: {
             const userId = matrixUserId(agent.participantId);
             return userId && context.hasRead!(roomId, userId, eventId) ? [agent.participantId] : [];
           }) } : {})}
+          agentState={participantId => {
+            const agent = presence.agents.find(item => item.participantId === participantId);
+            return agent ? { mode: modeFor(participantId), offline: stoppedTip(agent) } : undefined;
+          }}
           {...(context.typing ? { typing: context.typing } : {})}
           {...(context.media ? { media: context.media } : {})}
           {...(pendingStore ? { pendingStore } : {})}

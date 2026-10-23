@@ -9,7 +9,8 @@ import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/n
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
 import { harnessDisplayName, harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, AsyncIcon, MuteIcon, PaletteIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
+import { AgentIcon, PaletteIcon, PencilIcon, XIcon } from '../../ui/khala/icons';
+import { MODE_COPY, ModeIcon, modeTip } from '../../ui/khala/ModeIcon';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
@@ -118,19 +119,32 @@ export function MemberAvatar({ member, interactive = false, onClick, showStatus 
   return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue} ownerSwatch={colorSwatch(member.ownerColor)}
     swatch={colorSwatch(member.color)}
     ownerInitials={member.ownerInitials} logo={member.harness ? harnessLogo(member.harness) : null}
-    initials={initials(member.name)} status={showStatus ? statusDot(member.agent.connection) : undefined} {...shared} />;
+    initials={initials(member.name)} status={showStatus ? statusDot(member.agent) : undefined} offline={stoppedTip(member.agent)} {...shared} />;
 }
 
-function statusDot(connection: AgentMember['agent']['connection']): 'on' | 'off' | undefined {
-  return connection === 'connected' ? 'on' : connection === 'offline' ? 'off' : undefined;
+function statusDot(agent: AgentMember['agent']): 'on' | 'off' | 'away' | undefined {
+  return agent.connection === 'connected' ? 'on' : agent.connection === 'offline' ? agentLiveness(agent)!.state === 'away' ? 'away' : 'off' : undefined;
 }
 
-/** `away 2h (session ended)`: how long since an offline agent was last alive, and why it left when it said. */
-export function awayLabel(agent: AgentMember['agent'], now = Date.now()): string | null {
-  if (agent.connection !== 'offline' || agent.awaySince === undefined) return null;
-  const minutes = Math.max(0, Math.floor((now - agent.awaySince) / 60_000));
-  const span = minutes < 60 ? `${minutes}m` : minutes < 48 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
-  return `away ${span}${agent.awayReason ? ` (${agent.awayReason})` : ''}`;
+/** The tooltip for a not-running agent, which greys it; `undefined` otherwise. */
+export function stoppedTip(agent: AgentMember['agent'], now = Date.now()): string | undefined {
+  const liveness = agentLiveness(agent, now);
+  return liveness?.state === 'stopped' ? liveness.text : undefined;
+}
+
+// A clean exit says `session ended`; a hard kill reaches us as Synapse's sync timeout with no reason.
+const STOPPED_REASON = 'session ended';
+
+/**
+ * An offline agent is `away` when it said why (a usage limit: still running) and `stopped` otherwise,
+ * with how long ago it was last alive. `null` while connected or unknown.
+ */
+export function agentLiveness(agent: AgentMember['agent'], now = Date.now()): { state: 'away' | 'stopped'; text: string } | null {
+  if (agent.connection !== 'offline') return null;
+  const minutes = agent.awaySince === undefined ? null : Math.max(0, Math.floor((now - agent.awaySince) / 60_000));
+  const span = minutes === null ? null : minutes < 60 ? `${minutes}m` : minutes < 48 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
+  if (agent.awayReason && agent.awayReason !== STOPPED_REASON) return { state: 'away', text: `Away — ${agent.awayReason}${span ? ` · ${span}` : ''}` };
+  return { state: 'stopped', text: `Not running${span ? ` — last seen ${span} ago` : ''}` };
 }
 
 /** `Claude`, or `Claude #a1b2` when another owner has an agent with the same name. */
@@ -151,17 +165,7 @@ export type SetModeHandler = (participantId: string, mode: ListeningMode) => Pro
 /** How long a requested mode stays selected before an unconfirmed request reverts. */
 export const MODE_CONFIRM_MS = 15_000;
 
-// `KH_MODES` (source:4394): value, label, description.
-const MODE_COPY = [['steer', 'Steer', 'interrupts'], ['sync', 'Sync', 'next turn'], ['async', 'Async', 'pings only'], ['mute', 'Mute', 'silent']] as const;
-const MODE_ICONS: Readonly<Record<ListeningMode, () => ReactNode>> = { steer: SteerIcon, sync: SyncIcon, async: AsyncIcon, mute: MuteIcon };
-const MODE_TIPS = Object.fromEntries(MODE_COPY.map(([value, label, desc]) => [value, `${label} · ${desc}`])) as Readonly<Record<ListeningMode, string>>;
-const modeTip = (mode: ListeningMode) => MODE_TIPS[mode];
 const MODES = MODE_COPY.map(([value]) => ({ value, label: <ModeIcon mode={value} />, tip: modeTip(value) }));
-
-function ModeIcon({ mode }: Readonly<{ mode: ListeningMode }>) {
-  const Icon = MODE_ICONS[mode];
-  return <Icon />;
-}
 
 /**
  * An owned agent's row with the live mode control. A chosen mode shows as
@@ -267,8 +271,10 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   const shownMode = asyncOnly && mode !== 'mute' ? 'async' : mode;
   const fixedModeTip = asyncOnly ? 'This client has no hooks or wake.' : undefined;
   const label = agentLabel(agent);
-  const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
-    <MemberAvatar member={agent} showStatus /><span><AgentName agent={agent} /><em>{[harnessName(agent), awayLabel(agent.agent)].filter(Boolean).join(' · ')}</em></span>
+  const liveness = agentLiveness(agent.agent);
+  const opener = <button type="button" className={`kh-rai${liveness?.state === 'stopped' ? ' kh-off' : ''}`} data-kh-agent={agent.participantId}
+    {...(liveness ? { title: liveness.text } : {})} onClick={() => onOpen(agent.participantId)}>
+    <MemberAvatar member={agent} showStatus /><span><AgentName agent={agent} /><em>{[harnessName(agent), liveness?.text].filter(Boolean).join(' · ')}</em></span>
   </button>;
   const rename = agent.isViewerOwned && onRename ? <button type="button" className="kh-ib sm kh-rename-btn" aria-label={`Rename ${label}`}
     data-tip="Rename" onClick={() => onRename(agent.participantId)}><PencilIcon /></button> : null;
