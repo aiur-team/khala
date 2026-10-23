@@ -13,7 +13,8 @@ import type { HumanRouteCodec } from './routes';
 export function ArchivedChannelsRoute({ context, routes, navigateRoute }: Readonly<{
   context: HumanRouteContext; routes: HumanRouteCodec; navigateRoute(path: string): void;
 }>) {
-  const archived = (useConversationIndex(context) ?? []).filter(item => item.archived);
+  const index = useConversationIndex(context);
+  const archived = (index ?? []).filter(item => item.archived);
   const [failed, setFailed] = useState(false);
   const unarchive = async (id: string) => {
     const roomId = decodeRoomId(id);
@@ -24,7 +25,8 @@ export function ArchivedChannelsRoute({ context, routes, navigateRoute }: Readon
     banner={failed ? 'Unarchive failed. Try again.' : undefined}>
     <p><a className="kh-archived-back" href={routes.conversationsPath()} onClick={event => { event.preventDefault(); navigateRoute(routes.conversationsPath()); }}>
       <ChevronLeftIcon /> Channels</a></p>
-    {archived.length === 0 ? <p role="status">No archived channels.</p> : <ul className="kh-archived">
+    {index === undefined ? <p role="status">Loading channels…</p> : index === null ? <p role="alert">Channels are unavailable. Try reloading.</p>
+      : archived.length === 0 ? <p role="status">No archived channels.</p> : <ul className="kh-archived">
       {archived.map(item => <li key={item.id} className={item.unreadCount ? 'unread' : undefined}>
         <a href={routes.roomPath(item.id)} onClick={event => { event.preventDefault(); navigateRoute(routes.roomPath(item.id)); }}>
           {item.unreadCount ? <span className="kh-cv-unread" aria-hidden="true" /> : null}

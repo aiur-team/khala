@@ -466,11 +466,14 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       };
       attempt.unsubscribe = session.onMessage(intake);
       const stopMode = session.onListeningModeCommand(intakeMode);
-      const stopArchive = session.onOwnerArchived?.((roomId, archived) => {
+      const intakeArchived = (roomId: string, archived: boolean): void => {
         if (!current(attempt) || roomId !== credentials.roomId) return;
+        // Join writes mode.json directly; queue behind it like owner mode commands.
+        if (!attempt.joined) { buffered.push(() => intakeArchived(roomId, archived)); return; }
         attempt.appends = attempt.appends.then(async () => { if (current(attempt)) await applyArchived(attempt.files!, archived); })
           .catch(async () => { if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {}); });
-      });
+      };
+      const stopArchive = session.onOwnerArchived?.(intakeArchived);
       attempt.unsubscribeMode = () => { stopMode(); stopArchive?.(); };
       if (!attempt.restore?.localCredentials) await wait(api.reportReady(input, { signal, timeoutMs: options.inviteTimeoutMs ?? 120_000, ...fetchDeps }));
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));

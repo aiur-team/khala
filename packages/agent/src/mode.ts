@@ -14,22 +14,24 @@ export async function readListeningMode(files: SessionFiles): Promise<ListeningM
   const state = await readModeState(files);
   return state.archived ? 'async' : state.mode;
 }
-/** Mirrors the owner's archive flag; the stored mode is kept for unarchive. */
+/** Mirrors the owner's archive flag; the stored mode is kept for unarchive. Like leaving `async`, unarchiving skips the backlog. */
 export async function applyArchived(files: SessionFiles, archived: boolean): Promise<void> {
   const content = await readJson<Record<string, unknown>>(files.mode);
   if ((content?.archived === true) === archived) return;
+  if (!archived && (await readModeState(files)).mode !== 'async') await skipBacklog(files);
   await writeJsonAtomic(files.mode, { ...(content ?? {}), archived });
+}
+async function skipBacklog(files: SessionFiles): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { cursor, entries } = await unread(files);
+    if (await advanceCursor(files, cursor, entries) !== 'conflict') return;
+  }
+  throw new StateError('storage_failed');
 }
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
   meta: { changedBy: 'owner'; eventId: string; eventTs?: number; pendingPublish?: true }, now: () => Date = () => new Date()) {
   const { mode: previous, archived } = await readModeState(files);
-  if (previous === 'async' && next !== 'async') {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { cursor, entries } = await unread(files);
-      if (await advanceCursor(files, cursor, entries) !== 'conflict') break;
-      if (attempt === 1) throw new StateError('storage_failed');
-    }
-  }
+  if (previous === 'async' && next !== 'async') await skipBacklog(files);
   await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...meta, updatedAt: now().toISOString() });
   return { previous, next };
 }

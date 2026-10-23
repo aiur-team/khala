@@ -71,3 +71,8 @@ it('keeps the archive flag across an owner mode change without skipping backlog'
   expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
   expect((await unreadCounts(files)).total).toBe(3);
 });
+it('skips the archived-period backlog on unarchive, like leaving async', async () => {
+  await applyArchived(files, true); await backlog();
+  await applyArchived(files, false);
+  expect((await unreadCounts(files)).total).toBe(0);
+});
