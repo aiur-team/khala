@@ -118,7 +118,8 @@ export function createFakeChannelPort(empty = false) {
       }
       // A Matrix sync from the server can omit unsigned.transaction_id even
       // though the send acknowledgment named the exact event.
-      const item = makeItem(clientTxnId, alice, content.body);
+      // Keeps the reply relation, as the real transport does.
+      const item = { ...makeItem(clientTxnId, alice, content.body), content } as FakeTimelineItem;
       if (content.body.startsWith('__defer_sync')) {
         deferredSync.push(item);
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });

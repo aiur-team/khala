@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import intro from '../../fixtures/messaging/exact-intro.json';
 import { type ContentLimits, decodeContentLimits } from './decode';
 import {
-  type EventRef, type MessageContent, type UnavailableEventRef, UNAVAILABLE_REASONS, decodeEventRef, decodeTimelineItem,
+  type EventRef, type MessageContent, type UnavailableEventRef, UNAVAILABLE_REASONS, decodeEventRef, decodeMessageContent, decodeTimelineItem,
   decodeUnavailableContent, decodeUnavailableEventRef, digestMessageContent, encodeMessageContent, sameEventRef,
 } from './events';
 
@@ -52,6 +52,15 @@ describe('exact intro content encoding', () => {
   it('is positional, so input key order cannot change the bytes', () => {
     const reordered = JSON.parse('{"body":"Review the API change.\\nDo not merge yet.","kind":"text","v":1}') as MessageContent;
     expect(hex(encodeMessageContent(reordered))).toBe(intro.encoding.utf8Hex);
+  });
+
+  it('binds a reply parent into the digest without changing plain-message bytes', async () => {
+    const reply = { ...text('yes'), inReplyTo: '$parent' } as MessageContent;
+    expect(new TextDecoder().decode(encodeMessageContent(reply))).toBe('["khala.message.v1","text","yes","$parent"]');
+    expect(await digestOf(reply)).not.toBe(await digestOf(text('yes')));
+    expect(decodeMessageContent(reply, limits)).toEqual({ ok: true, value: reply });
+    expect(decodeMessageContent({ ...text('yes'), inReplyTo: 7 }, limits).ok).toBe(false);
+    expect(() => encodeMessageContent({ ...text('yes'), inReplyTo: '' } as unknown as MessageContent)).toThrow(TypeError);
   });
 
   it('refuses bodies UTF-8 cannot carry exactly', () => {

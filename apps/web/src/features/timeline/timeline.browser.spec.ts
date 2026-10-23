@@ -491,3 +491,90 @@ test('Thread rows show chosen initials on avatars and owner badges', { timeout: 
     await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
 });
+
+// #1321: iOS Messages-style hold-to-reply and inline reply threads.
+test('Holding a bubble opens Reply, and the reply stays inline as one chain', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-reply-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-reply-profile-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    const url = server.resolvedUrls!.local[0]!;
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: ['--no-sandbox'],
+      env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await page.goto(url);
+    const bubble = page.locator('[data-event-id="hist_39"] .kh-b').first();
+    await bubble.waitFor();
+    await bubble.scrollIntoViewIfNeeded();
+    const menu = page.getByRole('menu', { name: 'Message actions' });
+    const box = (await bubble.boundingBox())!;
+    await page.mouse.move(box.x + 10, box.y + 10);
+
+    // A tap is not a hold.
+    await page.mouse.down();
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    assert.equal(await menu.count(), 0);
+
+    // A ~500 ms hold opens the menu, with Reply focused.
+    await page.mouse.down();
+    await menu.waitFor({ timeout: 2000 });
+    await page.mouse.up();
+    assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Reply', 'Copy']);
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Reply');
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.count(), 0);
+    assert.equal(await page.evaluate(() => document.activeElement?.closest('[data-event-id]')?.getAttribute('data-event-id')), 'hist_39');
+
+    // Keyboard: Shift+F10 on the focused bubble, then Reply shows the chain over the blur and focuses the composer.
+    await page.keyboard.press('Shift+F10');
+    await menu.getByRole('menuitem', { name: 'Reply' }).click();
+    const chain = page.getByRole('list', { name: 'Reply thread' });
+    await chain.getByText('Historical message 39', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'kh-input');
+    await page.keyboard.type('Threaded answer');
+    await page.keyboard.press('Enter');
+    await chain.waitFor({ state: 'detached' });
+
+    // Sent: inline in the main flow, quoting its parent, which now counts one reply.
+    const replyRow = page.locator('.timeline__list > [data-event-id]', { hasText: 'Threaded answer' });
+    await replyRow.locator('.kh-quote', { hasText: 'Historical message 39' }).waitFor();
+    assert.equal(await page.locator('.timeline__list > [data-event-id="hist_39"] .kh-replies').textContent(), '1 Reply');
+
+    // Tapping the count opens the whole thread.
+    await page.locator('.timeline__list > [data-event-id="hist_39"] .kh-replies').click();
+    assert.equal(await chain.locator(':scope > [data-event-id]').count(), 2);
+    await page.getByRole('button', { name: 'Cancel reply' }).last().click();
+    assert.equal(await chain.count(), 0);
+    await page.close();
+
+    // Touch (iOS Safari-like): a held finger opens the menu with no text selection.
+    const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    await mobile.goto(url);
+    const touchBubble = mobile.locator('[data-event-id="hist_39"] .kh-b').first();
+    await touchBubble.waitFor();
+    await touchBubble.scrollIntoViewIfNeeded();
+    assert.equal(await touchBubble.evaluate(element => getComputedStyle(element).userSelect), 'none');
+    const touchBox = (await touchBubble.boundingBox())!;
+    const cdp = await mobile.context().newCDPSession(mobile);
+    const point = { x: touchBox.x + 10, y: touchBox.y + touchBox.height / 2 };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+    await mobile.getByRole('menu', { name: 'Message actions' }).waitFor({ timeout: 2000 });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal(await mobile.evaluate(() => window.getSelection()?.toString() ?? ''), '');
+    await mobile.close();
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});

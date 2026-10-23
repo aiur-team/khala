@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeContentLimits, type MessageContent, type ParticipantView } from '@khala/contracts/messaging/index';
-import { encodeMessageContent, projectWireEvent } from './message-wire';
+import { encodeMessageContent, projectWireEvent, stripReplyFallback } from './message-wire';
 
 const decodedLimits = decodeContentLimits({ maxBodyBytes: 32768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
 if (!decodedLimits.ok) throw new Error('invalid test limits');
@@ -69,5 +69,33 @@ describe('shared message wire content', () => {
     });
     expect(projectWireEvent({ ...base, content: { msgtype: 'm.image', body: 'hello' } }, limits)).toBeNull();
     expect(projectWireEvent({ ...base, content: { msgtype: 'm.text', body: 1 } }, limits)).toBeNull();
+  });
+});
+
+describe('rich replies', () => {
+  const relates = { 'm.relates_to': { 'm.in_reply_to': { event_id: '$parent' } } };
+
+  it('sends m.in_reply_to with no body fallback and reads it back', () => {
+    const content: MessageContent = { v: 1, kind: 'text', body: 'yes', inReplyTo: '$parent' as never };
+    const wire = encodeMessageContent(content);
+    expect(wire).toEqual({ msgtype: 'm.text', body: 'yes', ...relates });
+    expect(projectWireEvent({ ...base, content: wire }, limits)).toMatchObject({ kind: 'message', content });
+  });
+
+  it('strips a legacy fallback quote from a received reply', () => {
+    const wire = { msgtype: 'm.text', body: '> <@maya:example.org> ship it?\n> today\n\nyes, shipping', ...relates };
+    expect(projectWireEvent({ ...base, content: wire }, limits))
+      .toMatchObject({ content: { v: 1, kind: 'text', body: 'yes, shipping', inReplyTo: '$parent' } });
+  });
+
+  it('keeps quotes that are not a fallback, and ignores a malformed parent', () => {
+    expect(stripReplyFallback('> quoted only')).toBe('> quoted only');
+    // Khala sends no fallback, so a reply that opens with its own quote keeps it.
+    expect(stripReplyFallback('> what you said\n\nmy answer')).toBe('> what you said\n\nmy answer');
+    expect(stripReplyFallback('> a\n\n')).toBe('> a\n\n');
+    expect(stripReplyFallback('plain')).toBe('plain');
+    const bad = { msgtype: 'm.text', body: 'hi', 'm.relates_to': { 'm.in_reply_to': { event_id: 7 } } };
+    expect(projectWireEvent({ ...base, content: bad }, limits)).toMatchObject({ content: { v: 1, kind: 'text', body: 'hi' } });
+    expect(projectWireEvent({ ...base, content: bad }, limits)).not.toHaveProperty('content.inReplyTo');
   });
 });

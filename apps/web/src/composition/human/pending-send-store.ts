@@ -20,7 +20,9 @@ function isPendingSend(value: unknown): value is PendingSend {
     && typeof content === 'object' && content !== null && !Array.isArray(content)
     && (content as Record<string, unknown>).v === 1
     && (content as Record<string, unknown>).kind === 'text'
-    && typeof (content as Record<string, unknown>).body === 'string';
+    && typeof (content as Record<string, unknown>).body === 'string'
+    && ((content as Record<string, unknown>).inReplyTo === undefined
+      || (typeof (content as Record<string, unknown>).inReplyTo === 'string' && ((content as Record<string, unknown>).inReplyTo as string).length > 0));
 }
 
 /** One tab's unresolved sends, scoped to the signed-in owner, exact device and channel. */

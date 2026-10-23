@@ -1,4 +1,4 @@
-import type { AnimationEventHandler, CSSProperties, ReactNode } from 'react';
+import type { AnimationEventHandler, CSSProperties, HTMLAttributes, ReactNode } from 'react';
 import { clockLabel, type TimeOptions } from '../khala/format-time';
 import { humanColorStyle, type ResolvedHumanColor } from '../khala/human-colors';
 import { KindMark } from '../khala/KindMark';
@@ -44,6 +44,10 @@ type ThreadRowProps = Readonly<{
   failed?: boolean;
   /** A `.kh-retry` button; after the column in the DOM, so `row-reverse` places it left of the bubble. */
   retry?: ReactNode;
+  /** The quoted reply parent, drawn above the bubble with its connector. */
+  quote?: ReactNode;
+  /** Press-and-hold and keyboard handlers for the bubble's action menu. */
+  bubble?: HTMLAttributes<HTMLDivElement> | undefined;
   /** App-owned controls under the bubble (review slot, evidence). */
   after?: ReactNode;
   className?: string;
@@ -73,7 +77,7 @@ function rowStyle(sender: ThreadRowProps['sender'], agentOwner: ThreadRowProps['
 }
 
 function ThreadRow({ id, run, sender, agentOwner, humanColor, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
-  retry, after, className = '', children }: ThreadRowProps) {
+  retry, quote, bubble, after, className = '', children }: ThreadRowProps) {
   const position = run.first ? 'first' : run.mid ? 'mid' : 'last-of';
   const classes = ['kh-row', sender === 'me' ? 'me' : sender === 'human' ? 'human' : '',
     sender === 'agent' && agentOwner ? `agent ${agentOwner.yours ? 'yours' : 'theirs'}` : '', position,
@@ -89,7 +93,8 @@ function ThreadRow({ id, run, sender, agentOwner, humanColor, time, timeOptions,
         {name.tag ? <KindMark kind={name.tag} /> : null}
         {time ? <time dateTime={time} title={time}>{clockLabel(new Date(time), timeOptions)}</time> : null}
       </button> : null}
-      <div className="kh-b">{children}</div>
+      {quote}
+      <div className="kh-b" {...bubble}>{children}</div>
       {after}
     </div>
     {retry}

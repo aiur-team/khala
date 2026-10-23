@@ -24,7 +24,8 @@ export type EventRef = Readonly<{
 }>;
 
 /** Authored content. Rename metadata remains inside the encrypted room event. */
-export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
+/** `inReplyTo` is the Matrix rich-reply parent (`m.relates_to.m.in_reply_to`). */
+export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string; inReplyTo?: EventId }>;
 export type AgentRenameContent = Readonly<{ v: 1; kind: 'agent_rename'; agentParticipantId: ParticipantId; body: string }>;
 /** Encrypted current-name bootstrap; it is metadata, never a second rename. */
 export type AgentNameSnapshotContent = Readonly<{ v: 1; kind: 'agent_name_snapshot'; agentParticipantId: ParticipantId; body: string; sourceEventId: EventId | null }>;
@@ -110,7 +111,8 @@ export function isContentDigest(value: string): boolean {
 
 /**
  * Version 1 content encoding: UTF-8 of the compact JSON array
- * `["khala.message.v1","text",body]`. Positional, so no key ordering applies; the
+ * `["khala.message.v1","text",body]`, with the reply parent appended as a fourth element
+ * only when `inReplyTo` is set. Positional, so no key ordering applies; the
  * body is never Unicode- or newline-normalised. String escaping is exactly
  * ECMAScript `JSON.stringify`: `"` and `\` are backslash-escaped; U+0008, U+0009,
  * U+000A, U+000C and U+000D use `\b \t \n \f \r`; every other U+0000-U+001F uses
@@ -137,7 +139,11 @@ export function encodeMessageContent(content: MessageContent): Uint8Array {
   if (content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
   const body = decodeWith(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
   if (!body.ok) throw new TypeError(`invalid message content: ${body.error.path} ${body.error.code}`);
-  return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
+  if (content.inReplyTo === undefined) return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
+  // Appended only for replies, so every earlier digest is unchanged.
+  const parent = decodeWith(() => readId<'EventId'>(content.inReplyTo, 'inReplyTo'));
+  if (!parent.ok) throw new TypeError('invalid reply parent');
+  return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body, content.inReplyTo]));
 }
 
 /**
@@ -223,11 +229,13 @@ export function readMessageContent(input: unknown, path: string, limits: Content
       ? { v, kind, agentParticipantId, body: name.name, sourceEventId: nullable(r.field('sourceEventId'), value => readId<'EventId'>(value, r.at('sourceEventId'))) }
       : { v, kind, agentParticipantId, body: name.name };
   }
-  const r = object(input, path, ['v', 'kind', 'body']);
+  const reply = typeof input === 'object' && input !== null && Object.hasOwn(input, 'inReplyTo');
+  const r = object(input, path, reply ? ['v', 'kind', 'body', 'inReplyTo'] : ['v', 'kind', 'body']);
   return {
     v: version(r.field('v'), r.at('v')),
     kind: literal(r.field('kind'), r.at('kind'), ['text']),
     body: text(r.field('body'), r.at('body'), limits.maxBodyBytes),
+    ...(reply ? { inReplyTo: readId<'EventId'>(r.field('inReplyTo'), r.at('inReplyTo')) } : {}),
   };
 }
 

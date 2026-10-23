@@ -37,7 +37,7 @@ and emoji sequences need them.
 
 `EventRef.contentDigest` is `sha256:` plus 64 lowercase hex characters, taken over
 `encodeMessageContent`: the UTF-8 encoding of the compact JSON array
-`["khala.message.v1","text",body]`. The body is never Unicode- or newline-normalised.
+`["khala.message.v1","text",body]` (a reply appends its `inReplyTo` parent event ID). The body is never Unicode- or newline-normalised.
 Adapters hash the bytes that will be released, not rendered HTML or markdown, and not an
 encrypted blob. An edit produces a new event with a new reference. `decodeTimelineItem`,
 `decodeTimelinePage` and `decodeChannelSnapshot` recompute every digest, so a reference paired
