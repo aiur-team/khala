@@ -41,3 +41,15 @@ describe('createLongPress', () => {
     expect(open).toHaveBeenCalledOnce();
   });
 });
+
+describe('the swallowed click', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('expires, so a later keyboard click inside the bubble still works', () => {
+    const press = createLongPress();
+    press.down(0, 0, () => {});
+    vi.advanceTimersByTime(LONG_PRESS_MS + 3000);
+    expect(press.consumeClick()).toBe(false);
+  });
+});

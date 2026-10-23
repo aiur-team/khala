@@ -25,3 +25,8 @@ it('prefixes replies with their parent for khala_read, leaving other messages an
   expect(far!.body).toBe('↪ reply to an earlier message\nAnd?');
   expect(Object.keys(near!).sort()).toEqual(Object.keys(parent).sort());
 });
+it('drops a legacy Matrix fallback quote from a reply body', () => {
+  const body = '> <@maya:s> Ship it?\n\nYes';
+  const entry = toInboxEntry({ ...message, eventId: '$2', body, content: { body, 'm.relates_to': { 'm.in_reply_to': { event_id: '$1' } } } });
+  expect(withReplyContext([toInboxEntry(message, 'Maya'), entry])[1]!.body).toBe('↪ reply to Maya: Hello\nYes');
+});

@@ -5,6 +5,8 @@
 export const LONG_PRESS_MS = 500;
 /** Movement (px) past which a press is a scroll or drag, not a hold. */
 const SLOP_PX = 10;
+/** How long after a hold its own click may still arrive. */
+const CLICK_WINDOW_MS = 3000;
 
 type Timers = Readonly<{ set(run: () => void, ms: number): unknown; clear(handle: unknown): void }>;
 
@@ -21,7 +23,8 @@ export type LongPress = Readonly<{
 export function createLongPress(timers: Timers = browserTimers): LongPress {
   let handle: unknown = null;
   let origin = { x: 0, y: 0 };
-  let fired = false;
+  // When the hold fired; its closing click lands within a moment, a later keyboard click never is swallowed.
+  let firedAt = -Infinity;
   const cancel = () => {
     if (handle !== null) timers.clear(handle);
     handle = null;
@@ -29,11 +32,11 @@ export function createLongPress(timers: Timers = browserTimers): LongPress {
   return {
     down(x, y, fire) {
       cancel();
-      fired = false;
+      firedAt = -Infinity;
       origin = { x, y };
       handle = timers.set(() => {
         handle = null;
-        fired = true;
+        firedAt = Date.now();
         fire();
       }, LONG_PRESS_MS);
     },
@@ -42,8 +45,8 @@ export function createLongPress(timers: Timers = browserTimers): LongPress {
     },
     cancel,
     consumeClick() {
-      const was = fired;
-      fired = false;
+      const was = Date.now() - firedAt < CLICK_WINDOW_MS;
+      firedAt = -Infinity;
       return was;
     },
   };

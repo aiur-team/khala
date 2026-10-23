@@ -47,7 +47,7 @@ type ThreadRowProps = Readonly<{
   /** The quoted reply parent, drawn above the bubble with its connector. */
   quote?: ReactNode;
   /** Press-and-hold and keyboard handlers for the bubble's action menu. */
-  bubble?: HTMLAttributes<HTMLDivElement>;
+  bubble?: HTMLAttributes<HTMLDivElement> | undefined;
   /** App-owned controls under the bubble (review slot, evidence). */
   after?: ReactNode;
   className?: string;

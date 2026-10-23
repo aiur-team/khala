@@ -216,7 +216,7 @@ type Identity = Readonly<{
 }>;
 
 type ThreadEntry =
-  | Readonly<{ type: 'message'; key: string; run: RunInput; render: (run: RunPosition) => ReactNode; receipt?: PendingSend['phase'] | 'reconciled' }>
+  | Readonly<{ type: 'message'; key: string; run: RunInput; /** `solo` draws the row in the focus layer: no action handlers, review slot or evidence. */ render: (run: RunPosition, solo?: boolean) => ReactNode; receipt?: PendingSend['phase'] | 'reconciled' }>
   | Readonly<{ type: 'break'; key: string; node: ReactNode }>;
 
 /** A message drawn alone in the focus layer: its own run, name and avatar shown. */
@@ -680,6 +680,8 @@ export function TimelineScreen({
         event.stopPropagation();
       },
       onContextMenu: event => {
+        // A desktop text selection keeps the browser's own menu (copy, search).
+        if (window.getSelection()?.isCollapsed === false) return;
         event.preventDefault();
         press.cancel();
         openMenu(eventId, event.currentTarget);
@@ -773,14 +775,14 @@ export function TimelineScreen({
     entries.push({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
-      render: run => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
+      render: (run, solo = false) => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
         {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.hue, tint: identity.color?.tint } }
           : { humanColor: identity.color })}
         time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
-        bubble={bubbleFor(eventId)}
+        bubble={solo ? undefined : bubbleFor(eventId)}
         quote={isReadableItem(item) && item.content.inReplyTo ? quoteFor(item.content.inReplyTo, eventId) : null}
-        after={<>
+        after={solo ? null : <>
           {replyCount > 0 ? <button type="button" className="kh-replies" onClick={() => setFocus({ mode: 'reply', eventId })}>
             {replyCount} {replyCount === 1 ? 'Reply' : 'Replies'}</button> : null}
           {isReadableItem(item) && renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
@@ -904,7 +906,7 @@ export function TimelineScreen({
           <ol className="kh-thread kh-focus__chain" aria-label={focus.mode === 'menu' ? 'Selected message' : 'Reply thread'}>
             {(focus.mode === 'menu' ? [focus.eventId] : replies.thread(focus.eventId)).map(id => {
               const render = renderById.get(id);
-              return render ? <Fragment key={id}>{render(SOLO_RUN)}</Fragment> : null;
+              return render ? <Fragment key={id}>{render(SOLO_RUN, true)}</Fragment> : null;
             })}
           </ol>
           {focus.mode === 'menu' ? <div className="kh-focus__menu" role="menu" aria-label="Message actions" onKeyDown={onMenuKeyDown}>

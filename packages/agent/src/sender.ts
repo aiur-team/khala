@@ -26,6 +26,7 @@ export function toInboxEntry(message: SessionMessage, displayName?: string | nul
   return entry;
 }
 
+// ponytail: only khala_read output carries reply context; hook-delivered inbox lines show the plain body.
 /** Prefixes each reply with `↪ reply to <author>: <snippet>` from the parent in the same page. Content stays untrusted data. */
 export function withReplyContext(entries: readonly InboxEntry[]): InboxEntry[] {
   const byId = new Map(entries.map(entry => [entry.eventId, entry]));
@@ -35,6 +36,14 @@ export function withReplyContext(entries: readonly InboxEntry[]): InboxEntry[] {
     const parent = byId.get(parentId);
     const line = parent ? parent.body.replace(/\s+/gu, ' ').trim() : '';
     const quoted = parent ? `${parent.senderLabel}: ${line.length > 80 ? `${line.slice(0, 79)}…` : line}` : 'an earlier message';
-    return { ...entry, body: `↪ reply to ${quoted}\n${entry.body}` };
+    return { ...entry, body: `↪ reply to ${quoted}\n${stripReplyFallback(entry.body)}` };
   });
+}
+
+/** Drops a legacy Matrix reply fallback (`> <@sender> …` lines, then a blank line) that non-Khala clients still send. */
+function stripReplyFallback(body: string): string {
+  if (!/^> (\* )?<[@!][^>]+> /u.test(body)) return body;
+  const lines = body.split('\n');
+  const blank = lines.findIndex(line => !line.startsWith('>'));
+  return blank > 0 && lines[blank] === '' && blank + 1 < lines.length ? lines.slice(blank + 1).join('\n') : body;
 }

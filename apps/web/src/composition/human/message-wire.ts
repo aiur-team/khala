@@ -28,8 +28,12 @@ function replyParent(content: Record<string, unknown>): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-/** Drops a legacy reply fallback: leading `> ` lines followed by one blank line. */
+/** A legacy fallback's first line: `> <@user:server> …` (or `> * <@user:server> …` for an emote). */
+const FALLBACK_HEAD = /^> (\* )?<[@!][^>]+> /u;
+
+/** Drops a legacy reply fallback: `> <@sender> …` lines followed by one blank line. A reply that merely starts with a quote keeps it. */
 export function stripReplyFallback(body: string): string {
+  if (!FALLBACK_HEAD.test(body)) return body;
   const lines = body.split('\n');
   let quoted = 0;
   while (quoted < lines.length && lines[quoted]!.startsWith('>')) quoted += 1;

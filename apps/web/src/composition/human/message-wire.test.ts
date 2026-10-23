@@ -90,6 +90,8 @@ describe('rich replies', () => {
 
   it('keeps quotes that are not a fallback, and ignores a malformed parent', () => {
     expect(stripReplyFallback('> quoted only')).toBe('> quoted only');
+    // Khala sends no fallback, so a reply that opens with its own quote keeps it.
+    expect(stripReplyFallback('> what you said\n\nmy answer')).toBe('> what you said\n\nmy answer');
     expect(stripReplyFallback('> a\n\n')).toBe('> a\n\n');
     expect(stripReplyFallback('plain')).toBe('plain');
     const bad = { msgtype: 'm.text', body: 'hi', 'm.relates_to': { 'm.in_reply_to': { event_id: 7 } } };
