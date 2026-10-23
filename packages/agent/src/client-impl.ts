@@ -2,17 +2,17 @@ import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRe
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { applyArchived, applyListeningMode, readModeState } from './mode';
+import { applyArchived, applyListeningMode, delegateChannel, isDelegated, readModeState } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
 import { encodeChannelEvent, foldCoordination, type CoordinationEvent } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
-import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry } from './events/receive';
+import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry, wakesAgent } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
-import { KhalaClientError, type KhalaAgentClient } from './client';
+import { KhalaClientError, type KhalaAgentClient, type ReadFilter } from './client';
 import { readActivity, usageLimited } from './activity';
-import { appendInbox, readCursor, readEntries, unreadCount } from './inbox';
+import { advanceCursor, appendInbox, readCursor, readEntries, unread, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
@@ -51,6 +51,8 @@ const TYPING_CAP_MS = 10 * 60_000;
 const TYPING_STALE_BUSY_MS = 120_000;
 const TYPING_WAKE_GRACE_MS = 10_000;
 
+/** How long a delegated channel stays async to the session after a background agent's wait ends. */
+const DELEGATE_GRACE_MS = 120_000;
 export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaAgentClient {
   const asyncOnly = !adapterFor(options.harness)?.codec;
   const defaultMode: ListeningMode = asyncOnly ? 'async' : 'sync';
@@ -647,6 +649,42 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       void task.then(release, release);
       return task;
   }
+  async function readOne(limit: number, before: string | undefined, channel: string | undefined, filter: ReadFilter | undefined): ReturnType<KhalaAgentClient['read']> {
+    const { session, credentials, attempt } = requireSession(channel);
+    try {
+      const you = ownName(session);
+      // Folding pages back through history, so it runs only when the caller asks for state (or filters by kind).
+      const state = filter?.include?.includes('state') || filter?.kinds
+        ? await foldedState(session, credentials.roomId, attempt.files?.dir) : {};
+      // Hosted only: who is around, who has read your messages, and a read receipt for what you just read.
+      const presence = (messages: InboxEntry[]) => {
+        const newest = messages.at(-1);
+        if (before === undefined && newest && session.markRead) void session.markRead(credentials.roomId, newest.eventId).catch(() => {});
+        if (before === undefined && newest && newest.sender !== session.userId && session.setTyping) {
+          attempt.typingSince = now().getTime();
+          void session.setTyping(credentials.roomId, true).catch(() => {});
+        }
+        return { ...(you !== undefined ? { you } : {}), ...(session.members ? { members: session.members(credentials.roomId) } : {}),
+          messages: withReplyContext(messages).map(entry => {
+            const seenBy = entry.sender === session.userId ? session.seenBy?.(credentials.roomId, entry.eventId) ?? [] : [];
+            return seenBy.length ? { ...entry, seenBy } : entry;
+          }) };
+      };
+      if (filter?.kinds || filter?.mentionsOnly) {
+        const matches = (entry: InboxEntry) => (!filter.kinds || filter.kinds.includes(entry.kind === 'message' ? 'message' : entry.eventKind ?? 'event'))
+          && (!filter.mentionsOnly || entry.mention === true || mentions(entry, you));
+        const found = await scan(session, credentials.roomId, before, entries => entries.filter(matches).length > limit);
+        const selected = found.entries.filter(matches);
+        const messages = selected.slice(-limit);
+        const nextBefore = selected.length > limit ? messages[0]!.eventId : found.nextBefore;
+        return { ...presence(messages), ...(nextBefore !== undefined ? { nextBefore } : {}), ...state };
+      }
+      const page = await session.history(credentials.roomId, limit, before);
+      const acceptKey = createEventKeyFilter();
+      const messages = page.messages.filter(m => m.roomId === credentials.roomId).map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null);
+      return { ...presence(messages), ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
+    } catch (error) { throw safeError(error); }
+  }
   return {
     join,
     resume() {
@@ -694,7 +732,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           state: attempt?.status.state ?? 'disconnected', ...(attempt?.status.detail ? { detail: attempt.status.detail } : {}),
           ...(you !== undefined ? { you } : {}), ...(session ? { agentUserId: session.userId } : {}),
           unread: (await unreadCount(ref.files.dir)).total, listeningMode: modeState.mode,
-          ...(modeState.archived ? { archived: true } : {}),
+          ...(modeState.archived ? { archived: true } : {}), ...(await isDelegated(ref.files) ? { delegated: true } : {}),
           ...(session?.members ? { members: session.members(ref.roomId) } : {}) };
       }));
       if (channel === undefined) {
@@ -715,40 +753,47 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     },
     async read(limit, before, channel, filter) {
       await initialize();
-      const { session, credentials, attempt } = requireSession(channel);
-      try {
-        const you = ownName(session);
-        // Folding pages back through history, so it runs only when the caller asks for state (or filters by kind).
-        const state = filter?.include?.includes('state') || filter?.kinds
-          ? await foldedState(session, credentials.roomId, attempt.files?.dir) : {};
-        // Hosted only: who is around, who has read your messages, and a read receipt for what you just read.
-        const presence = (messages: InboxEntry[]) => {
-          const newest = messages.at(-1);
-          if (before === undefined && newest && session.markRead) void session.markRead(credentials.roomId, newest.eventId).catch(() => {});
-          if (before === undefined && newest && newest.sender !== session.userId && session.setTyping) {
-            attempt.typingSince = now().getTime();
-            void session.setTyping(credentials.roomId, true).catch(() => {});
+      const { wait, ...rest } = filter ?? {};
+      const options = Object.keys(rest).length ? rest : undefined;
+      if (wait !== undefined) {
+        const { session, attempt } = requireSession(channel);
+        const files = attempt.files;
+        if (!files) throw new KhalaClientError('not_connected');
+        const deadline = Date.now() + wait * 1000;
+        let consumed = 0;
+        try {
+          await delegateChannel(files, wait * 1000 + DELEGATE_GRACE_MS);
+          for (;;) {
+            const state = await readModeState(files), pending = await unread(files);
+            const mode = state.archived ? 'async' : state.mode;
+            if (mode !== 'async' && pending.entries.some(entry => wakesAgent(entry, mode, ownName(session)))) {
+              if (await advanceCursor(files, pending.cursor, pending.entries, true) !== 'conflict') { consumed = pending.entries.length; break; }
+            } else if (!current(attempt)) throw new KhalaClientError('not_connected');
+            const left = deadline - Date.now();
+            if (left <= 0) { const you = ownName(session); return { ...(you !== undefined ? { you } : {}), messages: [] }; }
+            await new Promise(resolve => setTimeout(resolve, Math.min(1000, left)));
           }
-          return { ...(you !== undefined ? { you } : {}), ...(session.members ? { members: session.members(credentials.roomId) } : {}),
-            messages: withReplyContext(messages).map(entry => {
-              const seenBy = entry.sender === session.userId ? session.seenBy?.(credentials.roomId, entry.eventId) ?? [] : [];
-              return seenBy.length ? { ...entry, seenBy } : entry;
-            }) };
-        };
-        if (filter?.kinds || filter?.mentionsOnly) {
-          const matches = (entry: InboxEntry) => (!filter.kinds || filter.kinds.includes(entry.kind === 'message' ? 'message' : entry.eventKind ?? 'event'))
-            && (!filter.mentionsOnly || entry.mention === true || mentions(entry, you));
-          const found = await scan(session, credentials.roomId, before, entries => entries.filter(matches).length > limit);
-          const selected = found.entries.filter(matches);
-          const messages = selected.slice(-limit);
-          const nextBefore = selected.length > limit ? messages[0]!.eventId : found.nextBefore;
-          return { ...presence(messages), ...(nextBefore !== undefined ? { nextBefore } : {}), ...state };
-        }
-        const page = await session.history(credentials.roomId, limit, before);
-        const acceptKey = createEventKeyFilter();
-        const messages = page.messages.filter(m => m.roomId === credentials.roomId).map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null);
-        return { ...presence(messages), ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
-      } catch (error) { throw safeError(error); }
+        } catch (error) { throw safeError(error); }
+        // Show at least everything just consumed, so nothing is marked delivered unseen (up to the page cap).
+        return readOne(Math.min(100, Math.max(limit, consumed)), undefined, channel, options);
+      }
+      // Without a channel, read every joined channel: the constant nudge says only "Call khala_read".
+      if (channel === undefined && before === undefined && stored.size && stored.size + pendingAttempts().length > 1) {
+        const sections = await Promise.all(refs().map(async ref => {
+          const name = channels.get(ref.key)?.status.channelName ?? ref.channelName ?? ref.roomId;
+          // A background agent owns a delegated channel; the main session leaves it alone.
+          if (await isDelegated(ref.files)) return { section: { channel: name, roomId: ref.roomId, delegated: true as const }, messages: [] };
+          try {
+            const { messages, ...section } = await readOne(limit, undefined, ref.roomId, options);
+            return { section: { channel: name, roomId: ref.roomId, ...section }, messages: messages.map(entry => ({ ...entry, channel: name })) };
+          } catch (error) {
+            return { section: { channel: name, roomId: ref.roomId, error: error instanceof KhalaClientError ? error.code : 'internal_error' }, messages: [] };
+          }
+        }));
+        return { messages: sections.flatMap(item => item.messages).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)),
+          channels: sections.map(item => item.section) };
+      }
+      return readOne(limit, before, channel, options);
     },
     async send(text, channel) {
       await initialize();
@@ -809,7 +854,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         await statusWrites;
         await ensureStateDir(ref.files.dir);
         if (ref.legacy) {
-          for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'fold.json']) {
+          for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'fold.json', 'delegate.json']) {
             await removeStateFile(ref.files.dir, name);
           }
         } else {

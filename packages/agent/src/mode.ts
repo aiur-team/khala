@@ -1,4 +1,5 @@
 import { decodeListeningMode, DEFAULT_LISTENING_MODE, type ListeningMode } from '@khala/contracts/m1/listening-mode';
+import path from 'node:path';
 import { advanceCursor, unread } from './inbox';
 import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
@@ -9,10 +10,20 @@ export async function readModeState(files: SessionFiles): Promise<{ mode: Listen
   const decoded = decodeListeningMode(record.mode);
   return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true };
 }
-/** The effective mode: an archived channel behaves as `async`, so nothing wakes the agent or delivers frames. */
+const delegateFile = (files: SessionFiles) => path.join(files.dir, 'delegate.json');
+/** A background agent waiting on this channel (khala_read wait) holds a lease until `ms` from now. */
+export async function delegateChannel(files: SessionFiles, ms: number): Promise<void> {
+  await writeJsonAtomic(delegateFile(files), { until: Date.now() + ms });
+}
+export async function isDelegated(files: SessionFiles): Promise<boolean> {
+  const lease = await readJson<{ until?: unknown }>(delegateFile(files)).catch(() => null);
+  return typeof lease?.until === 'number' && lease.until > Date.now();
+}
+/** The effective mode for the session's own hooks and wakes: an archived channel, or one a background
+ * agent owns (its live lease), behaves as `async`, so nothing wakes the session or delivers frames. */
 export async function readListeningMode(files: SessionFiles): Promise<ListeningMode> {
   const state = await readModeState(files);
-  return state.archived ? 'async' : state.mode;
+  return state.archived || await isDelegated(files) ? 'async' : state.mode;
 }
 /** Mirrors the owner's archive flag; the stored mode is kept for unarchive. Like leaving `async`, unarchiving skips the backlog. */
 export async function applyArchived(files: SessionFiles, archived: boolean): Promise<void> {

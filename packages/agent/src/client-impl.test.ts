@@ -15,7 +15,7 @@ import { KhalaClientError } from './client';
 import { createKhalaAgentClient } from './client-impl';
 import { migrateLegacy } from './channels';
 import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './matrix/session';
-import { appendInbox } from './inbox';
+import { appendInbox, unread } from './inbox';
 import { readListeningMode } from './mode';
 import { channelFiles, filesForDir, readJoinFile, writeJoinFile, joinFilePath, stateKey, ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
 import { toInboxEntry } from './sender';
@@ -130,7 +130,7 @@ it('preserves the connected channel and backlog while another link is pending', 
     expect.objectContaining({ channel: nextLink, link: nextLink, state: 'joining' }),
   ]));
   await expect(client.send('for pending B')).rejects.toMatchObject({ code: 'channel_required' });
-  await expect(client.read(20)).rejects.toMatchObject({ code: 'channel_required' });
+  expect((await client.read(20)).channels).toEqual([expect.objectContaining({ channel: 'Release room', roomId: credentials.roomId })]);
   await expect(client.sendChannelEvent({ v: 1, kind: 'test', summary: 'B', body: 'B' })).rejects.toMatchObject({ code: 'channel_required' });
   expect(session.send).not.toHaveBeenCalled();
   expect(session.sendChannelEvent).not.toHaveBeenCalled();
@@ -821,7 +821,7 @@ it('joins different channels concurrently, retains intake, and requires explicit
     expect.objectContaining({ channel: 'B', state: 'connected', you: 'owner-Codex-1', unread: 0 }),
   ]);
   const channels = [{ channel: 'A', roomId: '!A:local' }, { channel: 'B', roomId: '!B:local' }];
-  for (const operation of [() => client.send('wrong'), () => client.read(20), () => client.sendChannelEvent({ v: 1, kind: 'test', summary: 'test', body: 'test' })]) {
+  for (const operation of [() => client.send('wrong'), () => client.sendChannelEvent({ v: 1, kind: 'test', summary: 'test', body: 'test' })]) {
     await expect(operation()).rejects.toMatchObject({ code: 'channel_required', extra: { channels } });
   }
   expect(f.controls[0]!.session.send).not.toHaveBeenCalled();
@@ -829,6 +829,52 @@ it('joins different channels concurrently, retains intake, and requires explicit
   await client.send('routed', '#b');
   expect(f.controls[1]!.session.send).toHaveBeenCalledExactlyOnceWith('!B:local', 'routed');
   expect((await client.status('!A:local')).channelName).toBe('A');
+});
+it('reads every joined channel when no channel is given, labelling each message', async () => {
+  const f = await multiClient();
+  await Promise.all([f.join(0), f.join(1)]);
+  f.controls.forEach((control, index) => {
+    control.session.history = vi.fn(async () => ({ messages: [{ ...message(`$m${index}`), roomId: control.creds.roomId, ts: now().getTime() - index * 1000 }] }));
+  });
+  const read = await client.read(10);
+  expect(read.messages.map(entry => [entry.eventId, entry.channel])).toEqual([['$m1', 'B'], ['$m0', 'A']]);
+  expect(read.channels).toEqual([
+    expect.objectContaining({ channel: 'A', roomId: '!A:local', you: 'owner-Codex-0' }),
+    expect.objectContaining({ channel: 'B', roomId: '!B:local', you: 'owner-Codex-1' }),
+  ]);
+  await expect(client.read(10, '$m0')).rejects.toMatchObject({ code: 'channel_required' });
+});
+it('wait returns when its channel has news, consumes it, and delegates the channel away from hooks', async () => {
+  const f = await multiClient();
+  await Promise.all([f.join(0), f.join(1)]);
+  const b = channelFiles(f.files, '!B:local');
+  const waiting = client.read(10, undefined, 'B', { wait: 5 });
+  await vi.waitFor(async () => expect(await readListeningMode(b)).toBe('async'));
+  f.controls[0]!.receive({ ...message('$for-A'), roomId: '!A:local' });
+  f.controls[1]!.receive({ ...message('$for-B'), roomId: '!B:local' });
+  await expect(waiting).resolves.toMatchObject({ you: 'owner-Codex-1' });
+  expect((await unread(b)).entries).toEqual([]);
+  expect((await unread(channelFiles(f.files, '!A:local'))).entries.map(entry => entry.eventId)).toEqual(['$for-A']);
+  expect((await client.status()).channels).toEqual([
+    expect.objectContaining({ channel: 'A', listeningMode: 'sync' }),
+    expect.objectContaining({ channel: 'B', listeningMode: 'sync', delegated: true }),
+  ]);
+  expect(await readListeningMode(channelFiles(f.files, '!A:local'))).toBe('sync');
+  f.controls[1]!.session.history = vi.fn(async () => ({ messages: [] }));
+  const merged = await client.read(10);
+  expect(merged.channels).toEqual([expect.objectContaining({ channel: 'A' }), { channel: 'B', roomId: '!B:local', delegated: true }]);
+  expect(f.controls[1]!.session.history).not.toHaveBeenCalled();
+});
+it('wait times out empty and never wakes for an async channel', async () => {
+  const f = await multiClient();
+  await Promise.all([f.join(0), f.join(1)]);
+  const a = channelFiles(f.files, '!A:local');
+  await fs.writeFile(a.mode, JSON.stringify({ mode: 'async' }));
+  f.controls[0]!.receive({ ...message('$quiet'), roomId: '!A:local' });
+  await vi.waitFor(async () => expect((await unread(a)).entries).toHaveLength(1));
+  expect(await client.read(10, undefined, 'A', { wait: 1 })).toEqual({ you: 'owner-Codex-0', messages: [] });
+  expect((await unread(a)).entries).toHaveLength(1);
+  await expect(client.read(10, undefined, undefined, { wait: 1 })).rejects.toMatchObject({ code: 'channel_required' });
 });
 
 it('leaves only the selected channel and rejects stale callbacks and credentials', async () => {

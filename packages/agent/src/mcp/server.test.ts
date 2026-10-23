@@ -84,6 +84,18 @@ describe('harvested MCP transport', () => {
   it('handles malformed JSON, invalid ids and unknown methods', async () => {
     expect(await exchange(['bad\n', ...lines({ jsonrpc: '2.0', id: {}, method: 'ping' }, request(3, 'unknown'))])).toMatchObject([{ error: { code: -32700 } }, { error: { code: -32600 } }, { id: 3, error: { code: -32601 } }]);
   });
+  it('answers other calls while a wait call is still blocked', async () => {
+    let release = () => {};
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const seen = vi.fn<McpTool['call']>(async (args, context) => {
+      if (args.wait !== undefined) await blocked;
+      return success(context.id, {});
+    });
+    const responses: { id: number }[] = [];
+    const output = new Writable({ write(chunk, _encoding, done) { responses.push(JSON.parse(String(chunk))); if (responses.length === 1) release(); done(); } });
+    await runMcpServer({ input: Readable.from(lines(call(60, { wait: 50 }), call(61))), output, tools: createToolRegistry([probe(seen)]) });
+    expect(responses.map(response => response.id)).toEqual([61, 60]);
+  });
   it('waits for each response write before processing pipelined calls', async () => {
     const seen = vi.fn(async (_args, context) => success(context.id, {}));
     const output = new BlockingWritable();
