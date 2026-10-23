@@ -74,7 +74,8 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       },
       async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
       async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
-      async leave(channel) { await initialize(); return client.leave(channel); },
+      async leave(channel, reason) { await initialize(); return reason === undefined ? client.leave(channel) : client.leave(channel, reason); },
+      async setMode(mode, input, channel) { await initialize(); return client.setMode(mode, input, channel); },
       async close() {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {

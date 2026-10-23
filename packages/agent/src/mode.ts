@@ -39,10 +39,17 @@ async function skipBacklog(files: SessionFiles): Promise<void> {
   }
   throw new StateError('storage_failed');
 }
+/** Attention order for agent self-changes: a `self` change may only move down this scale. A future
+ * lower rung (the planned `mute`) gets its own number here; the Record type forces it when the mode set grows. */
+export const ATTENTION: Readonly<Record<ListeningMode, number>> = { async: 0, sync: 1, steer: 2 };
+/** An agent change records `eventTs` (its own time) so a replayed older owner command cannot undo it.
+ * Leaving `async` skips the queued backlog unless `keepBacklog` is set. */
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
-  meta: { changedBy: 'owner'; eventId: string; eventTs?: number; pendingPublish?: true }, now: () => Date = () => new Date()) {
+  meta: ({ changedBy: 'owner'; eventId: string } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
+  now: () => Date = () => new Date()) {
+  const { keepBacklog, ...record } = meta;
   const { mode: previous, archived } = await readModeState(files);
-  if (previous === 'async' && next !== 'async') await skipBacklog(files);
-  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...meta, updatedAt: now().toISOString() });
+  if (previous === 'async' && next !== 'async' && !keepBacklog) await skipBacklog(files);
+  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...record, updatedAt: now().toISOString() });
   return { previous, next };
 }

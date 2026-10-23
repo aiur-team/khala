@@ -110,7 +110,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
-        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
+        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_set_mode', 'khala_event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

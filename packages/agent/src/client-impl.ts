@@ -2,7 +2,7 @@ import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRe
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { applyArchived, applyListeningMode, delegateChannel, isDelegated, readModeState } from './mode';
+import { ATTENTION, applyArchived, applyListeningMode, delegateChannel, isDelegated, readModeState } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
 import { encodeChannelEvent, foldCoordination, type CoordinationEvent } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
@@ -324,6 +324,16 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       clearTimeout(timer);
       attempt.controller.signal.removeEventListener('abort', abort);
     }
+  }
+  /** A visible, best-effort khala event about the agent's own change, so the owner always sees it. */
+  async function postNotice(session: ChannelSession, roomId: string, summary: string): Promise<boolean> {
+    const encoded = encodeChannelEvent({ kind: 'member', status: 'info', source: { system: 'khala-agent' },
+      summary: [...summary].length > 200 ? [...summary].slice(0, 199).join('') + '…' : summary });
+    if (!encoded.ok) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 5000); });
+    try { return await Promise.race([session.sendChannelEvent(roomId, encoded.value).then(() => true, () => false), timeout]); }
+    finally { clearTimeout(timer); }
   }
   async function background(attempt: Attempt): Promise<void> {
     const { signal } = attempt.controller;
@@ -840,12 +850,49 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         throw new KhalaClientError('send_failed');
       }
     },
-    async leave(channel) {
+    async setMode(mode, input, channel) {
+      await initialize();
+      const { session, credentials, attempt } = requireSession(channel);
+      const files = attempt.files;
+      if (!files) throw new KhalaClientError('not_connected');
+      const refuse = (reason: string) => new KhalaClientError('mode_refused', undefined, { reason });
+      const run = attempt.appends.then(async (): Promise<{ channel: string; previous: ListeningMode; mode: ListeningMode; changed?: true }> => {
+        if (!current(attempt)) throw new KhalaClientError('not_connected');
+        const { mode: previous, archived } = await readModeState(files);
+        // The owner's archive wins; an async-only harness cannot listen any other way.
+        if (archived) throw refuse('archived');
+        if (asyncOnly && mode !== 'async') throw refuse('async_only');
+        if (input.trigger === 'self' && ATTENTION[mode] > ATTENTION[previous]) throw refuse('raise_requires_owner_request');
+        const name = attempt.status.channelName ?? credentials.roomId;
+        if (mode === previous) return { channel: name, previous, mode };
+        if (!await publishMode(attempt, session, credentials.roomId, mode)) {
+          // A timed-out publish may still land; restore the previous member state so the roster matches.
+          void publishMode(attempt, session, credentials.roomId, previous);
+          throw new KhalaClientError('send_failed');
+        }
+        // Keep the last owner command's id and time: replays of it or older commands stay ignored, newer ones apply.
+        const owner = await readStateFile<{ eventId?: string; eventTs?: number }>(files.dir, 'mode.json');
+        await applyListeningMode(files, mode, { changedBy: 'agent', reason: input.reason,
+          ...(owner?.eventId ? { eventId: owner.eventId } : {}), ...(owner?.eventTs !== undefined ? { eventTs: owner.eventTs } : {}),
+          ...(input.keepBacklog ? { keepBacklog: true } : {}) }, now);
+        return { channel: name, previous, mode, changed: true };
+      });
+      attempt.appends = run.then(() => {}, () => {});
+      const { changed, ...result } = await run;
+      if (!changed) return result;
+      // Outside the intake chain, so a slow notice never stalls delivery.
+      const posted = await postNotice(session, credentials.roomId, `${ownName(session) ?? session.userId} switched to ${mode}: ${input.reason}`);
+      return { ...result, ...(posted ? {} : { notice: 'failed' as const }) };
+    },
+    async leave(channel, reason) {
       await initialize();
       const ref = select(channel);
       const leaving = (roomChanges.get(ref.key) ?? Promise.resolve()).catch(() => {}).then(async () => {
         if (!stored.has(ref.key)) throw new KhalaClientError('channel_unknown', undefined, { channels: refs().map(item => ({ channel: item.channelName ?? item.roomId, roomId: item.roomId })) });
         const attempt = channels.get(ref.key);
+        if (reason !== undefined && attempt?.joined && attempt.session && current(attempt)) {
+          await postNotice(attempt.session, ref.roomId, `${ownName(attempt.session) ?? attempt.session.userId} left: ${reason}`);
+        }
         if (attempt) {
           await cancel(attempt);
           await setStatus(attempt, 'disconnected', 'left');

@@ -638,6 +638,60 @@ it('goes quiet while its owner archives the channel and listens again on unarchi
   await vi.waitFor(async () => expect((await client.status()).archived).toBe(true));
 });
 
+describe('agent-initiated listening mode', () => {
+  const notices = () => vi.mocked(session.sendChannelEvent).mock.calls.map(call => (call[1] as { summary: string }).summary);
+  it('applies an owner request in any direction, publishes member state and posts a visible event', async () => {
+    vi.mocked(session.displayName).mockReturnValue('Maker-PC');
+    await connected();
+    expect(await client.setMode('steer', { trigger: 'owner_request', reason: 'owner asked' })).toEqual({ channel: 'Release room', previous: 'sync', mode: 'steer' });
+    expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'steer', expect.any(AbortSignal));
+    expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'steer', changedBy: 'agent', reason: 'owner asked', updatedAt: now().toISOString() });
+    await client.setMode('async', { trigger: 'owner_request', reason: 'switch to async' });
+    expect(notices()).toEqual(['Maker-PC switched to steer: owner asked', 'Maker-PC switched to async: switch to async']);
+    expect((await client.status()).listeningMode).toBe('async');
+  });
+  it('lets the agent lower its own attention but never raise it', async () => {
+    await connected();
+    expect(await client.setMode('async', { trigger: 'self', reason: 'not my task' })).toMatchObject({ previous: 'sync', mode: 'async' });
+    await expect(client.setMode('sync', { trigger: 'self', reason: 'interesting again' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'raise_requires_owner_request' } });
+    expect(session.publishListeningMode).toHaveBeenCalledTimes(1);
+    expect((await client.status()).listeningMode).toBe('async');
+  });
+  it('a newer owner command wins over the agent change; a replayed older one does not undo it', async () => {
+    await connected();
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'steer' }), eventId: '$first' });
+    expect((await client.status()).listeningMode).toBe('steer');
+    await client.setMode('async', { trigger: 'self', reason: 'quiet' });
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ changedBy: 'agent', eventId: '$first', eventTs: now().getTime() });
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'steer' }), eventId: '$first' });
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }), eventId: '$older', ts: now().getTime() - 1 });
+    expect((await client.status()).listeningMode).toBe('async');
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'steer' }), eventId: '$new', ts: now().getTime() + 1 });
+    expect((await client.status()).listeningMode).toBe('steer');
+    await expect(client.setMode('steer', { trigger: 'self', reason: 'x' })).resolves.toMatchObject({ mode: 'steer' });
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ changedBy: 'owner', eventId: '$new' });
+  });
+  it('refuses while the owner has archived the channel', async () => {
+    session.ownerArchived = () => true;
+    await connected();
+    await expect(client.setMode('async', { trigger: 'owner_request', reason: 'x' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'archived' } });
+  });
+  it('fails without changing local state when member publishing fails', async () => {
+    vi.mocked(session.publishListeningMode).mockRejectedValue(new Error('publish failed'));
+    await connected();
+    await expect(client.setMode('async', { trigger: 'self', reason: 'x' })).rejects.toMatchObject({ code: 'send_failed' });
+    expect((await client.status()).listeningMode).toBe('sync');
+    expect(session.publishListeningMode).toHaveBeenLastCalledWith(credentials.roomId, 'sync', expect.any(AbortSignal));
+    expect(session.sendChannelEvent).not.toHaveBeenCalled();
+  });
+  it('posts a visible event before leaving with a reason', async () => {
+    vi.mocked(session.displayName).mockReturnValue('Maker-PC');
+    await connected();
+    await client.leave('Release room', 'my part is finished');
+    expect(notices()).toEqual(['Maker-PC left: my part is finished']);
+  });
+});
+
 it('restores the listening mode from the joined member rather than stale process state', async () => {
   session.listeningMode = () => 'async';
   await connected();

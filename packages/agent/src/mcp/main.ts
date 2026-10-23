@@ -23,6 +23,7 @@ export function createPlaceholderClient(): KhalaAgentClient {
     async send() { throw new KhalaClientError('not_connected'); },
     async sendChannelEvent() { throw new KhalaClientError('not_connected'); },
     async leave() { throw new KhalaClientError('not_connected'); },
+    async setMode() { throw new KhalaClientError('not_connected'); },
     async close() {},
   };
 }
