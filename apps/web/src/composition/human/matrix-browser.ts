@@ -41,7 +41,7 @@ import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
 import { CHANNEL_COLORS_MEMBER_KEY, memberChannelColors, type ChannelColors } from '@khala/contracts/m1/colors';
 import { ARCHIVED_MEMBER_KEY, memberArchived } from '@khala/contracts/m1/archive';
-import type { ChannelNameResult, ChannelNamesPort, MemberPresence, TypingPort } from '../../features/channel/ports';
+import type { ChannelNameResult, ChannelNamesPort, MediaPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
   DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
@@ -520,7 +520,7 @@ export async function sendRoomMessage(
     if (!client.getRoom(input.roomId)?.hasEncryptionStateEvent()) return { kind: 'unavailable' };
     const payload = encodeMessageContent(input.content);
     const response = await client.sendEvent(input.roomId, EventType.RoomMessage,
-      payload as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
+      payload as unknown as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
     return {
       kind: 'done',
       value: { eventId: response.event_id as EventId, authorDeviceId: client.getDeviceId() as DeviceId },
@@ -883,6 +883,7 @@ export type MatrixBrowserPorts = Readonly<{
   presence(userId: string): MemberPresence | null;
   hasRead(roomId: RoomId, userId: string, eventId: string): boolean;
   typing: TypingPort;
+  media: MediaPort;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
 
@@ -1024,6 +1025,23 @@ export function createMatrixBrowserPorts(input: Readonly<{
     typing: {
       subscribe: (roomId, onNames) => runtime.active ? subscribeTyping(runtime.active.client, roomId, onNames) : () => undefined,
       set: (roomId, typing) => { if (runtime.active) sendTyping(runtime.active.client, typingSent, roomId, typing); },
+    },
+    media: {
+      async upload(ciphertext) {
+        const active = runtime.active;
+        if (!active) throw new Error('Matrix client unavailable');
+        const res = await active.client.uploadContent(new Blob([new Uint8Array(ciphertext)]), { type: 'application/octet-stream', includeFilename: false });
+        return res.content_uri;
+      },
+      async download(mxc) {
+        const active = runtime.active;
+        // Authenticated media (Matrix v1.11): the token goes in a header, so the URL never works on its own.
+        const url = active?.client.mxcUrlToHttp(mxc, undefined, undefined, undefined, false, true, true);
+        if (!active || !url) throw new Error('Matrix client unavailable');
+        const res = await fetch(url, { headers: { authorization: `Bearer ${active.client.getAccessToken() ?? ''}` } });
+        if (!res.ok) throw new Error(`media download failed: ${res.status}`);
+        return new Uint8Array(await res.arrayBuffer());
+      },
     },
     async roomParticipants(roomId, signal) {
       const active = runtime.active;

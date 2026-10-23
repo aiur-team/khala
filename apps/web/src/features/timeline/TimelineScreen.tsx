@@ -21,7 +21,9 @@ import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
-import type { TypingPort } from '../channel/ports';
+import type { MediaPort, TypingPort } from '../channel/ports';
+import { IMAGE_ERROR_TEXT, loadedImage, loadImage, prepareImage, rememberImage, saveImage, uploadImage, type PreparedImage } from './image-media';
+import type { ImageRef } from '@khala/contracts/m1/image';
 import { ChatComposer, ChatMessage, insertMention, type MentionTarget } from '../../ui/conversation';
 import { ChatSystemEvent } from '../../ui/conversation';
 import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
@@ -74,6 +76,8 @@ export interface TimelineScreenProps {
   seenBy?: (eventId: EventId) => readonly string[];
   /** Hosted only: shows who else is typing and sends the viewer's own typing state. */
   typing?: TypingPort;
+  /** Hosted only: the encrypted media repo. Without it there is no "+" button and images show by name. */
+  media?: MediaPort;
   /** The empty thread's Invite button. KM-183 opens the invite popover. */
   onInvite?: () => void;
   /** The clock for day separator labels; tests pin it. */
@@ -236,7 +240,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, typing, now = () => new Date(), timeOptions = {},
+  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, typing, media, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -281,6 +285,18 @@ export function TimelineScreen({
     heading?.focus();
   }
   const [draft, setDraft] = useState('');
+  // The image waiting to send. Its object URL is the composer preview; it is revoked once replaced or sent.
+  const [attachment, setAttachment] = useState<{ image: PreparedImage; url: string } | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  useEffect(() => () => { if (attachment) URL.revokeObjectURL(attachment.url); }, [attachment]);
+  const attach = useCallback(async (file: File) => {
+    setAttachError(null);
+    const prepared = await prepareImage(file);
+    if ('error' in prepared) { setAttachError(IMAGE_ERROR_TEXT[prepared.error]); return; }
+    setAttachment({ image: prepared, url: URL.createObjectURL(new Blob([new Uint8Array(prepared.bytes)], { type: prepared.mimetype })) });
+  }, []);
+  const loadImageFor = useCallback((image: ImageRef) => loadImage(media!, image), [media]);
   const [typers, setTypers] = useState<readonly string[]>([]);
   useEffect(() => typing?.subscribe(roomId, setTypers), [typing, roomId]);
   useEffect(() => { typing?.set(roomId, draft.trim().length > 0); }, [typing, roomId, draft]);
@@ -491,9 +507,20 @@ export function TimelineScreen({
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
+    const pending = attachment;
+    if ((!body && !pending) || uploading || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
       entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
-    const content = { v: 1 as const, kind: 'text' as const, body, ...(focus?.mode === 'reply' ? { inReplyTo: focus.eventId } : {}) };
+    let image: ImageRef | undefined;
+    if (pending && media) {
+      // Upload first: the message then retries like any other, reusing this mxc URL and key.
+      setUploading(true);
+      setAttachError(null);
+      try { image = await uploadImage(media, pending.image); } catch { setAttachError(IMAGE_ERROR_TEXT.upload_failed); return; } finally { setUploading(false); }
+      rememberImage(image, new Blob([new Uint8Array(pending.image.bytes)], { type: pending.image.mimetype }));
+      setAttachment(null);
+    }
+    const content = { v: 1 as const, kind: 'text' as const, body: body || image?.name || '',
+      ...(focus?.mode === 'reply' ? { inReplyTo: focus.eventId } : {}), ...(image ? { image } : {}) };
     setFocus(null);
     const clientTxnId = newClientTxnId();
     seenRef.current?.add(clientTxnId);
@@ -657,7 +684,8 @@ export function TimelineScreen({
   const mentionRoster = useMemo(() => (JSON.parse(mentionKey) as [string, string, 'human' | 'agent', number][])
     .map(([label, participantId, kind, hue]) => ({ label, participantId, kind, hue })), [mentionKey]);
   useEffect(() => { onMentionRoster?.(mentionRoster); }, [mentionRoster, onMentionRoster]);
-  const renderOptions: RenderOptions = { mentions: mentionRoster, ...(onOpenParticipant ? { onOpenParticipant } : {}) };
+  const renderOptions: RenderOptions = { mentions: mentionRoster, ...(onOpenParticipant ? { onOpenParticipant } : {}),
+    ...(media ? { loadImage: loadImageFor } : {}) };
 
   const itemsById = new Map(data.items.map(entry => [entry.ref.eventId as string, entry]));
   const replies = useMemo(() => indexReplies(data.items.flatMap(entry => isReadableItem(entry)
@@ -721,6 +749,9 @@ export function TimelineScreen({
   // the original `clientTxnId` — may resolve it.
   const visiblePending = pendingList.filter(entry => !isReconciled(entry, data.items));
   const anySendUnresolved = visiblePending.some(entry => entry.phase !== 'accepted');
+  const focusCandidate = focus ? itemsById.get(focus.eventId) : undefined;
+  const focusTarget = focusCandidate && isReadableItem(focusCandidate) ? focusCandidate : undefined;
+  const focusImage = focusTarget?.content.image;
 
   // Flatten rows into thread entries: day separators and events break runs (§7.1, §8).
   const today = now();
@@ -911,11 +942,15 @@ export function TimelineScreen({
           </ol>
           {focus.mode === 'menu' ? <div className="kh-focus__menu" role="menu" aria-label="Message actions" onKeyDown={onMenuKeyDown}>
             <button type="button" role="menuitem" autoFocus onClick={() => setFocus({ mode: 'reply', eventId: focus.eventId })}>Reply</button>
-            <button type="button" role="menuitem" onClick={() => {
-              const target = itemsById.get(focus.eventId);
-              if (target && isReadableItem(target)) void navigator.clipboard?.writeText(target.content.body).catch(() => undefined);
+            {focusImage && loadedImage(focusImage) ? <button type="button" role="menuitem" onClick={() => {
+              // Synchronous from the tap, so iOS keeps the activation the share sheet needs.
+              saveImage(loadedImage(focusImage)!, focusImage.name);
               closeFocus();
-            }}>Copy</button>
+            }}>Save Image</button> : null}
+            {!focusImage || focusTarget?.content.body !== focusImage.name ? <button type="button" role="menuitem" onClick={() => {
+              if (focusTarget) void navigator.clipboard?.writeText(focusTarget.content.body).catch(() => undefined);
+              closeFocus();
+            }}>Copy</button> : null}
           </div> : null}
         </div> : null}
         <div className="timeline__jump" aria-live="polite">
@@ -936,7 +971,10 @@ export function TimelineScreen({
       </div>
       {typers.length > 0 ? <p className="kh-typers" aria-live="polite">{typingLabel(typers)}</p> : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
-        disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked} mentionTargets={mentionTargets}
+        // While an image uploads the draft is locked: it is the caption being sent.
+        disabled={!canCompose || uploading} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={mentionTargets}
+        {...(media ? { onAttach: (file: File) => void attach(file), attachment: attachment ? { url: attachment.url, name: attachment.image.name } : null,
+          onRemoveAttachment: () => { setAttachment(null); setAttachError(null); }, attachError } : {})}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
     </section>

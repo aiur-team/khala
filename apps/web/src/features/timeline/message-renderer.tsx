@@ -1,14 +1,18 @@
 // Renders canonical message content as inert text/code. React text nodes are
 // never interpreted as markup, no `dangerouslySetInnerHTML` is used anywhere
 // in this module, and no element that fetches remote content (`img`, `link`,
-// `iframe`) or navigates (`a`) is ever created from message bytes — link and
-// image rendering waits for a pinned sanitizer/parser (KTD4; see README).
+// `iframe`) or navigates (`a`) is ever created from message bytes — link
+// rendering waits for a pinned sanitizer/parser (KTD4; see README). An image
+// message renders only through `ChatImage`: a validated mxc reference is
+// downloaded by the app, hash-checked, decrypted and shown from a `blob:` URL.
 // Rendering helper accepts canonical content, never a raw trusted-HTML marker
 // supplied by remote peers.
 
 import type { CSSProperties, ReactNode } from 'react';
 import type { MessageContent } from '@khala/contracts/messaging/index';
 import { segmentMentions, type MentionCandidate } from './mentions';
+import type { ImageRef } from '@khala/contracts/m1/image';
+import { ChatImage } from './ChatImage';
 
 type Segment = Readonly<{ kind: 'text'; text: string }> | Readonly<{ kind: 'code'; text: string; language: string | null }>;
 
@@ -19,6 +23,8 @@ export type RenderOptions = Readonly<{
   /** Known participants: `@` plus one of their labels becomes a mention (§7.1). */
   mentions?: readonly MentionCandidate[];
   onOpenParticipant?: (participantId: string) => void;
+  /** Hosted only: downloads and decrypts an image message. Without it an image shows as its name. */
+  loadImage?: (image: ImageRef) => Promise<Blob>;
 }>;
 
 function splitFences(body: string): readonly Segment[] {
@@ -68,9 +74,21 @@ export function renderMessageContent(content: MessageContent, options: RenderOpt
   if (content.v !== 1 || content.kind !== 'text') {
     return <p className="message-content__unavailable">Unsupported message content.</p>;
   }
+  if (content.image) {
+    const caption = content.body === content.image.name ? null : renderText(content.body, options);
+    return <>
+      {options.loadImage ? <ChatImage image={content.image} load={options.loadImage} />
+        : <p className="message-content__text">[image: {content.image.name}]</p>}
+      {caption}
+    </>;
+  }
+  return renderText(content.body, options);
+}
+
+function renderText(body: string, options: RenderOptions): ReactNode {
   return (
     <>
-      {splitFences(content.body).map((segment, index) =>
+      {splitFences(body).map((segment, index) =>
         segment.kind === 'code' ? (
           <pre key={index} className="kh-pre">
             {segment.language ? <span className="kh-pre-lang">{segment.language}</span> : null}

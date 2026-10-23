@@ -28,6 +28,14 @@ export interface ChannelSession {
   joinedAt?(roomId: string): number | undefined;
   history(roomId: string, limit: number, before?: string, options?: { includeUnavailable?: boolean; stopAtEventId?: string }): Promise<{ messages: SessionMessage[]; nextBefore?: string; reachedBoundary?: boolean; oldestTs?: number }>;
   send(roomId: string, text: string): Promise<{ eventId: string }>;
+  // Hosted only: encrypted media. Callers encrypt before upload and decrypt after download.
+  /** Uploads ciphertext to the media repo and returns its mxc URI. */
+  uploadMedia?(ciphertext: Uint8Array): Promise<string>;
+  downloadMedia?(mxc: string): Promise<Uint8Array>;
+  /** Sends prepared `m.room.message` content (an `m.image`). */
+  sendContent?(roomId: string, content: Record<string, unknown>): Promise<{ eventId: string }>;
+  /** The decrypted content of one room event, or undefined when it cannot be read. */
+  eventContent?(roomId: string, eventId: string): Promise<Record<string, unknown> | undefined>;
   sendChannelEvent(roomId: string, content: Record<string, unknown>, txnId?: string): Promise<{ eventId: string }>;
   roomName(roomId: string): string | undefined;
   displayName(userId: string): string | undefined;

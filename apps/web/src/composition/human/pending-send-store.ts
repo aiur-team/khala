@@ -1,6 +1,7 @@
 import type { DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/ids';
 import type { PendingSendStore } from '../../features/timeline/TimelineScreen';
 import type { PendingSend } from '../../features/timeline/send';
+import { readImageRef } from '@khala/contracts/m1/image';
 
 type StoragePort = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
@@ -22,7 +23,8 @@ function isPendingSend(value: unknown): value is PendingSend {
     && (content as Record<string, unknown>).kind === 'text'
     && typeof (content as Record<string, unknown>).body === 'string'
     && ((content as Record<string, unknown>).inReplyTo === undefined
-      || (typeof (content as Record<string, unknown>).inReplyTo === 'string' && ((content as Record<string, unknown>).inReplyTo as string).length > 0));
+      || (typeof (content as Record<string, unknown>).inReplyTo === 'string' && ((content as Record<string, unknown>).inReplyTo as string).length > 0))
+    && ((content as Record<string, unknown>).image === undefined || readImageRef((content as Record<string, unknown>).image) !== null);
 }
 
 /** One tab's unresolved sends, scoped to the signed-in owner, exact device and channel. */

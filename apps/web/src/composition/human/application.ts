@@ -1,5 +1,5 @@
 import type { ChannelColors } from '@khala/contracts/m1/colors';
-import type { AgentNamesPort, ChannelNamesPort, MemberPresence, TypingPort } from '../../features/channel/ports';
+import type { AgentNamesPort, ChannelNamesPort, MemberPresence, MediaPort, TypingPort } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
@@ -51,6 +51,8 @@ export interface HumanApplicationPorts {
   readonly hasRead?: (roomId: RoomId, matrixUserId: string, eventId: string) => boolean;
   /** Hosted only: who else is typing, and the composer's own `m.typing`. */
   readonly typing?: TypingPort;
+  /** Hosted only: the encrypted media repo behind image messages. */
+  readonly media?: MediaPort;
   readonly profile?: ProfilePort;
   /** Current room membership, independent of asynchronous timeline loading. */
   readonly isJoined?: (roomId: RoomId) => boolean;

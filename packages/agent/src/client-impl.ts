@@ -18,6 +18,7 @@ import { adapterFor } from './harness';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry, withReplyContext } from './sender';
+import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageEventContent, readImageEvent, sniffImage, stripJpegMetadata } from '@khala/contracts/m1/image';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { TERMINAL_SESSION_DETAILS, stateRoot, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
@@ -823,6 +824,58 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (current(attempt)) await setStatus(attempt, 'send_failed', errorDetail(error, 'send_failed'));
         throw new KhalaClientError('send_failed');
       }
+    },
+    async sendImage(file, caption, channel) {
+      await initialize();
+      const { session, credentials, attempt } = requireSession(channel);
+      const refuse = (reason: string) => new KhalaClientError('invalid_image', undefined, { reason });
+      if (!session.uploadMedia || !session.sendContent) throw refuse('hosted_only');
+      if (!path.isAbsolute(file)) throw refuse('path_not_absolute');
+      // Stat first so a huge file is refused without reading it.
+      const stat = await fs.stat(file).catch(() => undefined);
+      if (!stat?.isFile()) throw refuse('unreadable');
+      if (stat.size > IMAGE_MAX_BYTES) throw refuse('too_large');
+      const read = await fs.readFile(file).catch(() => undefined);
+      if (!read) throw refuse('unreadable');
+      const checked = checkImage(new Uint8Array(read));
+      if (!checked.ok) throw refuse(checked.reason);
+      const bytes = checked.image.mimetype === 'image/jpeg' ? stripJpegMetadata(new Uint8Array(read)) : new Uint8Array(read);
+      try {
+        const sealed = await encryptAttachment(bytes);
+        const url = await session.uploadMedia(sealed.ciphertext);
+        const name = path.basename(file).replace(/[\p{Cc}\p{Cf}\\]/gu, '_').slice(0, 255);
+        const sent = await session.sendContent(credentials.roomId, imageEventContent({ name, ...checked.image, size: bytes.length, url,
+          key: sealed.key, iv: sealed.iv, sha256: sealed.sha256 }, caption));
+        if (current(attempt) && attempt.status.state === 'send_failed') await setStatus(attempt, 'connected');
+        return sent;
+      } catch (error) {
+        if (!current(attempt)) throw new KhalaClientError('not_connected');
+        if (current(attempt)) await setStatus(attempt, 'send_failed', errorDetail(error, 'send_failed'));
+        throw new KhalaClientError('send_failed');
+      }
+    },
+    async downloadImage(eventId, channel) {
+      await initialize();
+      const { session, credentials, attempt } = requireSession(channel);
+      const refuse = (reason: string) => new KhalaClientError('invalid_image', undefined, { reason });
+      if (!session.eventContent || !session.downloadMedia || !attempt.files) throw refuse('hosted_only');
+      const content = await session.eventContent(credentials.roomId, eventId).catch(() => undefined);
+      const found = content ? readImageEvent(content) : null;
+      if (!found) throw refuse('not_an_image');
+      let bytes: Uint8Array;
+      try {
+        const ciphertext = await session.downloadMedia(found.image.url);
+        if (ciphertext.length > IMAGE_MAX_BYTES * 2) throw new Error('too_large');
+        bytes = await decryptAttachment(ciphertext, found.image);
+      } catch { throw refuse('download_failed'); }
+      // The sender's declared type is untrusted: the decrypted bytes must sniff as the same allowed image.
+      const sniffed = sniffImage(bytes);
+      if (!sniffed || sniffed.mimetype !== found.image.mimetype) throw refuse('unsupported_type');
+      const dir = path.join(attempt.files.dir, 'images');
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      const target = path.join(dir, `${eventId.replace(/[^A-Za-z0-9_-]/gu, '_')}.${sniffed.mimetype.slice('image/'.length).replace('jpeg', 'jpg')}`);
+      await fs.writeFile(target, bytes, { mode: 0o600 });
+      return { path: target, name: found.image.name, mimetype: sniffed.mimetype, w: sniffed.w, h: sniffed.h, ...(found.caption ? { caption: found.caption } : {}) };
     },
     async sendChannelEvent(content, channel) {
       await initialize();

@@ -66,3 +66,13 @@
 .kh-mpop-opt i { flex: 0 0 auto; font: 700 9px/20px "JetBrains Mono", monospace; min-width: 20px; height: 20px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
 @media (pointer: coarse) { .kh-mpop-opt { min-height: 44px; } }
 @media (max-width: 760px) { .kh-mpop { left: .6rem; right: .6rem; width: auto; } }
+
+/* The "+" image button left of the draft, and the preview chip above it. */
+.kh-attach { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--fg); display: grid; place-items: center; cursor: pointer; }
+.kh-attach:disabled { opacity: .35; cursor: default; }
+.kh-attach svg { width: 18px; height: 18px; }
+@media (max-width: 760px) { .kh-attach { width: 40px; height: 40px; } }
+.kh-attach-chip { display: flex; align-items: center; gap: .55rem; padding: .5rem .9rem 0; border-top: 1px solid var(--line); background: var(--surface); }
+.kh-attach-chip img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; }
+.kh-attach-chip span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--muted); }
+.kh-attach-chip + .kh-comp { border-top: 0; }

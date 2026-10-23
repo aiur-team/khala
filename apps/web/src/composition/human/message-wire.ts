@@ -8,6 +8,7 @@ import {
   type ParticipantView,
 } from '@khala/contracts/messaging/index';
 import type { SubstrateEvent } from '@khala/messaging/channels/index';
+import { imageEventContent, readImageEvent } from '@khala/contracts/m1/image';
 
 /** Matrix-compatible content shared by hosted and local transports. */
 export function encodeMessageContent(content: MessageContent): Record<string, unknown> {
@@ -15,7 +16,7 @@ export function encodeMessageContent(content: MessageContent): Record<string, un
     ? { msgtype: 'm.notice', body: content.body,
         'com.khala.agent_participant_id': content.agentParticipantId,
         ...(content.kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': content.sourceEventId } : {}) }
-    : { msgtype: 'm.text', body: content.body,
+    : { ...(content.image ? imageEventContent(content.image, content.body === content.image.name ? '' : content.body) : { msgtype: 'm.text', body: content.body }),
         // Matrix v1.13 rich reply, without the removed body fallback (MSC2781).
         ...(content.inReplyTo ? { 'm.relates_to': { 'm.in_reply_to': { event_id: content.inReplyTo } } } : {}) };
 }
@@ -64,6 +65,18 @@ export function projectWireEvent(input: {
     return renamed ? { kind: 'channel_event', eventId, participant, content: renamed, receivedAt } : null;
   }
   if (type !== 'm.room.message') return null;
+  if (rawContent.msgtype === 'm.image') {
+    // Only encrypted, allowlisted images; anything else (an unencrypted `url`, SVG) is not shown.
+    const found = readImageEvent(rawContent);
+    const parent = replyParent(rawContent);
+    const decode = (inReplyTo?: string) => decodeMessageContent({ v: 1, kind: 'text', body: rawContent.body, image: found!.image,
+      ...(inReplyTo !== undefined ? { inReplyTo } : {}) }, limits);
+    // A malformed parent ID is ignored, as for text.
+    const replied = found && parent !== undefined ? decode(parent) : null;
+    const content = !found ? null : replied?.ok ? replied : decode();
+    if (!content || !content.ok || authorDeviceId === null) return null;
+    return { kind: 'message', eventId, authorDeviceId, participant, content: content.value, clientTxnId, receivedAt };
+  }
   if (rawContent.msgtype !== 'm.text' && rawContent.msgtype !== 'm.notice') return null;
   if (rawContent.msgtype === 'm.notice' && typeof rawContent['com.khala.agent_participant_id'] !== 'string') return null;
   const parent = rawContent.msgtype === 'm.text' ? replyParent(rawContent) : undefined;

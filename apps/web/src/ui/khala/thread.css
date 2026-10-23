@@ -98,3 +98,16 @@
 .conversation-thread__body .timeline { height: 100%; gap: 0; min-height: 0; }
 .timeline__state { align-self: center; margin: 1rem; }
 .timeline__state[role="alert"] > b { color: var(--fg); }
+
+/* Image messages (iOS Messages): no bubble fill around a lone image, rounded, aspect kept by ChatImage. */
+.kh-row .kh-b:has(> .kh-img:only-child) { background: none; padding: 0; }
+.kh-img { display: block; max-width: 100%; padding: 0; border: 0; border-radius: 18px; overflow: hidden; background: var(--surface-2); color: var(--muted); font: inherit; cursor: zoom-in; }
+.kh-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.kh-img--loading { animation: pulse 1.4s ease-in-out infinite; }
+.kh-img--error { font-size: .8rem; padding: .5rem; cursor: pointer; }
+.kh-b > .kh-img + .message-content__text { margin-top: .4rem; }
+/* Full screen, outside the bubble: the native long-press callout (Save to Photos) stays on here. */
+.kh-viewer { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem;
+  padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); background: rgba(0, 0, 0, .92); }
+.kh-viewer img { max-width: 100%; max-height: calc(100% - 72px); object-fit: contain; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+.kh-viewer__bar { display: flex; gap: .5rem; }

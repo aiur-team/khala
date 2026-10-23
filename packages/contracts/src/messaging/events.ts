@@ -8,6 +8,7 @@ import {
 import { type DeviceId, type EventId, type ParticipantId, type RoomId, readId } from './ids';
 import { type ParticipantView, readParticipantView } from './identity';
 import { validateAgentName } from './agent-names';
+import { type ImageRef, readImageRef } from '../m1/image';
 
 /**
  * Reference to one authored, immutable event. An edit is another event with another
@@ -25,7 +26,8 @@ export type EventRef = Readonly<{
 
 /** Authored content. Rename metadata remains inside the encrypted room event. */
 /** `inReplyTo` is the Matrix rich-reply parent (`m.relates_to.m.in_reply_to`). */
-export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string; inReplyTo?: EventId }>;
+/** `image` makes it an image message; `body` is then its caption, or the file name when it has none. */
+export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string; inReplyTo?: EventId; image?: ImageRef }>;
 export type AgentRenameContent = Readonly<{ v: 1; kind: 'agent_rename'; agentParticipantId: ParticipantId; body: string }>;
 /** Encrypted current-name bootstrap; it is metadata, never a second rename. */
 export type AgentNameSnapshotContent = Readonly<{ v: 1; kind: 'agent_name_snapshot'; agentParticipantId: ParticipantId; body: string; sourceEventId: EventId | null }>;
@@ -139,6 +141,14 @@ export function encodeMessageContent(content: MessageContent): Uint8Array {
   if (content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
   const body = decodeWith(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
   if (!body.ok) throw new TypeError(`invalid message content: ${body.error.path} ${body.error.code}`);
+  if (content.image !== undefined) {
+    // Appended only for images (reply parent or null first), so every earlier digest is unchanged.
+    const image = readImageRef(content.image);
+    if (!image) throw new TypeError('invalid image');
+    if (content.inReplyTo !== undefined && !decodeWith(() => readId<'EventId'>(content.inReplyTo, 'inReplyTo')).ok) throw new TypeError('invalid reply parent');
+    return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body, content.inReplyTo ?? null,
+      [image.name, image.mimetype, image.size, image.w, image.h, image.url, image.key, image.iv, image.sha256]]));
+  }
   if (content.inReplyTo === undefined) return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
   // Appended only for replies, so every earlier digest is unchanged.
   const parent = decodeWith(() => readId<'EventId'>(content.inReplyTo, 'inReplyTo'));
@@ -230,12 +240,15 @@ export function readMessageContent(input: unknown, path: string, limits: Content
       : { v, kind, agentParticipantId, body: name.name };
   }
   const reply = typeof input === 'object' && input !== null && Object.hasOwn(input, 'inReplyTo');
-  const r = object(input, path, reply ? ['v', 'kind', 'body', 'inReplyTo'] : ['v', 'kind', 'body']);
+  const hasImage = typeof input === 'object' && input !== null && Object.hasOwn(input, 'image');
+  const r = object(input, path, ['v', 'kind', 'body', ...(reply ? ['inReplyTo'] : []), ...(hasImage ? ['image'] : [])]);
+  const image = hasImage ? readImageRef(r.field('image')) ?? fail(r.at('image'), 'invalid_value') : undefined;
   return {
     v: version(r.field('v'), r.at('v')),
     kind: literal(r.field('kind'), r.at('kind'), ['text']),
     body: text(r.field('body'), r.at('body'), limits.maxBodyBytes),
     ...(reply ? { inReplyTo: readId<'EventId'>(r.field('inReplyTo'), r.at('inReplyTo')) } : {}),
+    ...(image ? { image } : {}),
   };
 }
 
