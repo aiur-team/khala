@@ -44,3 +44,12 @@ it('@channel and @agents mention every agent; @humans does not', () => {
   }
   expect(mentions({ ...message('@channel'), kind: 'event' }, undefined)).toBe(false);
 });
+it('async wakes only for a direct ping; mute never wakes', () => {
+  const human = (body: string) => ({ ...base, senderKind: 'human' as const, kind: 'message' as const, body });
+  for (const body of ['@Claude look', '@agents look', '@channel look']) {
+    expect(wakesAgent(human(body), 'async', 'Claude')).toBe(true);
+    expect(wakesAgent(human(body), 'mute', 'Claude')).toBe(false);
+  }
+  expect(wakesAgent(human('ordinary chatter'), 'async', 'Claude')).toBe(false);
+  expect(wakesAgent(human('ordinary chatter'), 'sync', 'Claude')).toBe(true);
+});

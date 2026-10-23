@@ -48,7 +48,7 @@ it.each(['async', 'busy', 'off'])('suppresses %s including a previously queued s
 
 it('rechecks wake policy and refreshes the nonce when replaying an acknowledged frame', async () => {
   const original = await pollOpenCodeWake(files, io());
-  await writeStateFile(files.dir, 'mode.json', { mode: 'async' });
+  await writeStateFile(files.dir, 'mode.json', { mode: 'mute' });
   expect(await pollOpenCodeWake(files, io(), true)).toBeUndefined();
   await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
   await writeWakeSettings(stateRoot(io().env), { consent: {}, off: { 'opencode/opencode-native': { at: new Date(at).toISOString() } } });

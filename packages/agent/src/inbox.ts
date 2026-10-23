@@ -3,8 +3,10 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { isWakeEntry } from './events/receive';
 import { filesForDir, readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
-/** shownEventId: the newest entry whose content reached the agent's context (read receipts follow it, not nudges). */
-export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number; shownEventId?: string };
+/** shownEventId: the newest entry whose content reached the agent's context (read receipts follow it, not nudges).
+ * nudgedCount: async mentions before this index already earned their constant nudge. It is separate from
+ * `deliveredCount` so a ping never moves the backlog cursor; any delivery drops it. */
+export type Cursor = { lastDeliveredEventId: string | null; deliveredCount: number; shownEventId?: string; nudgedCount?: number };
 export async function readEntries(files: SessionFiles): Promise<InboxEntry[]> {
   let content: string;
   try { content = await fs.readFile(files.inbox, 'utf8'); } catch (error) {
@@ -45,6 +47,20 @@ export async function unread(files: SessionFiles): Promise<{ entries: InboxEntry
   const cursor = await readCursor(files);
   const entries = await readEntries(files);
   return { entries: entries.slice(cursor.deliveredCount), cursor };
+}
+/** Where wakes start counting: past the delivered cursor and past any mention that was already nudged. */
+export function wakeStart(cursor: { deliveredCount: number; nudgedCount?: unknown }): number {
+  return Math.max(cursor.deliveredCount, Number.isSafeInteger(cursor.nudgedCount) ? cursor.nudgedCount as number : 0);
+}
+/** Unread entries that may still wake the agent. */
+export async function unwoken(files: SessionFiles): Promise<InboxEntry[]> {
+  return (await readEntries(files)).slice(wakeStart(await readCursor(files)));
+}
+/** Records that entries up to `count` earned their nudge; the delivered cursor is left alone. A concurrent delivery wins. */
+export async function markNudged(files: SessionFiles, expected: Cursor, count: number): Promise<void> {
+  const current = await readCursor(files);
+  if (current.deliveredCount !== expected.deliveredCount || current.lastDeliveredEventId !== expected.lastDeliveredEventId) return;
+  await writeJsonAtomic(files.cursor, { ...current, nudgedCount: count });
 }
 export async function unreadCounts(files: SessionFiles): Promise<{ total: number; messages: number }> {
   const { entries } = await unread(files);

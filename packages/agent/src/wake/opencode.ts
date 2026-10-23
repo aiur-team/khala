@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readActivity } from '../activity';
 import { listChannels } from '../channels';
-import { readCursor, unread } from '../inbox';
+import { readCursor, unwoken, wakeStart } from '../inbox';
 import { readListeningMode } from '../mode';
 import { readJson, writeJsonAtomic, stateRoot, type SessionFiles, type StatusFile } from '../state';
 import { wakesAgent } from '../events/receive';
@@ -15,7 +15,7 @@ const file = 'opencode-wake.json';
 type Signal = { line: string; at: number; budget: string; attempts: number; delivered: boolean; channels?: string[] };
 async function budget(files: SessionFiles): Promise<string> {
   const pairs = await Promise.all((await listChannels(files)).map(async channel =>
-    [channel.key, (await readCursor(channel.files)).deliveredCount] as const));
+    [channel.key, wakeStart(await readCursor(channel.files))] as const));
   return JSON.stringify(pairs.sort(([a], [b]) => a.localeCompare(b)));
 }
 const canAttempt = (prior: Signal | null, key: string, now: number) => !prior || prior.budget !== key
@@ -36,7 +36,7 @@ export const opencodeWakeDriver: WakeDriver = {
       if (!canAttempt(prior, key, ctx.now)) return 'skipped' as const;
       const channels: string[] = [];
       for (const channel of await listChannels(ctx.files)) {
-        if (await readListeningMode(channel.files) !== 'async') channels.push(channel.key);
+        if (await readListeningMode(channel.files) !== 'mute') channels.push(channel.key);
       }
       await writeJsonAtomic(path.join(ctx.files.dir, file), { line, at: ctx.now, budget: key,
         attempts: prior?.budget === key ? prior.attempts + 1 : 1, delivered: false, channels });
@@ -54,7 +54,7 @@ export async function pollOpenCodeWake(files: SessionFiles, io: HookIO, replay =
       || (await readWakeState(files.dir))[opencodeWakeDriver.id]?.disabled) return;
     const channels = (await listChannels(files)).filter(channel => !pending.channels || pending.channels.includes(channel.key));
     if (!channels.length) return;
-    for (const channel of channels) if (await readListeningMode(channel.files) === 'async') return;
+    for (const channel of channels) if (await readListeningMode(channel.files) === 'mute') return;
     const nonce = newNonce(), at = io.now().getTime();
     await recordAttempt(files.dir, { nonce, driver: opencodeWakeDriver.id, at,
       deadline: at + opencodeWakeDriver.deadlineMs, activityUpdatedAt: activity.updatedAt });
@@ -74,10 +74,10 @@ export async function pollOpenCodeWake(files: SessionFiles, io: HookIO, replay =
     let eligible = false;
     for (const channel of await listChannels(files)) {
       const mode = await readListeningMode(channel.files);
-      if (mode === 'async') continue;
+      if (mode === 'mute') continue;
       const session = await readJson<{ userId: string }>(channel.files.session);
       const you = (await readJson<StatusFile>(channel.files.status))?.displayName;
-      if ((await unread(channel.files)).entries.some(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you))) eligible = true;
+      if ((await unwoken(channel.files)).some(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you))) eligible = true;
     }
     if (!eligible) return;
     await writeJsonAtomic(path.join(files.dir, file), { ...pending, delivered: true });

@@ -5,6 +5,7 @@ import { driverAllowed } from '../src/wake/shared/settings';
 import { filesForDir, stateRoot, resolveStateDir, readJson as readState, type StatusFile } from '../src/state';
 import { readListeningMode } from '../src/mode';
 import { wakesAgent } from '../src/events/receive';
+import { wakeStart } from '../src/inbox';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
@@ -14,7 +15,7 @@ const NOTICE = 'Khala: new channel messages. They arrive in the next hook contex
 export const DEADLINE_MS = 24 * 60 * 60 * 1000;
 const POLL_MS = 500;
 type IO = { stderr: Pick<NodeJS.WriteStream, 'write'>; env: NodeJS.ProcessEnv; now: () => Date };
-async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number } | null> {
+async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number; nudgedCount?: number } | null> {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (error) {
     if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -29,7 +30,7 @@ async function unreadChannelMessages(dir: string): Promise<number> {
   const you = (await readState<StatusFile>(files.status))?.displayName;
   const cursor = await readJson(path.join(dir, 'cursor.json'));
   const delivered = cursor && (cursor.lastDeliveredEventId === null || typeof cursor.lastDeliveredEventId === 'string')
-    && Number.isSafeInteger(cursor.deliveredCount) && typeof cursor.deliveredCount === 'number' && cursor.deliveredCount >= 0 ? cursor.deliveredCount : 0;
+    && Number.isSafeInteger(cursor.deliveredCount) && typeof cursor.deliveredCount === 'number' && cursor.deliveredCount >= 0 ? wakeStart({ ...cursor, deliveredCount: cursor.deliveredCount }) : 0;
   let content: string;
   try { content = await fs.readFile(path.join(dir, 'inbox.jsonl'), 'utf8'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }
@@ -55,7 +56,7 @@ export async function unreadMessages(dir: string): Promise<number> {
   }
   let messages = 0;
   for (const directory of directories) {
-    if (await readListeningMode(filesForDir(directory)) === 'async') continue;
+    if (await readListeningMode(filesForDir(directory)) === 'mute') continue;
     messages += await unreadChannelMessages(directory);
   }
   return messages;
@@ -119,7 +120,7 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       if (input.hook_event_name !== 'SessionStart') return unreadMessages(dir);
       let messages = 0;
       for (const channel of await sessionStartWakeChannels(filesForDir(dir), io.env)) {
-        if (channel.connected && await readListeningMode(channel.files) !== 'async') messages += await unreadChannelMessages(channel.files.dir);
+        if (channel.connected && await readListeningMode(channel.files) !== 'mute') messages += await unreadChannelMessages(channel.files.dir);
       }
       return messages;
     };

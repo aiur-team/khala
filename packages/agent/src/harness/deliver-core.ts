@@ -2,7 +2,7 @@ import type { Harness } from '@khala/contracts/m1/agent-join';
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { sessionFiles, readStatus, readJson, TERMINAL_SESSION_DETAILS, StateError, type StatusFile, type SessionFiles } from '../state';
-import { unread, advanceCursor, type Cursor } from '../inbox';
+import { unread, advanceCursor, readCursor, readEntries, wakeStart, markNudged, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity, markUsageLimit, clearUsageLimit } from '../activity';
 import { wakeDisableNotice } from '../wake/status';
@@ -13,7 +13,7 @@ import { isWakeEntry, wakesAgent } from '../events/receive';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ProcessReader } from './proc';
 import { recordHookSession } from './session-sources';
-import type { HarnessAdapter } from './adapter';
+import { STOP_NUDGE, type HarnessAdapter } from './adapter';
 import { claudeTranscriptInterrupted, claudeTranscriptVersion, versionAtLeast } from './claude-transcript';
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -107,9 +107,20 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
   const wakes = (group: FrameGroup & { consumed: readonly InboxEntry[] }) =>
     group.consumed.some(entry => quiet ? wakesAgent(entry, group.mode, group.you) : isWakeEntry(entry));
   const groups: FrameGroup[] = [];
+  let pinged = false;
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
-    if (mode === 'async' || (steerOnly && mode !== 'steer')) continue;
+    if (mode === 'mute' || (steerOnly && mode !== 'steer')) continue;
+    if (mode === 'async') {
+      // A direct ping earns one constant nudge, never its content; the backlog cursor stays put.
+      const [status, session, cursor, entries] = await Promise.all([readJson<StatusFile>(channel.files.status),
+        readJson<{ userId?: string }>(channel.files.session), readCursor(channel.files), readEntries(channel.files)]);
+      if (entries.slice(wakeStart(cursor)).some(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, status?.displayName))) {
+        await markNudged(channel.files, cursor, entries.length);
+        pinged = true;
+      }
+      continue;
+    }
     const [status, pending] = await Promise.all([readJson<StatusFile>(channel.files.status), unread(channel.files)]);
     groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
       ...pending, mode, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
@@ -153,7 +164,8 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
     const error = failures[0];
     diagnostic(io, error instanceof StateError ? error.code : 'internal_error');
   }
-  return emitted.size ? [...emitted].sort(([a], [b]) => a - b).map(([, frame]) => frame).join('\n') : null;
+  const frames = [...emitted].sort(([a], [b]) => a - b).map(([, frame]) => frame);
+  return frames.length || pinged ? [...frames, ...(pinged ? [STOP_NUDGE] : [])].join('\n') : null;
 }
 
 export function diagnostic(io: HookIO, code: string): void {

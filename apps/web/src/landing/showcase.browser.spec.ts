@@ -52,7 +52,7 @@ test('the splash demo is the real app, local to the page, and its agents answer 
     await pane.locator('#kh-head-btn').click();
     assert.equal(await pane.locator('#kh-head-btn').getAttribute('aria-expanded'), 'true');
     const opusModes = pane.getByRole('radiogroup', { name: 'Listening mode for Opus' });
-    assert.equal(await opusModes.getByRole('radio', { name: 'Async · on demand' }).getAttribute('aria-checked'), 'true');
+    assert.equal(await opusModes.getByRole('radio', { name: 'Async · pings only' }).getAttribute('aria-checked'), 'true');
     await opusModes.getByRole('radio', { name: 'Steer · interrupts' }).click();
     await page.waitForFunction(() => document.querySelector('#exampleShowcase [aria-label="Listening mode for Opus"] [data-v="steer"]')?.getAttribute('aria-checked') === 'true');
     // Agents the visitor does not own show their mode, read-only.

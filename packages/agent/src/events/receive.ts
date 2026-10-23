@@ -41,7 +41,9 @@ export function mentions(entry: InboxEntry, name: string | undefined): boolean {
 
 /** Sync wakes an idle agent, or re-opens its turn at Stop, only for a message from a
  * person (or an unclassified sender) or one that names it. Other agents' messages wait for the
- * next turn's hook context. */
+ * next turn's hook context. Async wakes only for a direct ping; mute never wakes. */
 export function wakesAgent(entry: InboxEntry, mode: ListeningMode | undefined, you: string | undefined): boolean {
-  return isWakeEntry(entry) && (mode !== 'sync' || entry.senderKind !== 'agent' || entry.mention === true || mentions(entry, you));
+  if (mode === 'mute' || !isWakeEntry(entry)) return false;
+  const pinged = entry.mention === true || mentions(entry, you);
+  return mode === 'async' ? pinged : mode !== 'sync' || entry.senderKind !== 'agent' || pinged;
 }

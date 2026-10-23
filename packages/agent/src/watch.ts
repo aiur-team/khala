@@ -3,7 +3,7 @@ import { watch as watchDirectory, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { monitorStorage, monitorStorageCandidates } from './monitor-storage';
-import { readCursor, readEntries, type Cursor } from './inbox';
+import { readCursor, readEntries, wakeStart, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { isWakeEntry, mentions, wakesAgent } from './events/receive';
 import { listChannels } from './channels';
@@ -156,7 +156,7 @@ export async function watchSession(files: SessionFiles, io: {
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => isWakeEntry(entry) && entry.sender !== session.userId
           && entry.roomId === session.roomId);
-        if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async'
+        if (io.harness !== 'muse' && !done && mode !== 'mute' && latestMode !== 'mute'
           && messages.some(entry => wakesAgent(entry, latestMode, latestStatus?.displayName))) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
@@ -188,12 +188,12 @@ export async function watchSession(files: SessionFiles, io: {
           let eligible = false;
           for (const channel of channels) {
             const channelMode = await readListeningMode(channel.files);
-            if (channelMode === 'async') continue;
+            if (channelMode === 'mute') continue;
             const session = await readJson<{ userId: string }>(channel.files.session);
             const status = await readWatcherStatus(channel.files);
             if (!['connected', 'send_failed'].includes(status?.state ?? '')) continue;
             const cursor = await readCursor(channel.files);
-            eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
+            eligible ||= (await readEntries(channel.files)).slice(wakeStart(cursor))
               .some(entry => entry.sender !== session?.userId && wakesAgent(entry, channelMode, status?.displayName));
           }
           const activity = await readActivity(files);

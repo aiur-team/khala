@@ -469,7 +469,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           if (!current(attempt)) return;
           const previous = await readStateFile<{ eventId?: string; eventTs?: number; pendingPublish?: boolean }>(channelDir, 'mode.json');
           if ((previous?.eventId === command.eventId && !previous.pendingPublish) || (previous?.eventTs !== undefined && command.ts < previous.eventTs)) return;
-          const mode = asyncOnly ? 'async' : decoded.value.mode;
+          const mode = asyncOnly && decoded.value.mode !== 'mute' ? 'async' : decoded.value.mode;
           const published = await publishMode(attempt, session, credentials.roomId, mode);
           await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts, ...(published ? {} : { pendingPublish: true }) }, now);
         }).catch(async () => {
@@ -775,8 +775,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           await delegateChannel(files, wait * 1000 + DELEGATE_GRACE_MS);
           for (;;) {
             const state = await readModeState(files), pending = await unread(files);
-            const mode = state.archived ? 'async' : state.mode;
-            if (mode !== 'async' && pending.entries.some(entry => wakesAgent(entry, mode, ownName(session)))) {
+            const mode = state.archived ? 'mute' : state.mode;
+            if (pending.entries.some(entry => wakesAgent(entry, mode, ownName(session)))) {
               if (await advanceCursor(files, pending.cursor, pending.entries, true) !== 'conflict') { consumed = pending.entries.length; break; }
             } else if (!current(attempt)) throw new KhalaClientError('not_connected');
             const left = deadline - Date.now();
@@ -859,9 +859,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const run = attempt.appends.then(async (): Promise<{ channel: string; previous: ListeningMode; mode: ListeningMode; changed?: true }> => {
         if (!current(attempt)) throw new KhalaClientError('not_connected');
         const { mode: previous, archived } = await readModeState(files);
-        // The owner's archive wins; an async-only harness cannot listen any other way.
+        // The owner's archive wins; an async-only harness cannot listen more closely than async.
         if (archived) throw refuse('archived');
-        if (asyncOnly && mode !== 'async') throw refuse('async_only');
+        if (asyncOnly && mode !== 'async' && mode !== 'mute') throw refuse('async_only');
         if (input.trigger === 'self' && ATTENTION[mode] > ATTENTION[previous]) throw refuse('raise_requires_owner_request');
         const name = attempt.status.channelName ?? credentials.roomId;
         if (mode === previous) return { channel: name, previous, mode };

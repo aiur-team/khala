@@ -1,4 +1,4 @@
-import { legacyHarnessView } from '../wire';
+import { legacyHarnessView, memberView } from '../wire';
 import { decodeChannelEvent, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_MEMBER_KEY, decodeListeningMode } from '@khala/contracts/m1/listening-mode';
 import { LOCAL_LONG_POLL_MAX_S, LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
@@ -139,10 +139,8 @@ export function roomRoutes(): LocalRoute[] {
       const delivered = events.map(event => {
         const view = { ...event };
         if (req.query.get('prev') !== '1') delete view.previousContent;
-        if (req.query.get('wire') !== '2') {
-          view.content = legacyHarnessView(view.content);
-          if (view.previousContent) view.previousContent = legacyHarnessView(view.previousContent);
-        }
+        view.content = memberView(view.content, req.query);
+        if (view.previousContent) view.previousContent = memberView(view.previousContent, req.query);
         return view;
       });
       return { status: 200, json: { events: delivered, next: events.at(-1)?.seq ?? after } };
@@ -183,7 +181,7 @@ export function roomRoutes(): LocalRoute[] {
       });
     }),
     route('GET', /^\/api\/local\/rooms\/([^/]+)\/members$/u, 'joined', async (req, _params, ctx, caller) => ({
-      status: 200, json: { members: ctx.store.members(caller.roomId).map(member => req.query.get('wire') === '2' ? member : legacyHarnessView(member)) },
+      status: 200, json: { members: ctx.store.members(caller.roomId).map(member => memberView(member, req.query)) },
     })),
     route('PUT', /^\/api\/local\/rooms\/([^/]+)\/members\/([^/]+)$/u, 'joined', async (req, params, ctx, caller) => {
       let target: string;

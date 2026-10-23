@@ -82,7 +82,7 @@ export function createLocalSubstrate(input: {
       return found.kind === 'done' ? { kind: 'found', room: found.value } : { kind: 'unavailable' };
     },
     async room(roomId, options) {
-      const result = await input.http.get(localChannelPath(roomId, '?wire=2'), decodeLocalChannelSummary, options?.signal);
+      const result = await input.http.get(localChannelPath(roomId, '?wire=2&mute=1'), decodeLocalChannelSummary, options?.signal);
       if (result.kind === 'ok') return { kind: 'done', value: summary(result.value) };
       return result.kind === 'error' && result.status === 404 ? { kind: 'rejected', code: 'not_found' } : { kind: 'unavailable' };
     },
@@ -119,7 +119,7 @@ export function createLocalSubstrate(input: {
       async function run() {
         while (!disposed) {
           try {
-            const result = await input.http.get(localChannelPath(roomId, '?wire=2'), decodeLocalChannelSummary, abort.signal);
+            const result = await input.http.get(localChannelPath(roomId, '?wire=2&mute=1'), decodeLocalChannelSummary, abort.signal);
             if (disposed) return;
             if (result.kind === 'error' && result.status === 404) { publish(); return; }
             if (result.kind !== 'ok') { await pause(); continue; }
@@ -135,7 +135,7 @@ export function createLocalSubstrate(input: {
         }
         while (!disposed) {
           try {
-            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1&wire=2`), decodeLocalEventsPage, abort.signal, 35_000);
+            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1&wire=2&mute=1`), decodeLocalEventsPage, abort.signal, 35_000);
             if (disposed) return;
             if (result.kind === 'ok') {
               let membersChanged = false;

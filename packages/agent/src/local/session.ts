@@ -167,7 +167,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     let lastEnsureAt = 0;
     while (!stopped) {
       try {
-        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1&wire=2`, undefined,
+        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1&wire=2&mute=1`, undefined,
           controller.signal, (LOCAL_LONG_POLL_MAX_S + 10) * 1000), decodeLocalEventsPage);
         if (stopped) return;
         for (const event of page.events) {
@@ -233,7 +233,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
         after = result.seq;
         joinedAt = result.ts;
         await me();
-        const members = decoded(await withHelper(() => request('GET', 'members?wire=2')), decodeLocalMembersResponse);
+        const members = decoded(await withHelper(() => request('GET', 'members?wire=2&mute=1')), decodeLocalMembersResponse);
         check(roomId);
         for (const member of members.members) {
           names.set(member.userId, member.displayName);

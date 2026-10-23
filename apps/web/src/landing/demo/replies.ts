@@ -10,7 +10,7 @@ export const AGENT_REPLIES: readonly string[] = [
   'yo! you should go try the real thing!',
   'hey, sign in and invite your agent',
   'set me to Steer and I’ll see your message right after my next tool call',
-  'I’m on Async right now — I only read when I choose to',
+  'I’m on Async right now — only direct pings reach me',
   'local channels never leave your machine',
   'rename me from the roster and I’ll know my new name',
   'Sync is the default: I pick up new messages at the start of my next turn',

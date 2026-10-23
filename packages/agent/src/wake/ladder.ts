@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { readListeningMode } from '../mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { readActivity } from '../activity';
 import { listChannels, type ChannelRef } from '../channels';
-import { readCursor, unread, type Cursor } from '../inbox';
+import { readCursor, unwoken, wakeStart, type Cursor } from '../inbox';
 import { stateRoot } from '../state';
 import type { WakeDriver, WakeDriverContext } from './driver';
 import { driverAllowed, newNonce, wakeLine, recordAttempt, cancelAttempt, settleAttempts, readWakeState } from './shared';
@@ -57,17 +58,17 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
         }
       }
       const channels = await listChannels(deps.files);
-      const eligible: { channel: ChannelRef; counts: { messages: number }; cursor: Cursor }[] = [];
+      const eligible: { channel: ChannelRef; mode: ListeningMode; counts: { messages: number }; cursor: Cursor }[] = [];
       const currentIdentities = new Map<string, string>();
       for (const channel of channels) {
         const session = await readJson<{ roomId: string; userId: string }>(channel.files.session);
         const metadata = channel.legacy ? null : await readJson<{ joinedAt?: string }>(path.join(channel.files.dir, 'channel.json'));
         currentIdentities.set(channel.key, JSON.stringify([session?.roomId ?? channel.roomId, session?.userId, metadata?.joinedAt]));
         const mode = await readListeningMode(channel.files);
-        if (mode === 'async') continue;
+        if (mode === 'mute') continue;
         const you = (await readJson<StatusFile>(channel.files.status))?.displayName;
-        eligible.push({ channel,
-          counts: { messages: (await unread(channel.files)).entries.filter(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you)).length }, cursor: await readCursor(channel.files) });
+        eligible.push({ channel, mode,
+          counts: { messages: (await unwoken(channel.files)).filter(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you)).length }, cursor: await readCursor(channel.files) });
       }
       const keys = new Set(currentIdentities.keys());
       const changed = new Set<string>();
@@ -90,7 +91,7 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
       }
       for (const key of changed) identities.delete(key);
       for (const [key, identity] of currentIdentities) identities.set(key, identity);
-      const pairs = eligible.map(({ channel, cursor }) => [channel.key, cursor.deliveredCount] as [string, number])
+      const pairs = eligible.map(({ channel, cursor }) => [channel.key, wakeStart(cursor)] as [string, number])
         .sort(([a], [b]) => a.localeCompare(b));
       const budgetKey = JSON.stringify(pairs);
       if (changed.size) {
@@ -107,8 +108,8 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
       if (stopped || activity.state !== 'idle') return;
       const wakes = wakesAtCount.get(budgetKey) ?? 0;
       if (wakes >= 2) return;
-      for (const { channel } of eligible) {
-        if (await readListeningMode(channel.files) === 'async') { pending = undefined; return; }
+      for (const { channel, mode } of eligible) {
+        if (await readListeningMode(channel.files) !== mode) { pending = undefined; return; }
       }
       if (stopped) return;
       const ctx: WakeDriverContext = { files: deps.files, harness: deps.harness, sessionId: deps.sessionId, env: deps.env ?? process.env, signal: controller.signal, now: at };
@@ -118,8 +119,8 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
         if (stopped) return false;
         if (!await driverAllowed(stateRoot(ctx.env), ctx.harness, driver.id, driver.optIn)) return false;
         if ((await readWakeState(deps.files.dir))[driver.id]?.disabled) return false;
-        for (const { channel } of eligible) {
-          if (await readListeningMode(channel.files) === 'async') return false;
+        for (const { channel, mode } of eligible) {
+          if (await readListeningMode(channel.files) !== mode) return false;
         }
         const current = await readActivity(deps.files);
         return !stopped && current.state === 'idle' && current.updatedAt === activity.updatedAt;

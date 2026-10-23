@@ -38,11 +38,11 @@ describe('ChannelRoster', () => {
     const html = renderToStaticMarkup(<KhalaApp theme="dark" main={<ChannelRoster phase="ready" onOpen={() => {}} members={roster}
       modeFor={() => 'steer'} onSetMode={async () => 'sent'} />} />);
     const radios = html.match(/<button[^>]*role="radio"[^>]*>/g)!;
-    expect(radios).toHaveLength(3);
+    expect(radios).toHaveLength(4);
     expect(radios.every(radio => radio.includes('disabled=""'))).toBe(true);
     expect(radios.find(radio => radio.includes('aria-checked="true"'))).toContain('data-v="async"');
     expect(html).toContain('This client has no hooks or wake.');
-    expect(html).toContain('aria-label="Listening mode for Scout: Async · on demand"');
+    expect(html).toContain('aria-label="Listening mode for Scout: Async · pings only"');
     expect(html).not.toContain('aria-haspopup="menu"');
   });
 
@@ -53,6 +53,15 @@ describe('ChannelRoster', () => {
       onSetMode={async () => 'sent'} />} />);
     expect(html).toContain('aria-haspopup="menu"');
     expect(html.match(/<button[^>]*role="radio"[^>]*>/g)!.every(radio => !radio.includes('disabled'))).toBe(true);
+  });
+
+  it('offers and shows mute per agent', () => {
+    const resolved = members([scout]);
+    const html = renderToStaticMarkup(<KhalaApp theme="dark" main={<ChannelRoster phase="ready" onOpen={() => {}}
+      members={{ ...resolved, agents: resolved.agents.map(agent => ({ ...agent, harness: 'claude' })) }}
+      modeFor={() => 'mute'} onSetMode={async () => 'sent'} />} />);
+    expect(html.match(/<button[^>]*role="radio"[^>]*data-v="mute"[^>]*>/)?.[0]).toContain('aria-checked="true"');
+    expect(html).toContain('Mute · silent');
   });
 
   it('badges names that collide across owners with the thread owner suffix', () => {

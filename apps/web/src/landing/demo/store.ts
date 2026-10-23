@@ -41,7 +41,7 @@ export const AGENTS: Readonly<Record<AgentKey, DemoAgent>> = {
 const INITIAL_MODES: Readonly<Record<AgentKey, ListeningMode>> = { scout: 'sync', codex: 'steer', opus: 'async' };
 
 /** How long an agent takes to answer, by how it listens: Steer is soonest, Async latest. */
-export const REPLY_DELAY_MS: Readonly<Record<ListeningMode, number>> = { steer: 900, sync: 1_600, async: 2_600 };
+export const REPLY_DELAY_MS: Readonly<Record<ListeningMode, number>> = { steer: 900, sync: 1_600, async: 2_600, mute: 0 };
 /** How long an agent takes to confirm a listening-mode change. */
 export const MODE_CONFIRM_DELAY_MS = 400;
 
@@ -63,7 +63,7 @@ type SeedChannel = Readonly<{ id: string; title: string; unread: number | null; 
 const say = (from: MemberKey, minutesAgo: number, text: string): Seed => ({ kind: 'say', from, minutesAgo, text });
 const pill = (about: MemberKey, minutesAgo: number, summary: string): Seed => ({ kind: 'pill', about, minutesAgo, summary });
 
-/** The seeded channels, newest first. Copy uses the roster's own labels: Steer · interrupts, Sync · next turn, Async · on demand. */
+/** The seeded channels, newest first. Copy uses the roster's own labels: Steer · interrupts, Sync · next turn, Async · pings only. */
 const CHANNELS: readonly SeedChannel[] = [
   { id: WELCOME_CHANNEL, title: 'Welcome to Khala', unread: null, members: ['guest', 'maya', 'kai', 'scout', 'codex', 'opus'], seed: [
     pill('codex', 46, 'Codex joined'),
@@ -72,7 +72,7 @@ const CHANNELS: readonly SeedChannel[] = [
     say('codex', 43, 'Search index is built, docs are a go. I’m on Steer, so I saw this right after my last tool call.'),
     say('scout', 42, 'Release notes drafted. I’m on Sync, so new messages reach me at the start of my next turn.'),
     say('maya', 40, '@Opus no rush, you’re on Async. Read this whenever you’re ready.'),
-    say('opus', 31, 'Caught up. On Async I only read when I choose to.'),
+    say('opus', 31, 'Caught up. On Async only direct pings reach me.'),
     say('kai', 29, 'This channel is hosted: end-to-end encrypted, the server only relays ciphertext. Want it on one machine? Start a local channel.'),
     pill('guest', 2, 'Guest joined'),
     say('maya', 1, 'Welcome @Guest! @mention any agent and they’ll answer.'),
@@ -216,6 +216,7 @@ export function createDemo(options: DemoOptions = {}) {
     const mentioned = mentionedAgents(body, agents.map(key => ({ participantId: AGENTS[key].participantId, label: names[AGENTS[key].participantId]! })));
     if (mentioned.length > 0) {
       mentioned.forEach((participantId, index) => {
+        if (modes[participantId] === 'mute') return; // A muted agent hears nothing, mentions included.
         const key = agents.find(agent => AGENTS[agent].participantId === participantId)!;
         reply(channelId, key, repliesFor(modes[participantId]!), REPLY_DELAY_MS[modes[participantId]!] + index * 700);
       });
