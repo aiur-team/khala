@@ -1,96 +1,91 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_VARIANT_COUNT, HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HUMAN_PALETTE, assignAgentVariants, colorVariants, colorSwatch, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, variantColor, type ResolvedHumanColor } from './human-colors';
+import { HUMAN_COLOR_IDS, defaultHumanColor, type ChannelColorKey } from '@khala/contracts/m1/colors';
+import { HUMAN_PALETTE, channelPalette, colorOf, colorSwatch, humanColorStyle, resolveChannelColors, type ColorMember } from './human-colors';
 
-const slot = (color: ResolvedHumanColor | undefined) => color ? `${color.id}@${color.tier}` : undefined;
-const slots = (map: ReadonlyMap<string, ResolvedHumanColor>) => Object.fromEntries([...map].map(([ownerId, color]) => [ownerId, slot(color)]));
+const keysOf = (result: ReadonlyMap<string, { key: ChannelColorKey }>) => Object.fromEntries([...result].map(([id, color]) => [id, color.key]));
+const human = (id: string, pick?: ChannelColorKey): ColorMember => ({ id, ownerId: id, pick });
+const agent = (id: string, ownerId: string, pick?: ChannelColorKey): ColorMember => ({ id, ownerId, pick });
 
-describe('nearestColors', () => {
-  it('orders by circular hue distance, ties to the lower palette index', () => {
-    expect(nearestColors('blue')).toEqual(['blue', 'indigo', 'teal', 'green', 'purple', 'pink', 'lime', 'red', 'orange', 'amber']);
-    expect(nearestColors('red')).toEqual(['red', 'orange', 'pink', 'amber', 'purple', 'lime', 'indigo', 'blue', 'green', 'teal']);
-  });
-
-  it('starts every list with the colour itself and covers the palette', () => {
-    for (const id of HUMAN_COLOR_IDS) {
-      expect(nearestColors(id)[0]).toBe(id);
-      expect([...nearestColors(id)].sort()).toEqual([...HUMAN_COLOR_IDS].sort());
-    }
+describe('channelPalette', () => {
+  it('keeps the 10 base colours up to 10 members and adds a shade ring per further 10', () => {
+    expect(channelPalette(0)).toEqual(HUMAN_COLOR_IDS);
+    expect(channelPalette(10)).toEqual(HUMAN_COLOR_IDS);
+    expect(channelPalette(11)).toEqual([...HUMAN_COLOR_IDS, ...HUMAN_COLOR_IDS.map(id => `${id}.1`)]);
+    expect(channelPalette(20)).toHaveLength(20);
+    expect(channelPalette(21)).toHaveLength(30);
+    expect(channelPalette(1000)).toHaveLength(90);
   });
 });
 
-describe('resolveHumanColors', () => {
-  const others = [
-    { ownerId: 'o-b', color: 'blue' as const },
-    { ownerId: 'o-c', color: 'blue' as const },
-    { ownerId: 'o-d', color: 'indigo' as const },
-  ];
-
-  it('gives the operator example: three blues each see themselves blue and the others apart', () => {
-    expect(slots(resolveHumanColors({ viewer: { ownerId: 'o-a', color: 'blue' }, others }))).toEqual({
-      'o-a': 'blue@0', 'o-b': 'teal@0', 'o-c': 'green@0', 'o-d': 'indigo@0',
-    });
-    const fromB = resolveHumanColors({
-      viewer: { ownerId: 'o-b', color: 'blue' },
-      others: [{ ownerId: 'o-a', color: 'blue' }, { ownerId: 'o-c', color: 'blue' }, { ownerId: 'o-d', color: 'indigo' }],
-    });
-    expect(slots(fromB)).toEqual({ 'o-b': 'blue@0', 'o-a': 'teal@0', 'o-c': 'green@0', 'o-d': 'indigo@0' });
+describe('resolveChannelColors', () => {
+  it('shows everyone their chosen colour when nothing clashes', () => {
+    expect(keysOf(resolveChannelColors('a', [human('a', 'blue'), human('b', 'red'), agent('x', 'b', 'teal.1')])))
+      .toEqual({ a: 'blue', b: 'red', x: 'teal.1' });
   });
 
-  it('is independent of the order of others', () => {
-    const viewer = { ownerId: 'o-a', color: 'blue' as const };
-    const expected = slots(resolveHumanColors({ viewer, others }));
-    for (const shuffled of [[others[2]!, others[0]!, others[1]!], [others[1]!, others[2]!, others[0]!], [...others].reverse()]) {
-      expect(slots(resolveHumanColors({ viewer, others: shuffled }))).toEqual(expected);
+  it('lets the viewer take another human\'s colour on their own page only', () => {
+    const members = [human('a', 'red'), agent('a1', 'a', 'teal'), human('b', 'red'), agent('b1', 'b', 'teal')];
+    const fromA = keysOf(resolveChannelColors('a', members));
+    const fromB = keysOf(resolveChannelColors('b', members));
+    expect([fromA.a, fromA.a1]).toEqual(['red', 'teal']);
+    expect([fromB.b, fromB.b1]).toEqual(['red', 'teal']);
+    expect(fromA.b).not.toBe('red');
+    expect(fromA.b1).not.toBe('teal');
+    expect(fromB.a).not.toBe('red');
+  });
+
+  it('gives a clash between two others to the human, then the lower id; the loser takes the next free colour', () => {
+    expect(keysOf(resolveChannelColors('v', [human('v', 'blue'), agent('m1', 'm', 'red'), human('z', 'red')])))
+      .toEqual({ v: 'blue', z: 'red', m1: 'orange' });
+    expect(keysOf(resolveChannelColors('v', [human('v', 'blue'), human('y', 'red'), human('x', 'red')])))
+      .toEqual({ v: 'blue', x: 'red', y: 'orange' });
+  });
+
+  it('gives members with no pick their default colour when free', () => {
+    expect(resolveChannelColors('v', [human('v', 'blue'), human('o-x')]).get('o-x')?.key)
+      .toBe(defaultHumanColor('o-x') === 'blue' ? 'indigo' : defaultHumanColor('o-x'));
+  });
+
+  it('is the same for any input order', () => {
+    const members = [human('a', 'red'), human('b', 'red'), agent('b1', 'b'), agent('b2', 'b', 'red'), human('c'), agent('c1', 'c', 'blue')];
+    const expected = keysOf(resolveChannelColors('c', members));
+    for (let shift = 1; shift < members.length; shift++) {
+      expect(keysOf(resolveChannelColors('c', [...members.slice(shift), ...members.slice(0, shift)].reverse()))).toEqual(expected);
     }
   });
 
-  it('uses all ten base colours before the vivid variants', () => {
-    const many = Array.from({ length: 11 }, (_, index) => ({ ownerId: `o-${String(index).padStart(2, '0')}`, color: 'red' as const }));
-    const result = resolveHumanColors({ viewer: { ownerId: 'viewer', color: 'red' }, others: many });
-    expect(slot(result.get('viewer'))).toBe('red@0');
-    expect(many.map(({ ownerId }) => slot(result.get(ownerId)))).toEqual([
-      'orange@0', 'pink@0', 'amber@0', 'purple@0', 'lime@0', 'indigo@0', 'blue@0', 'green@0', 'teal@0', 'red@1', 'orange@1',
-    ]);
+  it('never shows two members in one colour on any viewer\'s page, expanding the palette past 10', () => {
+    const picks = channelPalette(1);
+    const members: ColorMember[] = Array.from({ length: 35 }, (_, index) => index % 3 === 0
+      ? human(`h${index}`, picks[index % 4])
+      : agent(`g${index}`, `h${index - index % 3}`, index % 2 ? picks[index % 5] : undefined));
+    for (const viewer of ['h0', 'h12', 'h33', 'nobody']) {
+      const result = resolveChannelColors(viewer, members);
+      expect(result.size).toBe(35);
+      expect(new Set([...result.values()].map(color => color.key)).size).toBe(35);
+    }
+    expect(keysOf(resolveChannelColors('h0', members)).h0).toBe('red');
   });
 
-  it('accepts a duplicate only once all 30 slots are used', () => {
-    const many = Array.from({ length: 30 }, (_, index) => ({ ownerId: `o-${String(index).padStart(2, '0')}`, color: 'green' as const }));
-    const result = resolveHumanColors({ viewer: { ownerId: 'viewer', color: 'green' }, others: many });
-    const firstThirty = [slot(result.get('viewer')), ...many.slice(0, 29).map(({ ownerId }) => slot(result.get(ownerId)))];
-    expect(new Set(firstThirty).size).toBe(30);
-    expect(slot(result.get('o-29'))).toBe('green@0');
-  });
-
-  it("ignores an entry with the viewer's ownerId", () => {
-    const result = resolveHumanColors({ viewer: { ownerId: 'o-a', color: 'blue' }, others: [{ ownerId: 'o-a', color: 'red' }] });
-    expect(slots(result)).toEqual({ 'o-a': 'blue@0' });
-  });
-
-  it('falls back to the default colour, and lets a defined colour win among duplicates', () => {
-    const result = resolveHumanColors({
-      viewer: { ownerId: 'viewer', color: defaultHumanColor('o-x') === 'red' ? 'blue' : 'red' },
-      others: [{ ownerId: 'o-x' }, { ownerId: 'o-y' }, { ownerId: 'o-y', color: defaultHumanColor('o-y') === 'pink' ? 'lime' : 'pink' }],
-    });
-    expect(result.get('o-x')?.id).toBe(defaultHumanColor('o-x'));
-    expect(result.get('o-y')?.id).toBe(defaultHumanColor('o-y') === 'pink' ? 'lime' : 'pink');
+  it('keeps the first entry for a repeated member id', () => {
+    expect(keysOf(resolveChannelColors('v', [human('v', 'blue'), human('v', 'red')]))).toEqual({ v: 'blue' });
   });
 });
 
-describe('resolvedColor and humanColorStyle', () => {
-  it('tints with solid at tier 0 and with the dark variant otherwise', () => {
-    expect(resolvedColor('blue', 0)).toMatchObject({ hue: 214, solid: '#276ecb', bubbleDark: '#294365', bubbleLight: '#bdd3ef', ink: '#10233c', tint: '#276ecb' });
-    expect(resolvedColor('blue', 1).tint).toBe('#2962ae');
-    expect(resolvedColor('blue', 2).tint).toBe('#3f526c');
+describe('colorOf and humanColorStyle', () => {
+  it('draws a base colour from the palette and a shade from its generated tint', () => {
+    expect(colorOf('blue')).toMatchObject({ key: 'blue', label: 'Blue', hue: 214, solid: '#276ecb', bubbleDark: '#294365', bubbleLight: '#bdd3ef', ink: '#10233c', tint: '#276ecb' });
+    const shade = colorOf('blue.2');
+    expect(shade).toMatchObject({ key: 'blue.2', label: 'Blue shade 2', bubbleLight: '#bdd3ef', solid: shade.tint, bubbleDark: shade.tint });
+    expect(shade.tint).not.toBe(colorOf('blue').tint);
   });
 
-  it('keeps pink tier 0 equal to the design other-human bubble', () => {
-    expect(HUMAN_PALETTE.pink.tiers[0]).toEqual({ dark: '#6d2c4d', light: '#f1c5db' });
-    expect(HUMAN_PALETTE.pink.ink).toBe('#3a1026');
+  it('keeps pink equal to the design other-human bubble', () => {
+    expect(HUMAN_PALETTE.pink).toMatchObject({ dark: '#6d2c4d', light: '#f1c5db', ink: '#3a1026' });
   });
 
   it('maps each sender to its custom properties', () => {
-    const blue = resolvedColor('blue', 0);
+    const blue = colorOf('blue');
     expect(humanColorStyle(blue, 'me')).toEqual({ '--hs': '#276ecb' });
     expect(humanColorStyle(blue, 'human')).toEqual({ '--hb': '#294365', '--hb-l': '#bdd3ef', '--hk': '#10233c' });
     expect(humanColorStyle(blue, 'agent')).toEqual({ '--oh': 214, '--ob': '#276ecb' });
@@ -110,26 +105,28 @@ describe('palette contrast (WCAG 2.x)', () => {
   // color-mix(in srgb, tint p, base): a per-channel blend of the gamma-encoded values.
   const mix = (tint: string, p: number, base: string) => rgb(tint).map((value, index) => Math.round(value * p + rgb(base)[index]! * (1 - p)));
   const white = [255, 255, 255];
+  const keys = channelPalette(Infinity);
 
-  const cases = HUMAN_COLOR_IDS.flatMap(id => ([0, 1, 2] as const).map(tier => [id, tier] as [HumanColorId, 0 | 1 | 2]));
-
-  it.each(cases)('%s tier %i keeps every bubble text >= 4.5:1', (id, tier) => {
-    const entry = HUMAN_PALETTE[id];
-    expect(ratio(white, rgb(entry.solid))).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(white, rgb(entry.tiers[tier].dark))).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(rgb(entry.ink), rgb(entry.tiers[tier].light))).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it.each(cases)('%s tier %i keeps agent-bubble text >= 4.5:1 on its tint', (id, tier) => {
-    const { tint } = resolvedColor(id, tier);
-    expect(ratio(rgb('#edeef0'), mix(tint, 0.30, '#292d34'))).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(rgb('#2a2520'), mix(tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it.each(cases)('%s tier %i keeps white avatar initials >= 4.5:1 on its swatch', (id, tier) => {
-    const color = resolvedColor(id, tier);
+  it.each(keys)('%s keeps bubble, agent-bubble and avatar text >= 4.5:1', key => {
+    const color = colorOf(key);
+    expect(ratio(white, rgb(color.solid))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(white, rgb(color.bubbleDark))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(rgb(color.ink), rgb(color.bubbleLight))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(rgb('#edeef0'), mix(color.tint, 0.30, '#292d34'))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(rgb('#2a2520'), mix(color.tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
     expect(colorSwatch(color)).toBe(color.tint);
     expect(ratio(white, rgb(color.tint))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('generates 8 distinct shades of every base colour', () => {
+    expect(keys).toHaveLength(90);
+    for (const id of HUMAN_COLOR_IDS) {
+      const tints = keys.filter(key => key.split('.')[0] === id).map(key => colorOf(key).tint);
+      for (let a = 0; a < tints.length; a++) for (let b = a + 1; b < tints.length; b++) {
+        const distance = rgb(tints[a]!).reduce((sum, value, index) => sum + Math.abs(value - rgb(tints[b]!)[index]!), 0);
+        expect(distance, `${tints[a]} vs ${tints[b]}`).toBeGreaterThanOrEqual(30);
+      }
+    }
   });
 
   // The CSS fallback `hsl(var(--oh) 65% 29%)` for avatars drawn from a hue alone (no provider, the channel list).
@@ -142,51 +139,5 @@ describe('palette contrast (WCAG 2.x)', () => {
   it('keeps white initials >= 4.5:1 on the hue-only fallback for every hue', () => {
     const worst = Math.min(...Array.from({ length: 360 }, (_, hue) => ratio(white, hsl(hue, 0.65, 0.29))));
     expect(worst).toBeGreaterThanOrEqual(4.5);
-  });
-});
-
-describe('agent variants (#1308)', () => {
-  const rgb = (hex: string) => [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16));
-  const luminance = (hex: string) => {
-    const [r, g, b] = rgb(hex).map(value => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
-    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-  };
-  const cases = HUMAN_COLOR_IDS.flatMap(id => ([0, 1, 2] as const).map(tier => [id, tier] as [HumanColorId, 0 | 1 | 2]));
-
-  it.each(cases)('%s tier %i: every variant keeps white text >= 4.5:1 and differs from its siblings', (id, tier) => {
-    const base = resolvedColor(id, tier);
-    expect(variantColor(base, 0)).toBe(base);
-    const tints = colorVariants(base).map(variant => variant.tint);
-    expect(tints).toHaveLength(AGENT_VARIANT_COUNT);
-    expect(variantColor(base, 3).tint).toBe(tints[3]);
-    for (const tint of tints) expect(1.05 / (luminance(tint) + 0.05)).toBeGreaterThanOrEqual(4.5);
-    // The agent bubble: color-mix(in srgb, tint 30%/28%, surface) under body text, dark and light themes.
-    const mix = (tint: string, p: number, surface: string) => `#${rgb(tint).map((value, index) => Math.round(value * p + rgb(surface)[index]! * (1 - p)).toString(16).padStart(2, '0')).join('')}`;
-    const ratio = (a: string, b: string) => { const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (high! + 0.05) / (low! + 0.05); };
-    for (const tint of tints) {
-      expect(ratio('#edeef0', mix(tint, 0.30, '#292d34'))).toBeGreaterThanOrEqual(4.5);
-      expect(ratio('#2a2520', mix(tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
-    }
-    for (let a = 0; a < tints.length; a++) for (let b = a + 1; b < tints.length; b++) {
-      const distance = rgb(tints[a]!).reduce((sum, value, index) => sum + Math.abs(value - rgb(tints[b]!)[index]!), 0);
-      expect(distance, `${tints[a]} vs ${tints[b]}`).toBeGreaterThanOrEqual(30);
-    }
-  });
-
-  const agent = (participantId: string, ownerId = 'kevin') => ({ participantId, ownerId, matrixUserId: `@${participantId}:x` });
-  it('gives each of a human\'s agents a different default, by participant id', () => {
-    expect([...assignAgentVariants([agent('c'), agent('a'), agent('b')], () => null)]).toEqual([['a', 1], ['b', 2], ['c', 3]]);
-  });
-  it('honours a stored choice and fills the lowest free index around it', () => {
-    const stored = { agents: { '@b:x': 1, '@a:x': 3 } };
-    expect(Object.fromEntries(assignAgentVariants([agent('a'), agent('b'), agent('c')], () => stored))).toEqual({ a: 3, b: 1, c: 2 });
-  });
-  it('keeps the lower participant id on a duplicate stored index', () => {
-    const stored = { agents: { '@a:x': 2, '@b:x': 2 } };
-    expect(Object.fromEntries(assignAgentVariants([agent('b'), agent('a')], () => stored))).toEqual({ a: 2, b: 1 });
-  });
-  it('ignores another human\'s entry for an agent they do not own', () => {
-    const records: Record<string, { agents: Record<string, number> }> = { maya: { agents: { '@a:x': 5 } } };
-    expect(Object.fromEntries(assignAgentVariants([agent('a'), agent('m', 'maya')], owner => records[owner]))).toEqual({ a: 1, m: 1 });
   });
 });

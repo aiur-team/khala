@@ -113,7 +113,7 @@ export function MemberAvatar({ member, interactive = false, onClick, showStatus 
   const shared = interactive ? { onClick: () => onClick?.() } : { static: true as const };
   if (member.kind === 'human') {
     return <Avatar kind="human" label={member.name} hue={member.hue} initials={member.initials}
-      swatch={colorSwatch(member.color)} tier={member.color?.tier} {...shared} />;
+      swatch={colorSwatch(member.color)} {...shared} />;
   }
   return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue} ownerSwatch={colorSwatch(member.ownerColor)}
     swatch={colorSwatch(member.color)}
@@ -368,7 +368,7 @@ export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent
               {human.email ? <em className="kh-email" title={human.email}>{human.email}</em> : null}<em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
           </button> : <div className="kh-rh">
             <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'}
-              swatch={colorSwatch(agents[0]?.ownerColor)} tier={agents[0]?.ownerColor?.tier} />
+              swatch={colorSwatch(agents[0]?.ownerColor)} />
             <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
           </div>}
           {human && creatorOwnerId === members.viewer.ownerId && human.ownerId !== creatorOwnerId && onRemoveHuman

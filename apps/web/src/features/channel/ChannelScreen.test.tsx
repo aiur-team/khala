@@ -6,7 +6,7 @@ import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { renderMessageContent } from '../timeline/message-renderer';
 import { ChannelScreen, Recent, type ChannelScreenProps } from './ChannelScreen';
 import { awayLabel } from './AgentPresencePanel';
-import { resolvedColor, variantColor } from '../../ui/khala/human-colors';
+import { colorOf } from '../../ui/khala/human-colors';
 import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
 
 const mira = 'owner_mira' as OwnerId;
@@ -253,15 +253,15 @@ describe('per-channel colours (#1308)', () => {
   const agentFill = (html: string, participantId: string) =>
     new RegExp(`data-kh-agent="${participantId}"><span class="kh-av kh-aav" style="[^"]*--hc:(#[0-9a-f]{6})`).exec(html)?.[1];
 
-  it('draws the viewer in their channel colour and each agent in its own variant, honouring a stored choice', () => {
-    const channelColors = (ownerId: string) => ownerId === mira ? { color: 'teal' as const, agents: { '@agent_b:hs': 1 } } : null;
+  it('draws the viewer in their channel colour and each agent in its own colour, honouring a stored choice', () => {
+    const channelColors = (ownerId: string) => ownerId === mira ? { color: 'teal' as const, agents: { '@agent_b:hs': 'teal.1' as const } } : null;
     const html = render({ phase: 'ready', agents: [agent('agent_a', mira), agent('agent_b', mira), agent('agent_c', mira)] },
       { viewerColor: 'blue', describeParticipant: describe_, channelColors });
     expect(rosterHue(html, 'p_mira')).toBe(182);
     const fills = ['agent_a', 'agent_b', 'agent_c'].map(id => agentFill(html, id));
     expect(new Set(fills).size).toBe(3);
     expect(fills.every(Boolean)).toBe(true);
-    expect(fills[1]).toBe(variantColor(resolvedColor('teal', 0), 1).tint);
+    expect(fills[1]).toBe(colorOf('teal.1').tint);
   });
 
   it('shows the Colors button only with a save handler', () => {

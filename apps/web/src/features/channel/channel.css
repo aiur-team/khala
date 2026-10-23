@@ -37,5 +37,3 @@
 .kh-colors .kh-swatches { grid-template-columns: repeat(5, 1fr); }
 .kh-colors-sec { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
 .kh-colors-sec > .kh-prof-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kh-swatch[aria-disabled="true"] { cursor: not-allowed; }
-.kh-swatch[aria-disabled="true"] > span { opacity: .3; transform: none; }
