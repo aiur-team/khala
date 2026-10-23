@@ -50,6 +50,8 @@
 .kh-btn:disabled { opacity: .4; cursor: default; }
 .kh-btn-ic { display: flex; align-items: center; justify-content: center; gap: .45rem; } .kh-btn-ic svg { width: 15px; height: 15px; }
 .kh-hint { font-size: .74rem; color: var(--faint); text-align: center; margin-top: -.3rem; }
+/* Touch has no hover, so `title`/`data-tip` explanations never show; spell them out. */
+.kh-touch-hint { display: none; } @media (hover: none) { .kh-touch-hint { display: block; } }
 .kh-tbtn { align-self: flex-start; border: 0; background: none; padding: .2rem 0; font: inherit; font-size: .84rem; font-weight: 600; color: var(--block); cursor: pointer; }
 .kh-tbtn:hover { text-decoration: underline; }
 .kh-sep { height: 1px; background: var(--line); margin: 0 -.75rem; }
