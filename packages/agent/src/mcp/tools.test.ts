@@ -14,6 +14,8 @@ const fake = (): KhalaAgentClient => ({
   status: vi.fn(async () => ({ state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17, listeningMode: 'sync' as const })),
   read: vi.fn(async () => ({ messages: [], nextBefore: '$next' })),
   send: vi.fn(async () => ({ eventId: '$sent' })),
+  sendImage: vi.fn(async () => ({ eventId: '$img' })),
+  downloadImage: vi.fn(async () => ({ path: '/state/images/x.png', name: 'x.png', mimetype: 'image/png', w: 1, h: 1 })),
   sendChannelEvent: vi.fn(async () => ({ eventId: '$event' })),
   leave: vi.fn(async channel => ({ left: channel, channels: [] })),
   setMode: vi.fn(async (mode: 'steer' | 'sync' | 'async') => ({ channel: 'Review', previous: 'sync' as const, mode })),
@@ -416,4 +418,19 @@ it('refuses a secret in a mode or leave reason before calling the client', async
   expect(responses[2].error.code).toBe(-32602);
   expect(client.setMode).not.toHaveBeenCalled();
   expect(client.leave).not.toHaveBeenCalled();
+});
+
+it('sends an image with a caption and downloads one by event ID', async () => {
+  const client = fake();
+  const { responses } = await exchange([
+    call('khala_send', { image: '/tmp/x.png', text: 'look' }), call('khala_send', { image: '/tmp/x.png', channel: 'Review' }),
+    call('khala_read', { download: '$img' }), call('khala_read', { download: '$img', limit: 5 }), call('khala_read', { download: 'img' }),
+  ], client);
+  expect(client.sendImage).toHaveBeenNthCalledWith(1, '/tmp/x.png', 'look', undefined);
+  expect(client.sendImage).toHaveBeenNthCalledWith(2, '/tmp/x.png', '', 'Review');
+  expect(client.send).not.toHaveBeenCalled();
+  expect(responses[2].result.structuredContent).toMatchObject({ path: '/state/images/x.png' });
+  expect(client.downloadImage).toHaveBeenCalledTimes(1);
+  expect(responses[3].error.code).toBe(-32602);
+  expect(responses[4].error.code).toBe(-32602);
 });

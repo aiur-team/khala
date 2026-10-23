@@ -73,6 +73,8 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
         return { ...result, ...(wakeNotice ? { wakeNotice } : {}) };
       },
       async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
+      async sendImage(file, caption, channel) { await initialize(); return client.sendImage(file, caption, channel); },
+      async downloadImage(eventId, channel) { await initialize(); return client.downloadImage(eventId, channel); },
       async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
       async leave(channel, reason) { await initialize(); return reason === undefined ? client.leave(channel) : client.leave(channel, reason); },
       async setMode(mode, input, channel) { await initialize(); return client.setMode(mode, input, channel); },

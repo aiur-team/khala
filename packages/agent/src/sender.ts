@@ -1,5 +1,6 @@
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import type { SessionMessage } from './transport';
+import { imageLabel, readImageEvent } from '@khala/contracts/m1/image';
 
 function localpart(userId: string): string {
   return /^@([^:]+):/u.exec(userId)?.[1] ?? userId;
@@ -12,12 +13,18 @@ export function senderKindOf(userId: string): InboxEntry['senderKind'] {
 /** The Matrix rich-reply parent of each entry; kept off `InboxEntry`, whose shape is a strict contract. */
 const replyParents = new WeakMap<InboxEntry, string>();
 
+/** `[image: name, WxH]` plus any caption; fetched only on request (khala_read download), never in a wake. */
+function imageBody(message: SessionMessage): string | undefined {
+  const found = message.type === 'm.room.message' ? readImageEvent(message.content) : null;
+  return found ? `${imageLabel(found.image)}${found.caption ? `\n${found.caption}` : ''}` : undefined;
+}
+
 export function toInboxEntry(message: SessionMessage, displayName?: string | null): InboxEntry {
   const entry: InboxEntry = {
     eventId: message.eventId, roomId: message.roomId, ts: new Date(message.ts).toISOString(),
     sender: message.sender,
     senderLabel: displayName && displayName !== message.sender ? displayName : localpart(message.sender),
-    senderKind: senderKindOf(message.sender), kind: 'message', body: message.body,
+    senderKind: senderKindOf(message.sender), kind: 'message', body: imageBody(message) ?? message.body,
   };
   const relates = message.content['m.relates_to'];
   const reply = typeof relates === 'object' && relates !== null ? (relates as Record<string, unknown>)['m.in_reply_to'] : undefined;

@@ -448,6 +448,32 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
         ...(options?.includeUnavailable === false || options?.stopAtEventId ? { ...(oldestTs === undefined ? {} : { oldestTs }), reachedBoundary } : {}) };
     },
     async send(roomId, text) { if (stopped) throw new Error('session_stopped'); const res = await guarded(roomId, () => client.sendTextMessage(roomId, text)); return { eventId: res.event_id }; },
+    async uploadMedia(ciphertext) {
+      if (stopped) throw new Error('session_stopped');
+      const res = await client.uploadContent(new Blob([new Uint8Array(ciphertext)]), { type: 'application/octet-stream', includeFilename: false });
+      return res.content_uri;
+    },
+    async downloadMedia(mxc) {
+      if (stopped) throw new Error('session_stopped');
+      // Authenticated media (Matrix v1.11): /_matrix/client/v1/media/download with the access token.
+      const url = client.mxcUrlToHttp(mxc, undefined, undefined, undefined, false, true, true);
+      if (!url) throw new Error('invalid_media_url');
+      const res = await fetch(url, { headers: { authorization: `Bearer ${creds.accessToken}` }, signal: AbortSignal.timeout(60_000) });
+      if (!res.ok) throw new Error(`media_download_${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    async sendContent(roomId, content) {
+      if (stopped) throw new Error('session_stopped');
+      const res = await guarded(roomId, () => client.sendEvent(roomId, EventType.RoomMessage, content as never));
+      return { eventId: res.event_id };
+    },
+    async eventContent(roomId, eventId) {
+      if (stopped) throw new Error('session_stopped');
+      const raw = await guarded(roomId, () => client.fetchRoomEvent(roomId, eventId));
+      const event = client.getEventMapper()({ ...raw, room_id: roomId });
+      try { await client.decryptEventIfNeeded(event); } catch { return undefined; }
+      return event.isDecryptionFailure() || event.getType() !== 'm.room.message' ? undefined : event.getContent();
+    },
     async sendChannelEvent(roomId, content, txnId) {
       if (stopped) throw new Error('session_stopped');
       const res = await guarded(roomId, () => client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, content as never, txnId));

@@ -21,6 +21,8 @@ export function createPlaceholderClient(): KhalaAgentClient {
     async status() { return { state: 'idle', unread: 0, listeningMode: 'sync' }; },
     async read() { throw new KhalaClientError('not_connected'); },
     async send() { throw new KhalaClientError('not_connected'); },
+    async sendImage() { throw new KhalaClientError('not_connected'); },
+    async downloadImage() { throw new KhalaClientError('not_connected'); },
     async sendChannelEvent() { throw new KhalaClientError('not_connected'); },
     async leave() { throw new KhalaClientError('not_connected'); },
     async setMode() { throw new KhalaClientError('not_connected'); },

@@ -17,6 +17,10 @@ export interface KhalaAgentClient {
   /** Without a channel while in several, `messages` merges every channel (each labelled `channel`) and `channels` holds the per-channel rest. */
   read(limit: number, before?: string, channel?: string, filter?: ReadFilter): Promise<ReadResult & { channels?: ({ channel: string; roomId: string; error?: KhalaErrorCode; delegated?: true } & Partial<Omit<ReadResult, 'messages'>>)[] }>;
   send(text: string, channel?: string): Promise<{ eventId: string }>;
+  /** Hosted only. Validates, encrypts and uploads the image at `file` (an absolute path), then posts it with an optional caption. */
+  sendImage(file: string, caption: string, channel?: string): Promise<{ eventId: string }>;
+  /** Hosted only. Decrypts an image message to a file under this channel's state dir. The image is untrusted content. */
+  downloadImage(eventId: string, channel?: string): Promise<ImageDownload>;
   /** A claim on a key someone else holds is not posted (or loses the race) and returns ClaimConflict. */
   sendChannelEvent(content: ChannelEventContent, channel?: string): Promise<{ eventId: string } | ClaimConflict>;
   /** `reason` posts a visible "<you> left: <reason>" event before leaving. */
@@ -26,11 +30,12 @@ export interface KhalaAgentClient {
   close(): Promise<void>;
 }
 
+export type ImageDownload = { path: string; name: string; mimetype: string; w: number; h: number; caption?: string };
 export type SetModeInput = { trigger: 'owner_request' | 'self'; reason: string; keepBacklog?: boolean };
 export type ChannelStatus = { channel: string; roomId?: string; link?: string; state: string; detail?: string; you?: string; agentUserId?: string; unread: number; listeningMode: ListeningMode; archived?: true; delegated?: true; members?: MemberPresence[] };
 export type ReadResult = { you?: string; members?: MemberPresence[]; messages: (InboxEntry & { seenBy?: string[]; channel?: string })[]; nextBefore?: string; wakeNotice?: string } & Partial<CoordinationState>;
 
-export type KhalaErrorCode = 'update_required' | 'channel_required' | 'channel_unknown' | 'channel_ambiguous' | 'channel_limit' | 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'secret_detected' | 'mode_refused' | 'internal_error';
+export type KhalaErrorCode = 'update_required' | 'channel_required' | 'channel_unknown' | 'channel_ambiguous' | 'channel_limit' | 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'secret_detected' | 'mode_refused' | 'invalid_image' | 'internal_error';
 export class KhalaClientError extends Error {
   readonly code: KhalaErrorCode;
   constructor(code: KhalaErrorCode, message?: string, readonly extra?: { channels?: { channel: string; roomId: string }[]; kind?: string; reason?: string }) {

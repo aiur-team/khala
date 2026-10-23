@@ -1748,3 +1748,47 @@ describe('coordination events', () => {
     expect(waker.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$mine']);
   });
 });
+
+describe('images', () => {
+  const png = (w: number, h: number) => new Uint8Array([0x89, ...Buffer.from('PNG\r\n\x1a\n'), 0, 0, 0, 13, ...Buffer.from('IHDR'),
+    0, 0, w >> 8, w & 255, 0, 0, h >> 8, h & 255, 8, 6, 0, 0, 0]);
+  function withMedia() {
+    const media = new Map<string, Uint8Array>();
+    const sent: Record<string, unknown>[] = [];
+    session.uploadMedia = vi.fn(async (ciphertext: Uint8Array) => { const url = `mxc://s/m${media.size}`; media.set(url, ciphertext); return url; });
+    session.downloadMedia = vi.fn(async (url: string) => media.get(url)!);
+    session.sendContent = vi.fn(async (_room: string, content: Record<string, unknown>) => { sent.push(content); return { eventId: '$img' }; });
+    session.eventContent = vi.fn(async (_room: string, eventId: string) => eventId === '$img' ? sent[0] : { msgtype: 'm.text', body: 'hi' });
+    return { media, sent };
+  }
+
+  it('encrypts, uploads and posts an image, then downloads it back to a private file', async () => {
+    const { media, sent } = withMedia();
+    await connected();
+    const file = path.join(root, 'shot.png');
+    await fs.writeFile(file, png(4, 3));
+    expect(await client.sendImage(file, 'look')).toEqual({ eventId: '$img' });
+    expect([...media.values()][0]).not.toEqual(png(4, 3));
+    expect(sent[0]).toMatchObject({ msgtype: 'm.image', body: 'look', filename: 'shot.png', info: { mimetype: 'image/png', w: 4, h: 3 } });
+    expect(toInboxEntry({ eventId: '$img', roomId: credentials.roomId, sender: '@khala_abc:s', ts: 0, type: 'm.room.message', body: 'look', content: sent[0]! }).body)
+      .toBe('[image: shot.png, 4x3]\nlook');
+    const saved = await client.downloadImage('$img');
+    expect(saved).toMatchObject({ name: 'shot.png', mimetype: 'image/png', w: 4, h: 3, caption: 'look' });
+    expect(new Uint8Array(await fs.readFile(saved.path))).toEqual(png(4, 3));
+    expect(saved.path.startsWith(channelDir())).toBe(true);
+    expect((await fs.stat(saved.path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('refuses SVG, relative paths, non-images and local channels', async () => {
+    withMedia();
+    await connected();
+    const svg = path.join(root, 'x.png');
+    await fs.writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    await expect(client.sendImage(svg, '')).rejects.toMatchObject({ code: 'invalid_image', extra: { reason: 'unsupported_type' } });
+    await expect(client.sendImage('shot.png', '')).rejects.toMatchObject({ extra: { reason: 'path_not_absolute' } });
+    await expect(client.downloadImage('$text')).rejects.toMatchObject({ extra: { reason: 'not_an_image' } });
+    expect(session.uploadMedia).not.toHaveBeenCalled();
+    delete session.uploadMedia;
+    await expect(client.sendImage(svg, '')).rejects.toMatchObject({ extra: { reason: 'hosted_only' } });
+  });
+});
