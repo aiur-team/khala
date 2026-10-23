@@ -11,6 +11,7 @@ import {
   Preset,
   Room,
   RoomEvent,
+  RoomMemberEvent,
   RoomStateEvent,
   SyncState,
   Visibility,
@@ -39,7 +40,7 @@ import {
 import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
 import { CHANNEL_COLORS_MEMBER_KEY, memberChannelColors, type ChannelColors } from '@khala/contracts/m1/colors';
-import type { ChannelNameResult, ChannelNamesPort, MemberPresence } from '../../features/channel/ports';
+import type { ChannelNameResult, ChannelNamesPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
   DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
@@ -812,6 +813,27 @@ export function hasReadEvent(client: Pick<MatrixClient, 'getRoom'>, roomId: stri
   return !!room?.findEventById(eventId) && room.hasUserReadEvent(userId, eventId);
 }
 
+/** Calls `onNames` with the other members typing in `roomId` (Matrix `m.typing`), now and on each change. */
+export function subscribeTyping(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'on' | 'off'>, roomId: string,
+  onNames: (names: readonly string[]) => void): () => void {
+  const emit = () => onNames(client.getRoom(roomId)?.getMembers()
+    .filter(member => member.typing && member.userId !== client.getUserId()).map(member => member.name) ?? []);
+  const changed = (_event: unknown, member: { roomId: string }) => { if (member.roomId === roomId) emit(); };
+  client.on(RoomMemberEvent.Typing, changed);
+  emit();
+  return () => { client.off(RoomMemberEvent.Typing, changed); };
+}
+
+const TYPING_TIMEOUT_MS = 30_000;
+const TYPING_REFRESH_MS = 20_000;
+/** Sends `m.typing` true at most every 20 s while typing, and false only after a true. `sent` holds when each room last said true. */
+export function sendTyping(client: Pick<MatrixClient, 'sendTyping'>, sent: Map<string, number>, roomId: string, typing: boolean, now = Date.now()): void {
+  const last = sent.get(roomId);
+  if (typing ? last !== undefined && now - last < TYPING_REFRESH_MS : last === undefined) return;
+  if (typing) sent.set(roomId, now); else sent.delete(roomId);
+  void client.sendTyping(roomId, typing, TYPING_TIMEOUT_MS).catch(() => undefined);
+}
+
 /** Sends the owner's encrypted listening-mode command to one agent. */
 export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent'>, roomId: string, userId: string,
   mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'> {
@@ -842,6 +864,7 @@ export type MatrixBrowserPorts = Readonly<{
   setChannelColors(roomId: RoomId, colors: ChannelColors): Promise<'sent' | 'failed'>;
   presence(userId: string): MemberPresence | null;
   hasRead(roomId: RoomId, userId: string, eventId: string): boolean;
+  typing: TypingPort;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
 
@@ -853,6 +876,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
   participants: ParticipantResolver;
 }>): MatrixBrowserPorts {
   const runtime = new MatrixRuntime(() => device, input.participants);
+  const typingSent = new Map<string, number>();
   const credentialSource: CredentialSource = {
     async resolve(principal, signal) {
       runtime.principalByOwner.set(principal.ownerId, principal);
@@ -978,6 +1002,10 @@ export function createMatrixBrowserPorts(input: Readonly<{
     setChannelColors: (roomId, colors) => runtime.active ? setOwnChannelColors(runtime.active.client, roomId, colors) : Promise.resolve('failed'),
     presence: userId => runtime.active ? memberPresence(runtime.active.client, userId) : null,
     hasRead: (roomId, userId, eventId) => !!runtime.active && hasReadEvent(runtime.active.client, roomId, userId, eventId),
+    typing: {
+      subscribe: (roomId, onNames) => runtime.active ? subscribeTyping(runtime.active.client, roomId, onNames) : () => undefined,
+      set: (roomId, typing) => { if (runtime.active) sendTyping(runtime.active.client, typingSent, roomId, typing); },
+    },
     async roomParticipants(roomId, signal) {
       const active = runtime.active;
       if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;

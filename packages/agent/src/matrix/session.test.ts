@@ -48,7 +48,7 @@ function fake() {
     sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
     setPresence: vi.fn().mockResolvedValue(undefined), setSyncPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn((_id: string) => null as unknown),
-    setRoomReadMarkersHttpRequest: vi.fn().mockResolvedValue({}),
+    setRoomReadMarkersHttpRequest: vi.fn().mockResolvedValue({}), sendTyping: vi.fn().mockResolvedValue({}),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
   });
 }
@@ -659,5 +659,17 @@ describe('presence and read receipts', () => {
     expect(session.seenBy!('!r:hs', '$old')).toEqual([]);
     await session.markRead!('!r:hs', '$seen');
     expect(client.setRoomReadMarkersHttpRequest).toHaveBeenCalledWith('!r:hs', '$seen', '$seen');
+  });
+  it('sets its own typing, and never delivers anyone else\'s typing to the agent', async () => {
+    const s = await joined(); const handler = vi.fn(); s.onMessage(handler); s.onListeningModeCommand(handler);
+    await s.setTyping!('!r:hs', true);
+    expect(client.sendTyping).toHaveBeenCalledWith('!r:hs', true, 30_000);
+    // m.typing is ephemeral: the SDK emits it on the member, never on the timeline. Neither path reaches the agent.
+    client.emit('RoomMember.typing', event('$typing', '@human:hs', 200, 'm.typing', { user_ids: ['@human:hs'] }), { roomId: '!r:hs', userId: '@human:hs', typing: true });
+    timeline(event('$typing', '@human:hs', 200, 'm.typing', { user_ids: ['@human:hs'] }));
+    await flush();
+    expect(handler).not.toHaveBeenCalled();
+    timeline(event('$msg', '@human:hs', 200)); await flush();
+    expect(handler).toHaveBeenCalledOnce();
   });
 });

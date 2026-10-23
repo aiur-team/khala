@@ -333,6 +333,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
             const userId = matrixUserId(agent.participantId);
             return userId && context.hasRead!(roomId, userId, eventId) ? [agent.participantId] : [];
           }) } : {})}
+          {...(context.typing ? { typing: context.typing } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

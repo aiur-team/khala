@@ -11,7 +11,7 @@ import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
-import { usageLimited } from './activity';
+import { readActivity, usageLimited } from './activity';
 import { appendInbox, readCursor, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
@@ -34,7 +34,7 @@ type Attempt = {
   label: string; restore?: ResumeAuthorization; link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
   failure?: KhalaClientError; files?: SessionFiles; status: StatusFile; appends: Promise<void>; acceptEventKey: ReturnType<typeof createEventKeyFilter>;
-  cryptoReset?: boolean; readReceipt?: string; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
+  cryptoReset?: boolean; readReceipt?: string; typingSince?: number | undefined; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
   return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error',
@@ -46,6 +46,8 @@ function errorDetail(error: unknown, fallback: string): string {
   if (terminal.includes(failure.message)) return failure.message;
   return ['unsafe_state_dir', 'storage_failed'].includes(failure.message) ? failure.message : fallback;
 }
+
+const TYPING_CAP_MS = 10 * 60_000;
 
 export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaAgentClient {
   const asyncOnly = !adapterFor(options.harness)?.codec;
@@ -84,7 +86,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         for (const attempt of channels.values()) {
           if (current(attempt) && ['connected', 'send_failed'].includes(attempt.status.state)) {
             await setStatus(attempt, attempt.status.state, attempt.status.detail);
-            await markDelivered(attempt);
+            if (await markDelivered(attempt)) attempt.typingSince ??= now().getTime();
+            await updateTyping(attempt);
             attempt.session?.setAway?.(away);
           }
         }
@@ -95,13 +98,25 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   }
 
   /** Delivery hooks run in other processes; the read receipt for what they delivered goes from here. */
-  async function markDelivered(attempt: Attempt): Promise<void> {
+  async function markDelivered(attempt: Attempt): Promise<boolean> {
     const { session, files, credentials } = attempt;
-    if (!session?.markRead || !files || !credentials) return;
+    if (!session?.markRead || !files || !credentials) return false;
     const eventId = (await readCursor(files).catch(() => undefined))?.shownEventId;
-    if (!eventId || eventId === attempt.readReceipt) return;
+    if (!eventId || eventId === attempt.readReceipt) return false;
     attempt.readReceipt = eventId;
     await session.markRead(credentials.roomId, eventId).catch(() => {});
+    return true;
+  }
+
+  /** Web-only "typing…": shown from when channel content reaches the agent while its hook-tracked turn stays busy,
+   * capped at 10 min; khala_send clears it. Typing is never delivered to agents. */
+  async function updateTyping(attempt: Attempt): Promise<void> {
+    const { session, credentials } = attempt;
+    if (attempt.typingSince === undefined || !session?.setTyping || !credentials) return;
+    const activity = await readActivity(filesForDir(dir)).catch(() => undefined);
+    const working = activity?.state === 'busy' && Date.parse(activity.updatedAt) > 0 && now().getTime() - attempt.typingSince < TYPING_CAP_MS;
+    if (!working) attempt.typingSince = undefined;
+    await session.setTyping(credentials.roomId, working).catch(() => {});
   }
 
   function inboxEntry(message: SessionMessage, session: ChannelSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
@@ -688,6 +703,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const presence = (messages: InboxEntry[]) => {
           const newest = messages.at(-1);
           if (before === undefined && newest && session.markRead) void session.markRead(credentials.roomId, newest.eventId).catch(() => {});
+          if (before === undefined && newest && newest.sender !== session.userId && session.setTyping) {
+            attempt.typingSince = now().getTime();
+            void session.setTyping(credentials.roomId, true).catch(() => {});
+          }
           return { ...(you !== undefined ? { you } : {}), ...(session.members ? { members: session.members(credentials.roomId) } : {}),
             messages: messages.map(entry => {
               const seenBy = entry.sender === session.userId ? session.seenBy?.(credentials.roomId, entry.eventId) ?? [] : [];
@@ -714,6 +733,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const { session, credentials, attempt } = requireSession(channel);
       try {
         const sent = await session.send(credentials.roomId, text);
+        if (attempt.typingSince !== undefined) {
+          attempt.typingSince = undefined;
+          void session.setTyping?.(credentials.roomId, false).catch(() => {});
+        }
         if (current(attempt) && attempt.status.state === 'send_failed') await setStatus(attempt, 'connected');
         return sent;
       } catch (error) {

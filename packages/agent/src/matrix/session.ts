@@ -466,6 +466,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
       if (stopped) throw new Error('session_stopped');
       await guarded(roomId, () => client.setRoomReadMarkersHttpRequest(roomId, eventId, eventId));
     },
+    async setTyping(roomId, typing) {
+      if (stopped) return;
+      await client.sendTyping(roomId, typing, 30_000);
+    },
     stop,
   };
 }

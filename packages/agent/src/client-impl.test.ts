@@ -203,6 +203,34 @@ it('sends a read receipt for what delivery hooks showed, once per cursor move, n
     expect(session.markRead).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
 });
+it('shows the agent typing from delivery while its turn is busy, and stops on send or turn end', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  try {
+    await connected();
+    Object.assign(session, { markRead: vi.fn(async () => {}), setTyping: vi.fn(async () => {}) });
+    const busy = (state: 'busy' | 'idle') => fs.writeFile(path.join(dir, 'activity.json'), JSON.stringify({ state, updatedAt: now().toISOString() }));
+    await busy('busy');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await client.status();
+    expect(session.setTyping).not.toHaveBeenCalled();
+    await fs.writeFile(path.join(channelDir(), 'cursor.json'), JSON.stringify({ lastDeliveredEventId: '$d', deliveredCount: 1, shownEventId: '$d' }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(session.setTyping).toHaveBeenLastCalledWith(credentials.roomId, true));
+    await client.send('done');
+    expect(session.setTyping).toHaveBeenLastCalledWith(credentials.roomId, false);
+    // A latest-page read of someone else's message starts it again; the Stop hook's idle ends it.
+    vi.mocked(session.history).mockResolvedValue({ messages: [message('$theirs')] });
+    await client.read(1);
+    expect(session.setTyping).toHaveBeenLastCalledWith(credentials.roomId, true);
+    await busy('idle');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(session.setTyping).toHaveBeenLastCalledWith(credentials.roomId, false));
+    const calls = vi.mocked(session.setTyping!).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    await client.status();
+    expect(session.setTyping).toHaveBeenCalledTimes(calls);
+  } finally { vi.useRealTimers(); }
+});
 it('shows the agent away while a usage limit is recorded and online once it clears', async () => {
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   try {

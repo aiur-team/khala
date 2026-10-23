@@ -33,6 +33,8 @@ export interface ChannelSession {
   /** Names of other members whose read receipt (or later message) covers `eventId`. */
   seenBy?(roomId: string, eventId: string): string[];
   markRead?(roomId: string, eventId: string): Promise<void>;
+  /** Shows the agent typing in the web UI (`m.typing`, expires after 30 s unless refreshed). Agents never receive typing. */
+  setTyping?(roomId: string, typing: boolean): Promise<void>;
   /** Show the agent away with this reason while it stays connected (a usage limit); undefined returns it online. */
   setAway?(reason: string | undefined): void;
   stop(): Promise<void>;

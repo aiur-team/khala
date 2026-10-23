@@ -1,8 +1,9 @@
+import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
+import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, memberSince, readChannelColors, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, readChannelColors, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -598,5 +599,34 @@ describe('member presence and read receipts', () => {
     const client = { getRoom: () => room } as unknown as MatrixClient;
     expect(hasReadEvent(client, '!r', '@a:hs', '$loaded')).toBe(true);
     expect(hasReadEvent(client, '!r', '@a:hs', '$old')).toBe(false);
+  });
+});
+
+describe('typing', () => {
+  it('reports other members typing in the room, on each change in that room only, until unsubscribed', () => {
+    const bus = new EventEmitter();
+    const members = [{ userId: '@me:hs', name: 'Me', typing: true }, { userId: '@a:hs', name: 'Alice', typing: true },
+      { userId: '@b:hs', name: 'claude-1', typing: false }];
+    const client = { getRoom: (id: string) => id === '!r' ? { getMembers: () => members } : null, getUserId: () => '@me:hs',
+      on: bus.on.bind(bus), off: bus.off.bind(bus) } as unknown as MatrixClient;
+    const seen: (readonly string[])[] = [];
+    const stop = subscribeTyping(client, '!r', names => seen.push(names));
+    members[2]!.typing = true;
+    bus.emit(RoomMemberEvent.Typing, {}, { roomId: '!other' });
+    bus.emit(RoomMemberEvent.Typing, {}, { roomId: '!r' });
+    stop();
+    bus.emit(RoomMemberEvent.Typing, {}, { roomId: '!r' });
+    expect(seen).toEqual([['Alice'], ['Alice', 'claude-1']]);
+  });
+  it('sends typing at most every 20 s and stops only after it started', () => {
+    const client = { sendTyping: vi.fn().mockResolvedValue({}) };
+    const sent = new Map<string, number>();
+    sendTyping(client as unknown as MatrixClient, sent, '!r', false, 0);
+    sendTyping(client as unknown as MatrixClient, sent, '!r', true, 0);
+    sendTyping(client as unknown as MatrixClient, sent, '!r', true, 19_000);
+    sendTyping(client as unknown as MatrixClient, sent, '!r', true, 21_000);
+    sendTyping(client as unknown as MatrixClient, sent, '!r', false, 22_000);
+    sendTyping(client as unknown as MatrixClient, sent, '!r', false, 23_000);
+    expect(client.sendTyping.mock.calls).toEqual([['!r', true, 30_000], ['!r', true, 30_000], ['!r', false, 30_000]]);
   });
 });
