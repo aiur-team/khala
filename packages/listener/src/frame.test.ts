@@ -22,6 +22,7 @@ it('bounds frames to 50 messages and 64 KiB by default, preserving original cons
 });
 it('truncates on code points using product copy and never consumes an oversized later message', () => {
   const entries = [{ body: 'é👋é👋' }];
+  expect(selectFrame(entries, render, '…', 23)).toEqual({ frame: '<frame>é…</frame>', consumed: entries });
   expect(selectFrame(entries, render, '…', 24)).toEqual({ frame: '<frame>é👋…</frame>', consumed: entries });
   expect(selectFrame([{ body: 'hi' }, ...entries], render, '…', 24)).toEqual({ frame: '<frame>hi</frame>', consumed: [{ body: 'hi' }] });
   expect(selectFrame(entries, render, '…', 24, false)).toEqual({ frame: null, consumed: [] });
