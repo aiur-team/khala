@@ -36,4 +36,3 @@ export function selectFrame<T extends { body: string }>(entries: readonly T[], r
     consumed: entries.slice(0, consumedCount),
   };
 }
-
