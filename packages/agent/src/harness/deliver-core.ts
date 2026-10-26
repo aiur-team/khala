@@ -218,7 +218,8 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
             // Claude Monitor/task notifications can submit a prompt inside a turn.
             // Esc skips Stop. A recent transcript interrupt ends the turn; otherwise
             // expire busy after two minutes. The epoch fallback has no recorded turn.
-            const busyAgeMs = Date.parse(activity.updatedAt) === 0 ? null : io.now().getTime() - Date.parse(activity.updatedAt);
+            const busyAgeMs = adapter.id === 'claude' && activity.state === 'busy' && Date.parse(activity.updatedAt) !== 0
+              ? io.now().getTime() - Date.parse(activity.updatedAt) : null;
             const decisionInput = { harness: adapter.id, event: input.event, continuation: input.continuation,
               busy: activity.state === 'busy', busyAgeMs, interruptedSinceBusy: false } as const;
             decision = decideDelivery(decisionInput);

@@ -121,7 +121,7 @@ export function checkBoundaries(root) {
       if (fromFeature && toFeature && fromFeature !== toFeature && !sharedFeatures.has(toFeature)) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
-    // Browser and contracts graphs must stay pure.
+    // Browser, contracts and listener graphs must stay pure.
     const pure = browser || ['packages/contracts', 'packages/listener'].includes(owner);
     if (!pure) continue;
     const seen = new Set();
