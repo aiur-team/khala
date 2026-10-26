@@ -15,5 +15,8 @@
   },
   "devDependencies": {
     "libsodium-wrappers": "0.8.4"
+  },
+  "dependencies": {
+    "@khala/listener": "workspace:*"
   }
 }

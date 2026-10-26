@@ -100,6 +100,9 @@ importers:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@khala/listener':
+        specifier: workspace:*
+        version: link:../listener
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
@@ -133,10 +136,16 @@ importers:
         version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)(yaml@2.9.1)
 
   packages/contracts:
+    dependencies:
+      '@khala/listener':
+        specifier: workspace:*
+        version: link:../listener
     devDependencies:
       libsodium-wrappers:
         specifier: 0.8.4
         version: 0.8.4
+
+  packages/listener: {}
 
   packages/messaging:
     dependencies:

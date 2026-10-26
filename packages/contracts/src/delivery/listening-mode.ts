@@ -3,17 +3,14 @@ import {
 } from './decode';
 import { type BindingId, type CommandId, type ParticipantId, readId } from './ids';
 
-export const LISTENING_MODES = ['steer', 'sync', 'async'] as const;
-export const MODE_SUPPORT_STATUSES = [
-  'proven', 'experimental', 'blocked_without_wrapper', 'unsupported', 'unknown',
-] as const;
+import { LISTENING_MODES, MODE_SUPPORT_STATUSES, type ListeningMode } from '@khala/listener';
+export { LISTENING_MODES, MODE_SUPPORT_STATUSES, decodeListeningMode, type ListeningMode } from '@khala/listener';
 export const ACKNOWLEDGEMENT_SUPPORT = ['unknown', 'unsupported', 'batch_token_next_call'] as const;
 export const OWNER_ROUTE_GRANT_COMMAND_KINDS = [
   'grant_experimental_route', 'revoke_experimental_route', 'grant_hard_cancel', 'revoke_hard_cancel',
 ] as const;
 export const LISTENING_MODE_RESULT_OUTCOMES = ['applied', 'conflict', 'refused'] as const;
 
-export type ListeningMode = (typeof LISTENING_MODES)[number];
 export type AcknowledgementSupport = (typeof ACKNOWLEDGEMENT_SUPPORT)[number];
 
 type EvidencedModeSupport = Readonly<{
@@ -192,10 +189,6 @@ function requiredReason(input: unknown, field: string): string {
   const reason = identifier(input, field);
   if (reason.trim().length === 0) fail(field, 'invalid_field');
   return reason;
-}
-
-export function decodeListeningMode(input: unknown): Decoded<ListeningMode> {
-  return decodeWith(() => literal(input, '', LISTENING_MODES));
 }
 
 export function readModeSupport(input: unknown, field: string): ModeSupport {

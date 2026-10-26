@@ -1,4 +1,6 @@
 import { type Decoded, decodeWith, literal, object, version } from '../messaging/decode';
+import { DEFAULT_LISTENING_MODE } from '@khala/listener';
+export { DEFAULT_LISTENING_MODE } from '@khala/listener';
 import { readMatrixUserId } from './agent-join';
 
 /** Highest attention first. `mute` (nothing delivered, nothing wakes) needs no delivery route, so it lives
@@ -10,7 +12,6 @@ export function decodeListeningMode(input: unknown): Decoded<ListeningMode> {
 }
 export const LISTENING_MODE_COMMAND_TYPE = 'com.khala.listening_mode.v1' as const;
 export const LISTENING_MODE_MEMBER_KEY = 'com.khala.listening_mode' as const;
-export const DEFAULT_LISTENING_MODE: ListeningMode = 'sync';
 export type ListeningModeCommandContent = Readonly<{ v: 1; agent: string; mode: ListeningMode }>;
 export function decodeListeningModeCommand(input: unknown): Decoded<ListeningModeCommandContent> {
   return decodeWith(() => {

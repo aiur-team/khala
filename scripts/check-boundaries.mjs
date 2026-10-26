@@ -70,7 +70,8 @@ export function buildGraph(root) {
           const name = specifier.split('/').slice(0, 2).join('/');
           const dir = packages.get(name);
           if (dir) {
-            const subpath = './' + specifier.split('/').slice(2).join('/');
+            const suffix = specifier.split('/').slice(2).join('/');
+            const subpath = suffix ? './' + suffix : '.';
             const exports = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).exports ?? {};
             for (const [key, entry] of Object.entries(exports)) {
               const target = typeof entry === 'string' ? entry : entry?.['khala-source'];
@@ -100,25 +101,28 @@ export function checkBoundaries(root) {
     if (testPattern.test(origin)) continue;
     const owner = packageOf(origin);
     const composition = origin.includes('/composition/');
+    if (owner === 'packages/listener' && edges.some(edge => edge.target && packageOf(edge.target) !== owner)) {
+      errors.add(`${origin}: listener cannot import other components`);
+    }
     for (const edge of edges) {
       if (!edge.target) continue;
       const destination = packageOf(edge.target);
       if (testPattern.test(edge.target) || edge.target.includes('/fixtures/')) errors.add(`${origin}: production cannot import tests or fixtures (${edge.specifier})`);
       if (owner === 'packages/contracts') {
-        if (destination !== owner) errors.add(`${origin}: contracts cannot import implementations (${edge.specifier})`);
+        if (destination !== owner && destination !== 'packages/listener') errors.add(`${origin}: contracts cannot import implementations (${edge.specifier})`);
         const fromDomain = origin.split('/')[3];
         const toDomain = edge.target.split('/')[3];
         if (['messaging', 'delivery'].includes(fromDomain) && ['messaging', 'delivery'].includes(toDomain) && fromDomain !== toDomain) errors.add(`${origin}: contract domains cannot import each other (${edge.specifier})`);
       }
       if (owner !== destination && destination.startsWith('apps/')) errors.add(`${origin}: cannot import an app (${edge.specifier})`);
-      if (!composition && owner !== destination && destination.startsWith('packages/') && destination !== 'packages/contracts') errors.add(`${origin}: cross-component implementation requires a composition root (${edge.specifier})`);
+      if (!composition && owner !== destination && destination.startsWith('packages/') && !['packages/contracts', 'packages/listener'].includes(destination)) errors.add(`${origin}: cross-component implementation requires a composition root (${edge.specifier})`);
       const fromFeature = origin.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       const toFeature = edge.target.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       if (fromFeature && toFeature && fromFeature !== toFeature && !sharedFeatures.has(toFeature)) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
     // Browser and contracts graphs must stay pure.
-    const pure = browser || owner === 'packages/contracts';
+    const pure = browser || ['packages/contracts', 'packages/listener'].includes(owner);
     if (!pure) continue;
     const seen = new Set();
     function walk(current, chain) {

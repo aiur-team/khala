@@ -116,3 +116,20 @@ test('invalid browser import makes the command fail for CI', t => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /server-only dependency/);
 });
+
+test('contracts and agent can import the pure listener before workspace install', t => {
+  assert.deepEqual(fixture(t, {
+    'packages/contracts/src/delivery/listening-mode.ts': "export * from '@khala/listener';",
+    'packages/agent/src/harness/deliver-core.ts': "import '@khala/listener';",
+    'packages/listener/package.json': { name: '@khala/listener', exports: { '.': './src/index.ts' } },
+    'packages/listener/src/index.ts': 'export {};',
+  }), []);
+});
+test('listener must remain pure and cannot depend on other components', t => {
+  const errors = fixture(t, {
+    'packages/listener/src/index.ts': "import 'node:fs'; import '../../contracts/src/modes';",
+    'packages/contracts/src/modes.ts': 'export {};',
+  });
+  assert(errors.some(error => error.includes('listener/src/index.ts: server-only dependency (node:fs)')));
+  assert(errors.some(error => error.includes('listener cannot import other components')));
+});
