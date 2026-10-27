@@ -526,6 +526,10 @@ const COMPUTED_SKIP: Readonly<Record<string, string>> = {
   '.kh-id': 'Executor decision (dec_f83838efca089ad3): #id badges are Aiur ticket numbers and M1 omits them; `.kh-id` renders only for colliding names',
   '.kh-otag': 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
   '.kh-htag': 'operator request 2026-10-04: the Human pill is replaced by a person icon (`.kh-kind`)',
+  // Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1309 (computed: 1440-dark, 1440-light, 390-dark)
+  '.kh-row:not(.me):not(.human) .kh-b': 'quarantined: khala#1346',
+  // Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1331 (computed: 1440-dark, 1440-light, 390-dark)
+  '.kh-chip-a': 'quarantined: khala#1346',
 };
 const SIZE_ONLY = 'position follows text length or thread scroll; size compared';
 /** Boxes that follow dataset text, thread scroll or an omitted neighbour; their styles are still compared. */

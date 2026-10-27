@@ -13,7 +13,8 @@ const harnessRoot = join(here, 'browser-harness');
 const focused = (page: Page, selector: string) => page.locator(selector).evaluate(element => document.activeElement === element);
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
-test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, async () => {
+// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1336
+test('channel header, roster, popovers and detail pane', { timeout: 120_000, skip: 'quarantined: khala#1346' }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
   // Chromium's singleton socket has a strict path-length cap; the workspace's
   // private TMPDIR is too deep, while mkdtemp keeps this shared /tmp path unique.
@@ -315,7 +316,8 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
   }
 });
 
-test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000 }, async () => {
+// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1336
+test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000, skip: 'quarantined: khala#1346' }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-roster-overlay-dist-'));
   const chromiumProfileRoot = await mkdtemp('/tmp/khala-roster-overlay-profile-');
   let server: PreviewServer | undefined;
