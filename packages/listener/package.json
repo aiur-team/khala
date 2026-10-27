@@ -12,6 +12,6 @@
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
-    "test": "vitest run --config ../../vitest.config.ts"
+    "test": "node scripts/generate-spec.mjs --check && vitest run --config ../../vitest.config.ts"
   }
 }

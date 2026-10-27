@@ -98,7 +98,8 @@ export function buildGraph(root) {
 export function checkBoundaries(root) {
   const { graph, errors } = buildGraph(root);
   for (const [origin, edges] of graph) {
-    if (testPattern.test(origin)) continue;
+    // Spec generation is Node tooling; source imports still traverse it and enforce purity.
+    if (testPattern.test(origin) || origin.startsWith('packages/listener/scripts/')) continue;
     const owner = packageOf(origin);
     const composition = origin.includes('/composition/');
     if (owner === 'packages/listener' && edges.some(edge => edge.target && packageOf(edge.target) !== owner)) {
