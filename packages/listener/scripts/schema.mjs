@@ -5,7 +5,7 @@ const object = (properties, required = Object.keys(properties)) => ({
 });
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] });
 
-export function listeningSchema(modes, statuses) {
+export function listeningSchema(modes, statuses, backlogs, carriers) {
   const text = { type: 'string' };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -16,9 +16,17 @@ export function listeningSchema(modes, statuses) {
       mode: { type: 'string', enum: [...modes] },
       command: object({ v: { const: 1 }, agent: { type: 'string', minLength: 1 }, mode: ref('mode') }),
       control: object({ requested: nullable(ref('mode')), effective: nullable(ref('mode')),
-        effective_reason: nullable(text), version: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER } }),
+        effective_reason: nullable(text), version: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        backlog_on_leave_async: { type: 'string', enum: [...backlogs],
+          description: 'skip advances past unread backlog (Khala); notice keeps bodies pull-only and shows a notice.' } },
+      ['requested', 'effective', 'effective_reason', 'version']),
       supportEntry: object({ status: { type: 'string', enum: [...statuses] }, reason: nullable(text) }),
-      support: object(Object.fromEntries(modes.map(mode => [mode, ref('supportEntry')]))),
+      steerSupportEntry: object({ status: { type: 'string', enum: [...statuses] }, reason: nullable(text),
+        steer_carrier: { type: 'string', enum: [...carriers],
+          description: 'Renderers must read this carrier: emulated_interrupt must display steer (interrupts current turn).' } },
+      ['status', 'reason']),
+      support: object(Object.fromEntries(modes.map(mode => [mode,
+        ref(mode === 'steer' ? 'steerSupportEntry' : 'supportEntry')]))),
       parsedHook: object({ sessionId: text, event: { enum: ['start', 'prompt', 'tool', 'stop', 'limit'] },
         continuation: { type: 'boolean' }, workspace: text, transcriptPath: text, promptText: text },
       ['sessionId', 'event', 'continuation']),

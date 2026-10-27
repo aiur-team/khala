@@ -24,6 +24,14 @@
     "control": {
       "additionalProperties": false,
       "properties": {
+        "backlog_on_leave_async": {
+          "description": "skip advances past unread backlog (Khala); notice keeps bodies pull-only and shows a notice.",
+          "enum": [
+            "skip",
+            "notice"
+          ],
+          "type": "string"
+        },
         "effective": {
           "anyOf": [
             {
@@ -153,6 +161,44 @@
       ],
       "type": "object"
     },
+    "steerSupportEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "proven",
+            "experimental",
+            "blocked_without_wrapper",
+            "unsupported",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "steer_carrier": {
+          "description": "Renderers must read this carrier: emulated_interrupt must display steer (interrupts current turn).",
+          "enum": [
+            "native",
+            "emulated_interrupt"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "type": "object"
+    },
     "support": {
       "additionalProperties": false,
       "properties": {
@@ -160,7 +206,7 @@
           "$ref": "#/$defs/supportEntry"
         },
         "steer": {
-          "$ref": "#/$defs/supportEntry"
+          "$ref": "#/$defs/steerSupportEntry"
         },
         "sync": {
           "$ref": "#/$defs/supportEntry"

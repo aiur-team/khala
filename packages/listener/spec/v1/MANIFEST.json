@@ -1,6 +1,10 @@
 {
   "files": [
     {
+      "path": "goldens/control-record-notice.json",
+      "sha256": "850cd4a82c634ab9ffa9a8189ebe95f9c0a8303fecc3e2cecf1623c4ba2730e8"
+    },
+    {
       "path": "goldens/hook/claude-PostToolUse-absent.json",
       "sha256": "d41f08eb7fac5971fa70151491f2d5cb0f3842314728bbdf76c17e2879687400"
     },
@@ -201,8 +205,16 @@
       "sha256": "93703db88e3aa86bffbcdc5f9b9173acd5619f8e58bcbda7fa4d5b7a6995c9a2"
     },
     {
+      "path": "goldens/invalid-carrier.json",
+      "sha256": "908837df931185ec5dc94d8fc2dc4af67f62c2346020b2e892baed45929c3afd"
+    },
+    {
+      "path": "goldens/support-map-emulated-steer.json",
+      "sha256": "a43e7b8700cd3f3c59b47d4b07422df407233470e6b3c6501af452f5a2842ae5"
+    },
+    {
       "path": "listening-mode.v1.schema.json",
-      "sha256": "6ed773eb80688a50c445d3b4da8084e7cc6c830563db5e498aaca1a2443b4787"
+      "sha256": "18067a9cab9d17cb27fbee5a11acf9a91e4dfa49aeeb5e27cae63ed9b9cade44"
     },
     {
       "path": "scheduler.v1.json",

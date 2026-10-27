@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tsImport } from 'tsx/esm/api';
 import { listeningSchema } from './schema.mjs';
 
-const { LISTENING_MODES, MODE_SUPPORT_STATUSES, decideDelivery, createClaudeStyleCodec } =
+const { LISTENING_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS, decideDelivery, createClaudeStyleCodec } =
   await tsImport('../src/index.ts', import.meta.url);
 export const specDirectory = fileURLToPath(new URL('../spec/v1/', import.meta.url));
 const eventNames = { start: 'SessionStart', prompt: 'UserPromptSubmit', tool: 'PostToolUse', stop: 'Stop' };
@@ -23,7 +23,14 @@ const sha256 = body => createHash('sha256').update(body).digest('hex');
 /** Returns bytes without writing, so tests and --check exercise the same generator. */
 export function generateSpec() {
   const files = new Map();
-  files.set('listening-mode.v1.schema.json', serialize(listeningSchema(LISTENING_MODES, MODE_SUPPORT_STATUSES)));
+  files.set('listening-mode.v1.schema.json', serialize(listeningSchema(LISTENING_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS)));
+  const support = { steer: { status: 'experimental', reason: null, steer_carrier: 'emulated_interrupt' },
+    sync: { status: 'proven', reason: null }, async: { status: 'proven', reason: null } };
+  files.set('goldens/support-map-emulated-steer.json', serialize(support));
+  files.set('goldens/control-record-notice.json', serialize({ requested: 'sync', effective: 'sync',
+    effective_reason: null, version: 1, backlog_on_leave_async: 'notice' }));
+  files.set('goldens/invalid-carrier.json', serialize({ ...support,
+    steer: { ...support.steer, steer_carrier: 'cancel' } }));
   const rows = [];
   for (const harness of ['claude', 'codex'])
     for (const event of Object.keys(eventNames))

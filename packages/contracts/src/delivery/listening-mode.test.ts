@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACKNOWLEDGEMENT_SUPPORT, LISTENING_MODES, MODE_SUPPORT_STATUSES,
-  decodeListeningModeCommand, decodeListeningModeResult, decodeModeSupport,
+  decodeListeningModeCommand, decodeListeningModeResult, decodeModeSupport, decodeModeSupportMap,
   decodeOwnerRouteGrantCommand, initialListeningMode, routeGrantMatches,
   type ModeSupportMap, type RouteGrant,
 } from './listening-mode';
@@ -71,6 +71,12 @@ describe('listening-mode values and support', () => {
     [{ ...proven, unexpected: true }, 'unexpected'],
   ])('rejects malformed evidenced rows at %s', (support, field) => {
     expect(decodeModeSupport(support)).toEqual({ ok: false, code: 'invalid_field', field });
+  });
+
+  // Future regression guard: carrier metadata must never widen the wire status vocabulary.
+  it('readModeSupportMap still rejects an unknown status literal', () => {
+    const support = { steer: { ...proven, status: 'emulated_interrupt' }, sync: proven, async: proven };
+    expect(decodeModeSupportMap(support)).toEqual({ ok: false, code: 'invalid_field', field: 'steer.status' });
   });
 
   it('rejects unknown and unsupported rows without a concrete reason', () => {
