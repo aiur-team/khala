@@ -79,15 +79,15 @@ async function mcpSmoke(label, command, args, callStatus = false, childEnv = env
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const tools = await request(2, 'tools/list', {});
     const names = (tools.result?.tools ?? []).map(tool => tool.name);
-    if (!names.includes('khala_join')) throw new Error(`${label} tools/list: ${JSON.stringify(tools)}`);
+    if (!names.includes('join')) throw new Error(`${label} tools/list: ${JSON.stringify(tools)}`);
     console.log(`ok ${label} initialize + tools/list (${names.join(', ')})`);
     if (callStatus) {
       // Creates and reads the session state directory: the private-directory and atomic-write
       // paths that differ on Windows.
-      const status = await request(3, 'tools/call', { name: 'khala_status', arguments: {} });
+      const status = await request(3, 'tools/call', { name: 'status', arguments: {} });
       const text = status.result?.content?.[0]?.text ?? '';
-      if (status.result?.isError || !text.includes('"state"')) throw new Error(`${label} khala_status: ${JSON.stringify(status)}`);
-      console.log(`ok ${label} khala_status ${text}`);
+      if (status.result?.isError || !text.includes('"state"')) throw new Error(`${label} status: ${JSON.stringify(status)}`);
+      console.log(`ok ${label} status ${text}`);
     }
   } finally {
     child.stdin.end();

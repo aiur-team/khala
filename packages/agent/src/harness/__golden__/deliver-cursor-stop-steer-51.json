@@ -1,6 +1,6 @@
 {
   "code": 0,
-  "stdout": "{\"followup_message\":\"Khala: channel messages are waiting. Call khala_read.\"}\n",
+  "stdout": "{\"followup_message\":\"Khala: channel messages are waiting. Call the Khala read tool.\"}\n",
   "stderr": "",
   "cursor": {
     "lastDeliveredEventId": "$message-50",

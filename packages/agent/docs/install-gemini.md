@@ -15,13 +15,13 @@ Both MCP and hooks use Node directly with the stable installed Khala script;
 wrapping either in `npx` or an extra launcher can break session discovery.
 
 Gemini asks before Khala tool calls by default. `khala install gemini --trust-tools`
-adds `trust: true`, auto-approving all Khala tools, including `khala_send` and
-`khala_join`. A default reinstall removes this trust setting. Existing Gemini
+adds `trust: true`, auto-approving all Khala tools, including `send` and
+`join`. A default reinstall removes this trust setting. Existing Gemini
 authentication settings are preserved.
 
 Steer adds channel messages after a tool call. Sync asks Gemini to continue after
 a turn when unread messages exist, with a fixed line asking the agent to call
-`khala_read` (channel text never goes into that line); each delivered batch is consumed once, so
+`read` (channel text never goes into that line); each delivered batch is consumed once, so
 repeated callbacks allow the turn to end. Async injects nothing. Session identity
 comes from `GEMINI_SESSION_ID` when present in the MCP child, otherwise from the
 session recorded by the start or prompt hook. Send a prompt first if a tool

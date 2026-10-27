@@ -9,7 +9,7 @@ import type { HookIO } from './deliver-core';
 export type { SessionSource } from './session-sources';
 
 /** Stop continuations become user turns in most harnesses, so they never carry channel content. */
-export const STOP_NUDGE = 'Khala: channel messages are waiting. Call khala_read.';
+export const STOP_NUDGE = 'Khala: channel messages are waiting. Call the Khala read tool.';
 
 import type { DeliverCodec } from '@khala/listener';
 export type { DeliverCodec } from '@khala/listener';

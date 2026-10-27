@@ -33,7 +33,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       if (rows.some(row => row.state === 'held' || row.state === 'disabled')) return undefined;
       const installed = await readJson<{ command?: string }>(path.join(stateRoot(env), 'qwen', 'watch-command.json'));
       if (!installed?.command || await monitorArmed(files)) return undefined;
-      return `Arm run_shell_command with ${JSON.stringify({ command: installed.command + ' --session ' + sessionId, is_background: true })}. When it completes, call khala_read, then re-arm the same one-shot watcher.`;
+      return `Arm run_shell_command with ${JSON.stringify({ command: installed.command + ' --session ' + sessionId, is_background: true })}. When it completes, call the Khala read tool, then re-arm the same one-shot watcher.`;
     };
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, ...(rejoinable !== undefined ? { rejoinable } : {}), env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });

@@ -26,7 +26,8 @@ export function createToolRegistry(tools: readonly McpTool[]): ToolRegistry {
   }
   const ordered = [...byName.values()];
   return Object.freeze({
-    resolve: (name: string) => byName.get(name),
+    // Pre-0.4.17 names (`khala_read`, …) still resolve so stale instructions keep working; only new names are listed.
+    resolve: (name: string) => byName.get(name) ?? (name.startsWith('khala_') ? byName.get(name.slice('khala_'.length)) : undefined),
     definitions: () => ordered.map(tool => tool.definition()),
   });
 }

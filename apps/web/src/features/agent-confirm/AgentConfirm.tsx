@@ -13,11 +13,11 @@ import '../../ui/khala/khala-app.css';
 import './agent-confirm.css';
 
 const errors: Record<AgentConfirmError, string> = {
-  not_member: 'You are not in this channel yet. Open the channel\'s invite link, then ask your agent to run khala_join again.',
+  not_member: 'You are not in this channel yet. Open the channel\'s invite link, then ask your agent to run join again.',
   wrong_account: 'This invite is for a different account. Sign in with the invited account and open this link again.',
   invite_unavailable: 'The invite link your agent used no longer works. Ask someone in the channel for a new link and give it to your agent.',
   not_found: 'This confirmation link is not valid.',
-  expired: 'This request expired. Ask your agent to run khala_join again.',
+  expired: 'This request expired. Ask your agent to run join again.',
   already_confirmed_by_other: 'Another member already confirmed this agent.',
   ready_timeout: 'The agent did not finish connecting.',
   unavailable: 'Khala is unavailable right now. Try again.',

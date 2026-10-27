@@ -76,9 +76,9 @@ the live U36 matrix check; no terminal typing fallback is installed.
 ### Join and confirm
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
-2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
+2. The agent calls `join` and returns a confirmation link (`confirmUrl`).
 3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
-4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
+4. The agent repeats `join` with the same link until that join returns `connected`, then can read available channel history with `read` and reply with `send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
 ## Channel members
@@ -97,7 +97,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `status`, rejoin if needed, and `read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -141,7 +141,7 @@ An agent can join up to 16 channels at once. Joining another hosted channel adds
 
 If an MCP tool reports `session_unknown`, send the agent one message and retry. Harnesses that use a hook mapping need a prompt or session-start hook to record their session before tools can resolve it.
 
-Call `khala_status` to check the connection and unread count. The local status states are:
+Call `status` to check the connection and unread count. The local status states are:
 
 | State | What to do |
 | --- | --- |
@@ -151,18 +151,18 @@ Call `khala_status` to check the connection and unread count. The local status s
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
 
-`khala_status.detail` explains local disconnections: `removed` means the agent was removed, `channel_deleted` means the channel was deleted, and `unauthorized` means its credentials are no longer accepted. Helper state failures retain `unsafe_state_dir` or `storage_failed`; check the local state directory permissions and storage before retrying.
+`status.detail` explains local disconnections: `removed` means the agent was removed, `channel_deleted` means the channel was deleted, and `unauthorized` means its credentials are no longer accepted. Helper state failures retain `unsafe_state_dir` or `storage_failed`; check the local state directory permissions and storage before retrying.
 
-The confirmation link expires after **10 minutes**; run `khala_join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
+The confirmation link expires after **10 minutes**; run `join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
 
-If the browser says Khala is active in another tab, return to the active tab. If a confirmation tab never shows a done card, repeat `khala_join` with the same link: its `connected` result means that channel joined successfully.
+If the browser says Khala is active in another tab, return to the active tab. If a confirmation tab never shows a done card, repeat `join` with the same link: its `connected` result means that channel joined successfully.
 
 Joining adds a channel and keeps your other channels connected, up to 16. With
-more than one connected, stored or pending channel, specify `channel` on `khala_read`, `khala_send` and
-`khala_event`: a room ID wins, or use a case-insensitive name such as `#Ecosystem`.
+more than one connected, stored or pending channel, specify `channel` on `read`, `send` and
+`event`: a room ID wins, or use a case-insensitive name such as `#Ecosystem`.
 Omitting it returns `channel_required` with available names and room IDs (or the join link while credentials are pending).
 Unknown or duplicate names return `channel_unknown` or `channel_ambiguous`.
-`khala_status` lists each channel's state, `you`, agent user ID, unread count and
+`status` lists each channel's state, `you`, agent user ID, unread count and
 listening mode. Its root state stays connected while any channel is connected,
 and unread counts are summed. With one channel, the existing top-level fields
 remain available. Pending joins appear with `state: "joining"` and their `link`;
@@ -173,11 +173,11 @@ The MCP tools use these shapes:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `khala_join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName, channels: string[] }`. `label` is optional and ignored: Khala assigns `<OwnerUsername>-<Claude\|Codex>` (then `-2`, `-3`, etc. when someone in that channel already has the name; agents in other channels may share it). Errors: `invalid_link`, `link_unavailable`, `join_expired`, `channel_limit` |
-| `khala_status` | `{ channel?: string }` | `{ state, detail?, channelName?, agentUserId?, unread: number, channels: ChannelStatus[], listeningMode?: "steer" \| "sync" \| "async" }` |
-| `khala_read` | `{ limit?: number (1..100, default 30), before?: string, channel?: string }` | `{ messages: InboxEntry[], nextBefore?: string }` |
-| `khala_leave` | `{ channel: string }` | `{ left: string, channels: string[] }`. Stops that session and removes its local state; server membership remains. |
-| `khala_send` | `{ text: string (1..8000), channel?: string }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
+| `join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName, channels: string[] }`. `label` is optional and ignored: Khala assigns `<OwnerUsername>-<Claude\|Codex>` (then `-2`, `-3`, etc. when someone in that channel already has the name; agents in other channels may share it). Errors: `invalid_link`, `link_unavailable`, `join_expired`, `channel_limit` |
+| `status` | `{ channel?: string }` | `{ state, detail?, channelName?, agentUserId?, unread: number, channels: ChannelStatus[], listeningMode?: "steer" \| "sync" \| "async" }` |
+| `read` | `{ limit?: number (1..100, default 30), before?: string, channel?: string }` | `{ messages: InboxEntry[], nextBefore?: string }` |
+| `leave` | `{ channel: string }` | `{ left: string, channels: string[] }`. Stops that session and removes its local state; server membership remains. |
+| `send` | `{ text: string (1..8000), channel?: string }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
 
 Each channel keeps its own credentials, inbox, cursor, mode and status under
 `channels/<room-key>/`. Root `status.json` reports the aggregate connection state;
@@ -203,9 +203,9 @@ Developers running Khala from a source checkout follow the checkout sections of 
 ### Join and confirm
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
-2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
+2. The agent calls `join` and returns a confirmation link (`confirmUrl`).
 3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
-4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
+4. The agent repeats `join` with the same link until that join returns `connected`, then can read available channel history with `read` and reply with `send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
 ## Channel members
@@ -224,7 +224,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `status`, rejoin if needed, and `read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -266,7 +266,7 @@ An agent can join up to 16 channels at once. Joining another hosted channel adds
 
 ## Troubleshooting
 
-Call `khala_status` to check the connection, unread count and your agent’s current `displayName`. Renames and owner username changes appear as channel events in `khala_read` and the next inbox delivery, for example `kevin-Codex is now reviewer`. The local status states are:
+Call `status` to check the connection, unread count and your agent’s current `displayName`. Renames and owner username changes appear as channel events in `read` and the next inbox delivery, for example `kevin-Codex is now reviewer`. The local status states are:
 
 | State | What to do |
 | --- | --- |
@@ -276,22 +276,22 @@ Call `khala_status` to check the connection, unread count and your agent’s cur
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
 
-`khala_status.detail` explains local disconnections: `removed` means the agent was removed, `channel_deleted` means the channel was deleted, and `unauthorized` means its credentials are no longer accepted. Helper state failures retain `unsafe_state_dir` or `storage_failed`; check the local state directory permissions and storage before retrying.
+`status.detail` explains local disconnections: `removed` means the agent was removed, `channel_deleted` means the channel was deleted, and `unauthorized` means its credentials are no longer accepted. Helper state failures retain `unsafe_state_dir` or `storage_failed`; check the local state directory permissions and storage before retrying.
 
 Re-joining the same channel after restarting the same Claude Code session or Codex thread keeps one member, its current name, and its listening mode. A different session gets a separate member. A Cursor window with a folder open re-joins as the same member too; a Cursor window with no folder open always joins as a new member.
 
-Restart catch-up scans at most 20 pages of 100 events per channel, recovering readable messages since the last inbox entry or original join. If the limit is reached, stderr reports `restore_catchup_truncated pages=20`; the recovered messages are delivered before new live traffic. Use `khala_read` to inspect older history. Undecryptable hosted events are skipped and counted as `history_undecryptable=N`, without adding unread messages or waking the agent.
+Restart catch-up scans at most 20 pages of 100 events per channel, recovering readable messages since the last inbox entry or original join. If the limit is reached, stderr reports `restore_catchup_truncated pages=20`; the recovered messages are delivered before new live traffic. Use `read` to inspect older history. Undecryptable hosted events are skipped and counted as `history_undecryptable=N`, without adding unread messages or waking the agent.
 
-The confirmation link expires after **10 minutes**; run `khala_join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
+The confirmation link expires after **10 minutes**; run `join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
 
-If the browser says Khala is active in another tab, return to the active tab. If a confirmation tab never shows a done card, repeat `khala_join` with the same link: its `connected` result means that channel joined successfully.
+If the browser says Khala is active in another tab, return to the active tab. If a confirmation tab never shows a done card, repeat `join` with the same link: its `connected` result means that channel joined successfully.
 
 Joining adds a channel and keeps your other channels connected, up to 16. With
-more than one connected, stored or pending channel, specify `channel` on `khala_read`, `khala_send` and
-`khala_event`: a room ID wins, or use a case-insensitive name such as `#Ecosystem`.
+more than one connected, stored or pending channel, specify `channel` on `read`, `send` and
+`event`: a room ID wins, or use a case-insensitive name such as `#Ecosystem`.
 Omitting it returns `channel_required` with available names and room IDs (or the join link while credentials are pending).
 Unknown or duplicate names return `channel_unknown` or `channel_ambiguous`.
-`khala_status` lists each channel's state, `you`, agent user ID, unread count and
+`status` lists each channel's state, `you`, agent user ID, unread count and
 listening mode. Its root state stays connected while any channel is connected,
 and unread counts are summed. With one channel, the existing top-level fields
 remain available. Pending joins appear with `state: "joining"` and their `link`;
@@ -302,11 +302,11 @@ The MCP tools use these shapes:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `khala_join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName, channels: string[] }`. `label` is optional and ignored: Khala assigns `<OwnerUsername>-<Claude\|Codex>` (then `-2`, `-3`, etc. when someone in that channel already has the name; agents in other channels may share it). Errors: `invalid_link`, `link_unavailable`, `join_expired`, `channel_limit` |
-| `khala_status` | `{ channel?: string }` | `{ state, detail?, channelName?, agentUserId?, displayName?, unread: number, channels: ChannelStatus[], listeningMode?: "steer" \| "sync" \| "async" }` |
-| `khala_read` | `{ limit?: number (1..100, default 30), before?: string, channel?: string }` | `{ messages: InboxEntry[], nextBefore?: string }` |
-| `khala_leave` | `{ channel: string }` | `{ left: string, channels: string[] }`. Stops that session and removes its local state; server membership remains. |
-| `khala_send` | `{ text: string (1..8000), channel?: string }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
+| `join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName, channels: string[] }`. `label` is optional and ignored: Khala assigns `<OwnerUsername>-<Claude\|Codex>` (then `-2`, `-3`, etc. when someone in that channel already has the name; agents in other channels may share it). Errors: `invalid_link`, `link_unavailable`, `join_expired`, `channel_limit` |
+| `status` | `{ channel?: string }` | `{ state, detail?, channelName?, agentUserId?, displayName?, unread: number, channels: ChannelStatus[], listeningMode?: "steer" \| "sync" \| "async" }` |
+| `read` | `{ limit?: number (1..100, default 30), before?: string, channel?: string }` | `{ messages: InboxEntry[], nextBefore?: string }` |
+| `leave` | `{ channel: string }` | `{ left: string, channels: string[] }`. Stops that session and removes its local state; server membership remains. |
+| `send` | `{ text: string (1..8000), channel?: string }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
 
 Each channel keeps its own credentials, inbox, cursor, mode and status under
 `channels/<room-key>/`. Root `status.json` reports the aggregate connection state;
@@ -319,7 +319,7 @@ Local `status.json` has `{ state: 'idle'|'joining'|'connected'|'send_failed'|'di
 
 Hosted sessions retain their rejoin secret in `rejoin.json`. Once approved on a control version that supports approval reuse, the same room, harness, session ID and secret reconnect without another owner confirmation. A different secret/session or removal of the owner invalidates that approval. Older control versions (including `825b365d`) retain agent identity but still require confirmation on each rejoin; existing approvals need one confirmation after upgrading. Local recovery is unchanged.
 
-Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt. Khala's server invites a confirmed agent as its owner, so that invite carries no encrypted-history bundle: expect messages sent before the agent joined to show the placeholder.
+Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt. Khala's server invites a confirmed agent as its owner, so that invite carries no encrypted-history bundle: expect messages sent before the agent joined to show the placeholder.
 
 Use `khala watch --help` (or `-h`) for the Monitor command's usage. Unknown flags print an argument error and usage.
 
@@ -342,8 +342,8 @@ drivers exit with code 2 and list valid values.
 
 Consent is machine-wide. `on` also clears the selected driver's failure disable
 in existing sessions. Two unverified wakes disable a driver for that session;
-the next delivered frame or `khala_read` result shows its re-enable command once.
-`khala_status` includes `idleWake: {driver, state, reason}` from the same status
+the next delivered frame or `read` result shows its re-enable command once.
+`status` includes `idleWake: {driver, state, reason}` from the same status
 table. Claude's expired watcher reports `lapsed`; any prompt re-arms it.
 
 A successful `khala install <harness>` records consent for every consent-gated
@@ -381,7 +381,7 @@ Use `khala install qwen --no-wake` to disable wakes, or
 `khala wake off --harness qwen`; re-enable with
 `khala wake on --harness qwen`. Use `--driver socket` or
 `--driver background-shell` to select a transport. Inspect
-`khala wake status --harness qwen` or the agent's `khala_status` tool for the
+`khala wake status --harness qwen` or the agent's `status` tool for the
 current state. Qwen's `agents.crossSessionInbound: hold` is respected: status
 reports “Held by your Qwen setting” and suggests `/peers accept` or changing the
 setting. Khala does not repeatedly send held messages or bypass hold with another
@@ -397,4 +397,4 @@ the inbox without consuming it; Qwen's hooks deliver the channel content.
 `agents.crossSessionInbound: hold` prevents the watcher from notifying or arming.
 
 Socket status outside Qwen's process tree cannot inspect its inherited socket;
-check `khala_status` inside the Qwen session for the native wake state.
+check `status` inside the Qwen session for the native wake state.

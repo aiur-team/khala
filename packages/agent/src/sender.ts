@@ -13,7 +13,7 @@ export function senderKindOf(userId: string): InboxEntry['senderKind'] {
 /** The Matrix rich-reply parent of each entry; kept off `InboxEntry`, whose shape is a strict contract. */
 const replyParents = new WeakMap<InboxEntry, string>();
 
-/** `[image: name, WxH]` plus any caption; fetched only on request (khala_read download), never in a wake. */
+/** `[image: name, WxH]` plus any caption; fetched only on request (read download), never in a wake. */
 function imageBody(message: SessionMessage): string | undefined {
   const found = message.type === 'm.room.message' ? readImageEvent(message.content) : null;
   return found ? `${imageLabel(found.image)}${found.caption ? `\n${found.caption}` : ''}` : undefined;
@@ -33,7 +33,7 @@ export function toInboxEntry(message: SessionMessage, displayName?: string | nul
   return entry;
 }
 
-// ponytail: only khala_read output carries reply context; hook-delivered inbox lines show the plain body.
+// ponytail: only read output carries reply context; hook-delivered inbox lines show the plain body.
 /** Prefixes each reply with `↪ reply to <author>: <snippet>` from the parent in the same page. Content stays untrusted data. */
 export function withReplyContext(entries: readonly InboxEntry[]): InboxEntry[] {
   const byId = new Map(entries.map(entry => [entry.eventId, entry]));

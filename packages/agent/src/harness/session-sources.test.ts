@@ -110,7 +110,7 @@ it('retries per tool call after hook delivery and switches to the newer session 
   const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
   await record('outer');
   const running = runMcpCommand(['--harness', 'codex'], { input, output, env, createClient });
-  const call = (id: number) => input.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'khala_status', arguments: {} } }) + '\n');
+  const call = (id: number) => input.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'status', arguments: {} } }) + '\n');
   try {
     call(1); await vi.waitFor(() => expect(text.split('\n').filter(Boolean)).toHaveLength(1));
     const first = JSON.parse(text.trim());

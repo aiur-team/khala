@@ -135,7 +135,7 @@ describe('real MCP client wiring', () => {
     const running = runMcpCommand(['--harness', 'codex'], {
       input, output, env, signal: signal.signal, createClient: createRealClientFactory(env, { createClient, createWaker }),
     });
-    const request = { jsonrpc: '2.0', method: 'tools/call', params: { name: 'khala_status', arguments: {}, _meta: { threadId: 'thread' } } };
+    const request = { jsonrpc: '2.0', method: 'tools/call', params: { name: 'status', arguments: {}, _meta: { threadId: 'thread' } } };
     input.write(JSON.stringify({ ...request, id: 1 }) + '\n');
     input.write(JSON.stringify({ ...request, id: 2 }) + '\n');
     await received;

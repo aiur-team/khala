@@ -100,7 +100,7 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
 
     mcp = startMcp({ env: { ...process.env, XDG_STATE_HOME: stateHome,
       CLAUDE_CODE_SESSION_ID: sessionId, NODE_EXTRA_CA_CERTS: cert } });
-    const joined = await mcp.call('khala_join', { link, label: 'Agent' });
+    const joined = await mcp.call('join', { link, label: 'Agent' });
     expect(joined.isError).not.toBe(true);
     expect(joined.structuredContent.state).toBe('awaiting_confirmation');
     const confirmUrl = joined.structuredContent.confirmUrl;
@@ -113,19 +113,19 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
     const agent = mcp;
     let agentUserId: unknown;
     await expect.poll(async () => {
-      const result = await agent.call('khala_status', {});
+      const result = await agent.call('status', {});
       agentUserId = result.structuredContent.agentUserId;
       return result.structuredContent.state;
     }, { timeout: 120_000, intervals: [2000] }).toBe('connected');
     expect(agentUserId).toMatch(/^@agent-[0-9a-f]{8}-[a-z0-9]{6}:/u);
-    const status = await agent.call('khala_status', {});
+    const status = await agent.call('status', {});
     const channels = status.structuredContent.channels as { roomId: string; you: string }[];
     const nested = channelFiles(files, channels[0]!.roomId);
     inboxFile = nested.inbox; sessionFile = nested.session;
     // Assert existence only: session.json contains credentials, never print it.
     await access(sessionFile);
     await expect.poll(async () => {
-      const read = await agent.call('khala_read', { limit: 30 });
+      const read = await agent.call('read', { limit: 30 });
       const messages = read.structuredContent.messages as InboxEntry[] | undefined;
       return (messages ?? []).map(message => message.body).filter(body => history.includes(body));
     }, { timeout: 30_000, intervals: [2000] }).toEqual(history);
@@ -136,7 +136,7 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
       .filter(entry => entry.body === live && entry.senderKind === 'human').length,
     { timeout: 30_000, intervals: [2000] }).toBe(1);
     const reply = `agent-reply-${id}`;
-    const sent = await agent.call('khala_send', { text: reply });
+    const sent = await agent.call('send', { text: reply });
     expect(sent.isError).not.toBe(true);
     expect(sent.structuredContent.eventId).toMatch(/^\$/u);
     // A later human append proves sync passed the reply before checking AE4.
@@ -166,7 +166,7 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
     await expect(alice).toHaveURL(/\/channels\//u);
     const secondUrl = alice.url();
     const secondLink = await agentLink(alice);
-    const secondJoin = await agent.call('khala_join', { link: secondLink, label: 'Agent' });
+    const secondJoin = await agent.call('join', { link: secondLink, label: 'Agent' });
     expect(secondJoin.isError).not.toBe(true);
     if (secondJoin.structuredContent.autoConfirmed !== true && secondJoin.structuredContent.state !== 'connected') {
       await alice.goto(secondJoin.structuredContent.confirmUrl as string);
@@ -175,7 +175,7 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
     }
     let joinedChannels: { roomId: string; state: string; you: string }[] = [];
     await expect.poll(async () => {
-      const result = await agent.call('khala_status', {});
+      const result = await agent.call('status', {});
       joinedChannels = result.structuredContent.channels as typeof joinedChannels;
       return joinedChannels.filter(channel => channel.state === 'connected').length;
     }, { timeout: 120_000, intervals: [2000] }).toBe(2);
@@ -242,7 +242,7 @@ test('an agent rename and real MCP restart preserve Steer and confirm a later ow
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
     const link = await agentLink(alice);
     mcp = startMcp({ env });
-    const join = await mcp.call('khala_join', { link, label: 'Agent' });
+    const join = await mcp.call('join', { link, label: 'Agent' });
     expect(join.isError).not.toBe(true);
     await alice.goto(join.structuredContent.confirmUrl as string);
     await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
@@ -250,7 +250,7 @@ test('an agent rename and real MCP restart preserve Steer and confirm a later ow
     const agent = mcp;
     let channels: { roomId: string; you: string }[] = [];
     await expect.poll(async () => {
-      const status = await agent.call('khala_status', {});
+      const status = await agent.call('status', {});
       channels = status.structuredContent.channels as typeof channels;
       return status.structuredContent.state;
     }, { timeout: 120_000, intervals: [2000] }).toBe('connected');
@@ -297,7 +297,7 @@ test('an agent rename and real MCP restart preserve Steer and confirm a later ow
     await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe('async');
     await expect(renamedModeStatus).toBeHidden({ timeout: 30_000 });
     await expect(renamedRow.locator('[role="radio"][data-v="async"]')).toHaveAttribute('aria-checked', 'true');
-    expect((await mcp.call('khala_status', {})).structuredContent.listeningMode).toBe('async');
+    expect((await mcp.call('status', {})).structuredContent.listeningMode).toBe('async');
   } finally {
     try { await mcp?.close(); }
     finally { await context.close(); await rm(stateHome, { recursive: true, force: true }); }
@@ -325,7 +325,7 @@ test('the first owner mode change after a username change succeeds', async ({ br
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
     const link = await agentLink(alice);
     mcp = startMcp({ env });
-    const join = await mcp.call('khala_join', { link, label: 'Agent' });
+    const join = await mcp.call('join', { link, label: 'Agent' });
     expect(join.isError).not.toBe(true);
     await alice.goto(join.structuredContent.confirmUrl as string);
     await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
@@ -333,7 +333,7 @@ test('the first owner mode change after a username change succeeds', async ({ br
     const agent = mcp;
     let channels: { roomId: string; you: string }[] = [];
     await expect.poll(async () => {
-      const status = await agent.call('khala_status', {});
+      const status = await agent.call('status', {});
       channels = status.structuredContent.channels as typeof channels;
       return status.structuredContent.state;
     }, { timeout: 120_000, intervals: [2000] }).toBe('connected');

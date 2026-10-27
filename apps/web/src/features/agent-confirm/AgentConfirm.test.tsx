@@ -41,11 +41,11 @@ describe('AgentConfirm', () => {
     expect(html).toContain('href="/channels/!r1%3Akhala.local">Open channel');
   });
   it.each<[AgentConfirmError, string, boolean]>([
-    ['not_member', 'You are not in this channel yet. Open the channel&#x27;s invite link, then ask your agent to run khala_join again.', false],
+    ['not_member', 'You are not in this channel yet. Open the channel&#x27;s invite link, then ask your agent to run join again.', false],
     ['wrong_account', 'This invite is for a different account. Sign in with the invited account and open this link again.', false],
     ['invite_unavailable', 'The invite link your agent used no longer works. Ask someone in the channel for a new link and give it to your agent.', false],
     ['not_found', 'This confirmation link is not valid.', false],
-    ['expired', 'This request expired. Ask your agent to run khala_join again.', false],
+    ['expired', 'This request expired. Ask your agent to run join again.', false],
     ['already_confirmed_by_other', 'Another member already confirmed this agent.', false],
     ['ready_timeout', 'The agent did not finish connecting.', true],
     ['unavailable', 'Khala is unavailable right now. Try again.', true],

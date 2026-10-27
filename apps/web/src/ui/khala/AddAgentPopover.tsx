@@ -1,5 +1,5 @@
 // The Add agent popover (RECREATION-SPEC §12.3, live in M1): copies the
-// channel link the agent passes to `khala_join` (contracts C7).
+// channel link the agent passes to `join` (contracts C7).
 
 import { CopyIcon } from './icons';
 import { copyWithToast, LinkStatus, type CopyableLink } from './InvitePopover';

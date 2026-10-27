@@ -9,5 +9,5 @@ export function antigravityRegisterCommand(env: NodeJS.ProcessEnv = process.env,
     + ' wake register --harness antigravity';
 }
 export function antigravityRegisterHint(env: NodeJS.ProcessEnv = process.env, bin?: string): string {
-  return `Run ${antigravityRegisterCommand(env, bin)} through your own shell tool after khala_join and at every session start; repeat if the local server restarts. Never print or send the credential environment variables.`;
+  return `Run ${antigravityRegisterCommand(env, bin)} through your own shell tool after the Khala join tool and at every session start; repeat if the local server restarts. Never print or send the credential environment variables.`;
 }

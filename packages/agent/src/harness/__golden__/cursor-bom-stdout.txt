@@ -1,1 +1,1 @@
-{"followup_message":"Khala: channel messages are waiting. Call khala_read."}
+{"followup_message":"Khala: channel messages are waiting. Call the Khala read tool."}

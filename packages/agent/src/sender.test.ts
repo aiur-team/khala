@@ -15,7 +15,7 @@ it.each([
 it('converts Matrix milliseconds to ISO time', () => {
   expect(toInboxEntry(message).ts).toBe('2026-10-02T10:05:00.000Z');
 });
-it('prefixes replies with their parent for khala_read, leaving other messages and the contract shape alone', () => {
+it('prefixes replies with their parent for read, leaving other messages and the contract shape alone', () => {
   const reply = (eventId: string, body: string, parent: string) => toInboxEntry({ ...message, eventId, body,
     content: { msgtype: 'm.text', body, 'm.relates_to': { 'm.in_reply_to': { event_id: parent } } } }, 'Kevin');
   const parent = toInboxEntry({ ...message, body: 'Ship\nit today?' }, 'Maya');

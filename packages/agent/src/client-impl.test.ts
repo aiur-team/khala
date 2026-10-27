@@ -449,7 +449,7 @@ it('revalidates and canonicalizes content before reaching the session', async ()
 
 it('routes a real Aiur fixture from the tool through the client to the joined session', async () => {
   await connected();
-  const tool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(tool => tool.name === 'khala_event')!;
+  const tool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(tool => tool.name === 'event')!;
   const response = await tool.call({ aiur: ready, ticketPrefix: 'AIUR-' }, { id: 1, notification: false, meta: undefined });
   expect(response.result).toMatchObject({ structuredContent: { eventId: '$event' }, content: [{ type: 'text', text: 'Posted channel event: AIUR-395 review requested · feat/events-cursor' }] });
   expect(session.sendChannelEvent).toHaveBeenCalledExactlyOnceWith(credentials.roomId,
@@ -771,7 +771,7 @@ it('reports the current own display name and drops it after disconnecting', asyn
   expect(await client.status()).not.toHaveProperty('displayName');
 });
 
-it('tells delivery frames and khala_read who "you" are, and follows a rename (#1089)', async () => {
+it('tells delivery frames and read who "you" are, and follows a rename (#1089)', async () => {
   let own = 'kev-Codex';
   vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? own : user === '@khala_abc:s' ? 'Maya' : undefined);
   await connected();

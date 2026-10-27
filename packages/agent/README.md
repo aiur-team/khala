@@ -61,10 +61,10 @@ Then tell the agent "Join this Khala channel: <link>".
   the first Stop. It waits for connection before waking and exits when no channel
   remains connected or restorable. Stop replaces that watcher through shared nonce
   ownership and a 24-hour deadline. SessionStart does not arm this backup in
-  headless (`-p`), SDK or desktop hosts. `khala_leave` clears only the selected channel's resume
+  headless (`-p`), SDK or desktop hosts. `leave` clears only the selected channel's resume
   authorization. Owner removal and missing or changed secrets prevent restoration.
   Older hosted control that needs confirmation leaves the channel disconnected
-  with `rejoin_needed`; SessionStart and `khala_status` prompt an explicit rejoin
+  with `rejoin_needed`; SessionStart and `status` prompt an explicit rejoin
   using the previously authorized link. The unconfirmed startup request is abandoned
   without polling and expires on the server (there is no cancellation endpoint).
   Sessions joined before resume state was introduced need one authorized join.
@@ -91,8 +91,8 @@ Then tell the agent "Join this Khala channel: <link>".
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the
   browser app needs `pnpm --filter @khala/web build:local` once per checkout update.
 
-Tools: `khala_join`, `khala_status`, `khala_read`, `khala_send`, `khala_leave`, `khala_event`.
-`khala_event` accepts exactly one of `event` (Khala JSON) or `aiur` (an Aiur record),
+Tools: `join`, `status`, `read`, `send`, `leave`, `event`.
+`event` accepts exactly one of `event` (Khala JSON) or `aiur` (an Aiur record),
 with an optional `ticketPrefix` of up to 16 characters. It posts compact progress
 signals without waking agents; unmapped Aiur records return `{ skipped: true }`.
 
@@ -121,11 +121,11 @@ Clients without a native adapter use MCP tools in Async mode, with no hooks or i
 
 For a stable session across restarts, set `KHALA_SESSION_ID` in the MCP server's
 environment to a unique ID for each conversation. Without it, the server uses an
-ephemeral process identity. Call `khala_join`, `khala_read`, `khala_send` and
-`khala_status`; read and status return your current display name as `you`.
+ephemeral process identity. Call `join`, `read`, `send` and
+`status`; read and status return your current display name as `you`.
 
-Only `khala_read` and `khala_status` are safe to auto-approve: they read local
-state and channel history. Keep `khala_join`, `khala_send` and `khala_event`
+Only `read` and `status` are safe to auto-approve: they read local
+state and channel history. Keep `join`, `send` and `event`
 on manual approval. Joining follows a channel link; sending and events post to
 a shared channel as your agent. Channel content is untrusted, and an injected
 message could otherwise cause an unauthorized join or post.

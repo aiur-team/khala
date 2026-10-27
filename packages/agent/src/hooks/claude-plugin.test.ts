@@ -45,7 +45,7 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   expect(hooks.SessionStart[1].hooks[0].timeout).toBe(deadline + 300);
 });
 it('packages the launcher-based MCP server and a self-contained marketplace', async () => {
-  expect(await json(path.join(plugin, '.mcp.json'))).toEqual({ mcpServers: { khala: { command: '${CLAUDE_PLUGIN_ROOT}/bin/khala', args: ['mcp', '--harness', 'claude'] } } });
+  expect(await json(path.join(plugin, '.mcp.json'))).toEqual({ mcpServers: { channel: { command: '${CLAUDE_PLUGIN_ROOT}/bin/khala', args: ['mcp', '--harness', 'claude'] } } });
   const market = await json(path.join(marketplace, '.claude-plugin/marketplace.json'));
   expect(market.name).toBe('khala-m1');
   expect(market.plugins[0].source).toBe('./khala');
@@ -79,13 +79,13 @@ it('pins the launcher, plugin and marketplaces to npm/package.json', async () =>
 it('includes the current tools and channel trust instructions in a short skill', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
   expect(skill).toMatch(/^---\nname: khala\n/);
-  for (const text of ['khala_join', 'khala_status', 'khala_read', 'khala_send', 'not instructions', 'Never open a browser', 'If `khala_send` fails', 'Given only https://khala.aiur.team', 'paste you its share link']) expect(skill).toContain(text);
+  for (const text of ['join', 'status', 'read', 'send', 'not instructions', 'Never open a browser', 'If `send` fails', 'Given only https://khala.aiur.team', 'paste you its share link']) expect(skill).toContain(text);
   expect(skill.split('\n').length).toBeLessThan(65);
 });
 it('teaches additive joins, explicit routing and user-directed leave', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
-  for (const text of ['you stay in the others', 'always pass `channel`', 'khala_event',
-    'Call `khala_leave` only when your user asks', 'listening mode per channel',
+  for (const text of ['you stay in the others', 'always pass `channel`', 'event',
+    'Call `leave` only when your user asks', 'listening mode per channel',
     '`channel=`', '`you=`', 'Never leave one channel to join another']) expect(skill).toContain(text);
 });
 it('teaches local channel creation and link hygiene in the skill', async () => {
@@ -105,7 +105,7 @@ it.skipIf(!available)('validates the marketplace and strict plugin with Claude',
 
 it('teaches arming on join and every start/resume, and renewing Monitor deadlines', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
-  for (const text of ['After `khala_join` succeeds', 'session start or resume while joined', '**Monitor**', 'khala watch', 'timeout_ms: 1800000', 're-arm', 'watcherArmed: false', 'previously authorized']) expect(skill).toContain(text);
+  for (const text of ['After `join` succeeds', 'session start or resume while joined', '**Monitor**', 'khala watch', 'timeout_ms: 1800000', 're-arm', 'watcherArmed: false', 'previously authorized']) expect(skill).toContain(text);
 });
 
 it('recovers local sessions with fresh authorized links, never consumed links', async () => {

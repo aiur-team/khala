@@ -114,13 +114,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   }
 
   /** Web-only "typing…": shown from when channel content reaches the agent while its hook-tracked turn stays busy,
-   * capped at 10 min; khala_send clears it. Typing is never delivered to agents. */
+   * capped at 10 min; send clears it. Typing is never delivered to agents. */
   async function updateTyping(attempt: Attempt): Promise<void> {
     const { session, credentials } = attempt;
     if (attempt.typingSince === undefined || !session?.setTyping || !credentials) return;
     const activity = await readActivity(filesForDir(dir)).catch(() => undefined);
     const since = attempt.typingSince;
-    if (since === undefined) return; // khala_send cleared it during the read.
+    if (since === undefined) return; // send cleared it during the read.
     const t = now().getTime();
     const at = activity ? Date.parse(activity.updatedAt) : 0;
     // Busy goes stale like the hooks' own fallback (Esc skips Stop). Idle since before typing started is a
@@ -215,7 +215,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     await writeAggregate(channels.size === 0 ? detail : undefined);
   }
   /**
-   * The agent's own current name, as `khala_status.displayName` reports it; a rename event names it first.
+   * The agent's own current name, as `status.displayName` reports it; a rename event names it first.
    * Only the local helper's owner may name another subject in `content.user`. Hosted member content is
    * member-controlled, so there a rename counts only when the agent itself sent it (owner cascades do).
    */
@@ -790,7 +790,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         // Show at least everything just consumed, so nothing is marked delivered unseen (up to the page cap).
         return readOne(Math.min(100, Math.max(limit, consumed)), undefined, channel, options);
       }
-      // Without a channel, read every joined channel: the constant nudge says only "Call khala_read".
+      // Without a channel, read every joined channel: the constant nudge says only "Call the Khala read tool".
       if (channel === undefined && before === undefined && stored.size && stored.size + pendingAttempts().length > 1) {
         const sections = await Promise.all(refs().map(async ref => {
           const name = channels.get(ref.key)?.status.channelName ?? ref.channelName ?? ref.roomId;

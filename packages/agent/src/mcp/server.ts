@@ -53,7 +53,7 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
         await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
       } else if (line.trim().length > 0) {
         if (waitCall(line)) {
-          // A khala_read wait blocks up to 50 s; it must not stall other tool calls (responses carry their ids).
+          // A read wait blocks up to 50 s; it must not stall other tool calls (responses carry their ids).
           const task: Promise<void> = processLine(line, output, context, signal).catch(error => { failed ??= { error }; }).finally(() => inFlight.delete(task));
           inFlight.add(task);
         } else {

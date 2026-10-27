@@ -74,7 +74,7 @@
         "antigravity.google/conversation_id": "875f669c-2fc9-4d22-989d-ce1395307566",
         "progressToken": "99899414-94f4-429f-bf48-a4ad9932e4c6:4"
       },
-      "name": "khala_status",
+      "name": "status",
       "arguments": {}
     }
   },

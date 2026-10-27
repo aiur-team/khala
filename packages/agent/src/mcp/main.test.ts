@@ -26,20 +26,20 @@ describe('MCP command lifecycle', () => {
     clients[0]!.close = vi.fn(async () => { throw new Error('close failed'); });
     clients[1]!.close = vi.fn(async () => {});
     const createClient = vi.fn(() => clients[createClient.mock.calls.length - 1]!);
-    const io = streams([call('khala_status', 'a'), call('khala_status', 'b'), call('khala_status', 'a')]);
+    const io = streams([call('status', 'a'), call('status', 'b'), call('status', 'a')]);
     expect(await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient })).toBe(0);
     expect(createClient.mock.calls).toEqual([[{ harness: 'codex', sessionId: 'a', rejoinable: true }], [{ harness: 'codex', sessionId: 'b', rejoinable: true }]]);
     for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
   });
   it('returns the placeholder results through the real server', async () => {
-    const io = streams([call('khala_send', 'a', { text: 'hello' }), call('khala_status', 'a'), call('khala_join', 'a', { link: 'https://example.com' }), call('khala_read', 'a')]);
+    const io = streams([call('send', 'a', { text: 'hello' }), call('status', 'a'), call('join', 'a', { link: 'https://example.com' }), call('read', 'a')]);
     expect(await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient: createPlaceholderClient })).toBe(0);
     expect(io.responses().map(response => response.result.structuredContent)).toEqual([
       { error: 'not_connected' }, { state: 'idle', unread: 0, listeningMode: 'sync' }, { error: 'link_unavailable' }, { error: 'not_connected' },
     ]);
   });
   it('never creates clients for absent or unsafe sessions', async () => {
-    const io = streams([call('khala_status'), call('khala_status', '../x')]);
+    const io = streams([call('status'), call('status', '../x')]);
     const createClient = vi.fn(createPlaceholderClient);
     await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient });
     expect(createClient).not.toHaveBeenCalled();
@@ -54,7 +54,7 @@ describe('MCP command lifecycle', () => {
     } finally { stderr.mockRestore(); input.destroy(); }
   });
   it('closes clients on transport failure', async () => {
-    const io = streams([call('khala_status', 'a')]);
+    const io = streams([call('status', 'a')]);
     const client = createPlaceholderClient();
     client.close = vi.fn(async () => {});
     const output = new Writable({ write(_chunk, _encoding, done) { done(new Error('write failed')); } });
@@ -83,7 +83,7 @@ describe('MCP command lifecycle', () => {
         child.once('error', reject);
       });
       const completed = (async () => {
-        child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
+        child.stdin.write(JSON.stringify(call('status')) + '\n');
         expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill(signal);
@@ -110,7 +110,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
-        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_set_mode', 'khala_event']);
+        .toEqual(['join', 'status', 'read', 'send', 'leave', 'set_mode', 'event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -121,7 +121,7 @@ describe('MCP command lifecycle', () => {
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
         env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'deadline' },
-        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 4000,
+        encoding: 'utf8', input: JSON.stringify(call('status')) + '\n', timeout: 4000,
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
@@ -146,7 +146,7 @@ describe('MCP command lifecycle', () => {
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
         env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'failure' },
-        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 8000,
+        encoding: 'utf8', input: JSON.stringify(call('status')) + '\n', timeout: 8000,
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(1);
@@ -160,7 +160,7 @@ describe('MCP command lifecycle', () => {
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
         env: { ...process.env, HOME: stateHome, CODEX_HOME: path.join(stateHome, '.codex'), PATH: '', XDG_STATE_HOME: stateHome },
-        encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
+        encoding: 'utf8', input: JSON.stringify(call('status', 'a')) + '\n',
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
@@ -169,13 +169,13 @@ describe('MCP command lifecycle', () => {
   });
 });
 
-it('forwards khala_leave through the real CLI wrapper', () => {
+it('forwards leave through the real CLI wrapper', () => {
   const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-leave-cli-'));
   try {
     const result = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../../bin/khala.mjs'), 'mcp', '--harness', 'claude'], {
       cwd: path.resolve(import.meta.dirname, '../../../..'),
       env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'leave-cli' },
-      input: JSON.stringify(call('khala_leave', undefined, { channel: 'A' })) + '\n', encoding: 'utf8', timeout: 10_000,
+      input: JSON.stringify(call('leave', undefined, { channel: 'A' })) + '\n', encoding: 'utf8', timeout: 10_000,
     });
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ error: 'channel_unknown', channels: [] });
@@ -195,7 +195,7 @@ it.each(['codex', 'claude', 'copilot'] as const)('creates the %s startup client 
   try {
     await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
     expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume', rejoinable: true });
-    input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
+    input.end(JSON.stringify(call('status', 'resume')) + '\n');
     await running;
     expect(createClient).toHaveBeenCalledOnce();
     expect(client.close).toHaveBeenCalledOnce();
@@ -211,7 +211,7 @@ it.each([undefined, '/work/project'])('skips Cursor startup restore for workspac
   const env = workspace === undefined ? {} : { KHALA_CURSOR_WORKSPACE: workspace };
   const running = runMcpCommand(['--harness', 'cursor'], { input, output, createClient, env });
   expect(createClient).not.toHaveBeenCalled();
-  input.end(JSON.stringify(call('khala_status', undefined)) + '\n');
+  input.end(JSON.stringify(call('status', undefined)) + '\n');
   await running;
   expect(createClient).toHaveBeenCalledOnce();
   expect(createClient.mock.calls[0]![0]).toMatchObject({ harness: 'cursor' });
@@ -225,7 +225,7 @@ it.each(['generic', 'cline'])('routes %s MCP requests through the resolved envir
   client.read = vi.fn(async () => ({ you: 'kevin-Agent', messages: [] }));
   client.close = vi.fn(async () => {});
   const createClient = vi.fn(() => client);
-  const io = streams([call('khala_read', 'ignored'), call('khala_status')]);
+  const io = streams([call('read', 'ignored'), call('status')]);
   expect(await runMcpCommand(['--harness', harness], { ...io, env: { KHALA_SESSION_ID: 'stable' }, createClient })).toBe(0);
   expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'stable', rejoinable: true });
   expect(io.responses().map(response => response.result.structuredContent.you)).toEqual(['kevin-Agent', 'kevin-Agent']);
@@ -251,7 +251,7 @@ it('restores only the latest authorized Codex session in this workspace before i
   try {
     await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
     expect(createClient.mock.calls.map(([session]) => session.sessionId)).toEqual(['second']);
-    input.end(JSON.stringify(call('khala_status')) + '\n' + JSON.stringify(call('khala_status', 'second')) + '\n');
+    input.end(JSON.stringify(call('status')) + '\n' + JSON.stringify(call('status', 'second')) + '\n');
     await running;
     expect(createClient).toHaveBeenCalledOnce();
     expect(output.read().toString()).toContain('session_unknown');
@@ -273,7 +273,7 @@ it('creates the explicit resumed Antigravity client before input and keeps tool 
   try {
     await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
     expect(createClient).toHaveBeenCalledWith({ harness: 'antigravity', sessionId: 'resume', rejoinable: true });
-    input.end(JSON.stringify({ ...call('khala_status'), params: { name: 'khala_status', arguments: {},
+    input.end(JSON.stringify({ ...call('status'), params: { name: 'status', arguments: {},
       _meta: { 'antigravity.google/conversation_id': 'different' } } }) + '\n');
     await running;
     expect(createClient).toHaveBeenCalledTimes(2);

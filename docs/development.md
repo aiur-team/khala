@@ -68,7 +68,7 @@ join only when control auto-confirms the rejoin. This uses the existing control
 route and its removal/revocation checks, including the existing `invalid_link`
 compatibility retry. A join requiring owner confirmation is not restored.
 
-Temporary failures retain authorization for the next startup. `khala_leave` clears
+Temporary failures retain authorization for the next startup. `leave` clears
 only the selected channel's authorization; leaving or removing one channel does
 not prevent others from restoring. Channel/display-name metadata survives startup
 and temporary failures so Claude's SessionStart hook can remind the agent to arm

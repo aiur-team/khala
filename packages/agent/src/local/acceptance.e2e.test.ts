@@ -61,7 +61,7 @@ async function members(): Promise<LocalChannelSummary['members']> {
 }
 async function send(agent: McpProcess, name: string) {
   const text = message(name);
-  const result = await agent.call('khala_send', { text });
+  const result = await agent.call('send', { text });
   expect(toolData<{ eventId?: string }>(result).eventId?.startsWith('$'), `${name} send (KI-121/KI-133)`).toBe(true);
   sentBodies.push(text);
   return text;
@@ -152,19 +152,19 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const status = (await cli(world, 'status')).data as { running: boolean; pid: number };
     expect(status.running, context('AE1')).toBe(true);
     expect((await readEgressLog(world.log)).some(record => record.kind === 'guard' && record.event === 'installed' && record.pid === status.pid && record.argv.includes('serve')), context('AE1')).toBe(true);
-    const joined = await world.claude.call('khala_join', { link: channel.selfLink });
+    const joined = await world.claude.call('join', { link: channel.selfLink });
     expect(toolData(joined), context('AE1')).toMatchObject({ state: 'connected', channelName: 'refactor' });
     expect(joined.content, context('AE1')).toContainEqual({ type: 'text', text: 'Connected to refactor.' });
   });
   acceptance('AE2', 'Codex joins without browser and announces its membership', async () => {
     expect(world.browser, context('AE2')).toBeUndefined();
-    const joined = await world.codex.call('khala_join', { link: channel.shareLink });
+    const joined = await world.codex.call('join', { link: channel.shareLink });
     expect(toolData(joined), context('AE2')).toMatchObject({ state: 'connected', channelName: 'refactor' });
     expect(joined.content, context('AE2')).toContainEqual({ type: 'text', text: 'Connected to refactor.' });
     const roster = await members();
     expect(roster.map(member => member.displayName).sort(), context('AE2')).toEqual(['kevin', 'kevin-Claude', 'kevin-Codex']);
     for (const [agent, harness] of [[world.claude, 'claude'], [world.codex, 'codex']] as const) {
-      const status = toolData<{ state: string; agentUserId: string }>(await agent.call('khala_status', {}));
+      const status = toolData<{ state: string; agentUserId: string }>(await agent.call('status', {}));
       expect(status.state, context('AE2')).toBe('connected');
       expect(status.agentUserId, context('AE2')).toMatch(/^@agent-[0-9a-f]{8}:local$/);
       expect(roster.find(member => member.userId === status.agentUserId), context('AE2')).toMatchObject({ kind: 'agent', harness });
@@ -175,7 +175,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
   acceptance('AE3', 'messages are attributed, ordered, unique and exclude self', async () => {
     const ping = await send(world.claude, 'ae3-ping');
     expect(await received(world.codex, ping), context('AE3')).toMatchObject({ senderLabel: 'kevin-Claude', senderKind: 'agent' });
-    const read = toolData<{ messages: InboxEntry[] }>(await world.codex.call('khala_read', { limit: 30 }));
+    const read = toolData<{ messages: InboxEntry[] }>(await world.codex.call('read', { limit: 30 }));
     expect(read.messages.at(-1)?.body, context('AE3')).toBe(ping);
     expect(await received(world.claude, await send(world.codex, 'ae3-pong')), context('AE3')).toMatchObject({ senderLabel: 'kevin-Codex' });
     const a = await send(world.claude, 'ae3-a'); const b = await send(world.claude, 'ae3-b');
@@ -211,19 +211,19 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const wakeWorld = await createWorld({ guard: false });
     try {
       const created = (await cli(wakeWorld, 'create', 'wake-proof')).data as LocalChannelCreated;
-      expect(toolData(await wakeWorld.claude.call('khala_join', { link: created.selfLink })), context('AE4')).toMatchObject({ state: 'connected' });
-      expect(toolData(await wakeWorld.codex.call('khala_join', { link: created.shareLink })), context('AE4')).toMatchObject({ state: 'connected' });
+      expect(toolData(await wakeWorld.claude.call('join', { link: created.selfLink })), context('AE4')).toMatchObject({ state: 'connected' });
+      expect(toolData(await wakeWorld.codex.call('join', { link: created.shareLink })), context('AE4')).toMatchObject({ state: 'connected' });
       await deliver(wakeWorld.codex, 'UserPromptSubmit');
       expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
       const before = (await codexCalls(wakeWorld)).length;
       const codexWake = message('@kevin-Codex ae4-wake-codex');
-      expect(toolData(await wakeWorld.claude.call('khala_send', { text: codexWake })), context('AE4')).toHaveProperty('eventId');
+      expect(toolData(await wakeWorld.claude.call('send', { text: codexWake })), context('AE4')).toHaveProperty('eventId');
       await eventually(async () => (await codexCalls(wakeWorld)).length === before + 1);
       expect((await codexCalls(wakeWorld)).at(-1), context('AE4')).toMatch(/^queue --thread e2e-codex --message Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/);
       expect(frameText(await deliver(wakeWorld.codex, 'UserPromptSubmit', (await codexCalls(wakeWorld)).at(-1)!.split('--message ')[1])), context('AE4')).toContain(`kevin-Claude (agent): ${codexWake}`);
       expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
       const selfBefore = (await codexCalls(wakeWorld)).length;
-      expect(toolData(await wakeWorld.codex.call('khala_send', { text: message('ae4-self-codex') })), context('AE4')).toHaveProperty('eventId');
+      expect(toolData(await wakeWorld.codex.call('send', { text: message('ae4-self-codex') })), context('AE4')).toHaveProperty('eventId');
       // Quiet window 2: own Codex message cannot queue Codex.
       await sleep(3000);
       expect((await codexCalls(wakeWorld)).length, context('AE4')).toBe(selfBefore);
@@ -261,7 +261,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect(await received(world.codex, message('ae5-human')), context('AE5')).toMatchObject({ senderKind: 'human', senderLabel: 'kevin' });
     expect((await wake.exited).code, context('AE5')).toBe(2);
     // The no-egress guard denies the cached capability probe, so no queue is attempted.
-    expect(toolData(await world.codex.call('khala_status')), context('AE5')).toMatchObject({
+    expect(toolData(await world.codex.call('status')), context('AE5')).toMatchObject({
       idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is unavailable.', note: CODEX_DAEMON_WAKE_NOTE },
     });
     expect(await deniedCodexCount(), context('AE5')).toBe(queues);
@@ -284,9 +284,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await received(world.claude, syncBody);
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
     const sync = await deliver(world.claude, 'Stop');
-    // A block reason is a user turn, so Stop only nudges; the content comes from khala_read.
+    // A block reason is a user turn, so Stop only nudges; the content comes from read.
     expect(sync, context('AE6')).toEqual({ decision: 'block', reason: STOP_NUDGE });
-    expect(frameText(toolData(await world.claude.call('khala_read', { limit: 100 }))), context('AE6')).toContain(syncBody);
+    expect(frameText(toolData(await world.claude.call('read', { limit: 100 }))), context('AE6')).toContain(syncBody);
     await setMode(world.claude, 'kevin-Claude', 'async');
     await setMode(world.codex, 'kevin-Codex', 'async');
     expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
@@ -309,7 +309,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
     expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
     expect(await deliver(world.codex, 'Stop'), context('AE6')).toBeNull();
-    expect(toolData<{ messages: InboxEntry[] }>(await world.claude.call('khala_read', {})).messages.some(entry => entry.body === message('ae6-async')), context('AE6')).toBe(true);
+    expect(toolData<{ messages: InboxEntry[] }>(await world.claude.call('read', {})).messages.some(entry => entry.body === message('ae6-async')), context('AE6')).toBe(true);
     await send(world.claude, 'ae6-async-reply');
     await setMode(world.claude, 'kevin-Claude', 'sync');
     expect(await deliver(world.claude, 'UserPromptSubmit'), context('AE6')).toBeNull();
@@ -357,7 +357,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
   });
   acceptance('AE9', 'single-use and expired links fail while browser GET preserves a link', async () => {
     probe = await startAgent(world, 'claude', 'e2e-probe'); world.probe = probe;
-    expect(toolData(await probe.call('khala_join', { link: channel.selfLink })), context('AE9')).toEqual({ error: 'link_unavailable' });
+    expect(toolData(await probe.call('join', { link: channel.selfLink })), context('AE9')).toEqual({ error: 'link_unavailable' });
     const expired = ((await cli(world, 'link', 'refactor')).data as { shareLink: string }).shareLink;
     await cli(world, 'stop');
     const secretsPath = path.join(roomDir(), 'secrets.json');
@@ -366,13 +366,13 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     secrets.links[hash(expired)]!.expiresAt = '2000-01-01T00:00:00.000Z';
     await writeJsonAtomic(secretsPath, secrets);
     await cli(world, 'list');
-    expect(toolData(await probe.call('khala_join', { link: expired })), context('AE9')).toEqual({ error: 'link_unavailable' });
+    expect(toolData(await probe.call('join', { link: expired })), context('AE9')).toEqual({ error: 'link_unavailable' });
     await ownerOpen(world, world.page!, 'refactor');
     const untouched = ((await cli(world, 'link', 'refactor')).data as { shareLink: string }).shareLink;
     expect((await world.page!.goto(untouched))?.status(), context('AE9')).toBe(200);
     await eventually(async () => (await world.page!.locator('#app').textContent())!.length > 0);
     await world.page!.goto(`${world.origin}/channels/${enc(channel.roomId)}`);
-    expect(toolData(await probe.call('khala_join', { link: untouched })), context('AE9')).toMatchObject({ state: 'connected', channelName: 'refactor' });
+    expect(toolData(await probe.call('join', { link: untouched })), context('AE9')).toMatchObject({ state: 'connected', channelName: 'refactor' });
     expect((await members()).some(member => member.displayName === 'kev-Claude-2'), context('AE9')).toBe(true);
     // AE6's third quiet window posted this link and proved membership unchanged.
     expect((await readJson<ChannelSecrets>(secretsPath))!.links[hash(contentLink)]!.consumedAt, context('AE9')).toBeUndefined();
@@ -394,8 +394,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const probeCredentials = (await readJson<AgentCredentials>(channelFiles(probe.files, channel.roomId).session))!;
     expect((await admin(world, 'DELETE', `${channelPath()}/members/${enc(probeCredentials.userId)}`)).status, context('AE11')).toBe(204);
     expect(await raw(world, { method: 'GET', path: `/api/local/rooms/${enc(channel.roomId)}/members`, headers: { authorization: `Bearer ${probeCredentials.accessToken}` } }), context('AE11')).toMatchObject({ status: 403, body: { error: 'not_member' } });
-    expect(toolData(await probe.call('khala_send', { text: 'x' })), context('AE11')).toEqual({ error: 'not_connected' });
-    expect(toolData(await probe.call('khala_status')), context('AE11')).toMatchObject({ state: 'disconnected', detail: 'removed' });
+    expect(toolData(await probe.call('send', { text: 'x' })), context('AE11')).toEqual({ error: 'not_connected' });
+    expect(toolData(await probe.call('status')), context('AE11')).toMatchObject({ state: 'disconnected', detail: 'removed' });
     expect((await received(world.claude, 'kev-Claude-2 left')).kind, context('AE11')).toBe('event');
     const logs = [await readFile(path.join(world.state, 'khala/local/helper.log'), 'utf8'), world.claude.stderr, world.codex.stderr, probe.stderr].join('\n');
     const helper = (await helperFile(world))!;
@@ -419,7 +419,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
       expect(await readFile(channelFiles(agent.files, channel.roomId).cursor, 'utf8'), context('AE8')).toBe(before[index]!.cursor);
       const entries = await inbox(agent); expect(new Set(entries.map(entry => entry.eventId)).size, context('AE8')).toBe(entries.length);
     }
-    const history = toolData<{ messages: InboxEntry[] }>(await world.claude.call('khala_read', { limit: 100 })).messages.map(entry => entry.body);
+    const history = toolData<{ messages: InboxEntry[] }>(await world.claude.call('read', { limit: 100 })).messages.map(entry => entry.body);
     expect(history.filter(body => sentBodies.includes(body)), context('AE8')).toEqual(sentBodies);
     await ownerOpen(world, world.page!, 'refactor'); await world.page!.getByText(message('ae8-after'), { exact: true }).waitFor();
   });
@@ -432,9 +432,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await ownerOpen(world, world.page!, 'refactor');
     expect((await cli(world, 'delete', 'refactor')).data, context('AE12')).toEqual({ deleted: channel.roomId });
     expect(existsSync(roomDir()), context('AE12')).toBe(false);
-    for (const agent of [world.claude, world.codex]) await eventually(async () => toolData<{ error: string }>(await agent.call('khala_send', { text: 'x' })).error === 'not_connected');
+    for (const agent of [world.claude, world.codex]) await eventually(async () => toolData<{ error: string }>(await agent.call('send', { text: 'x' })).error === 'not_connected');
     for (const agent of [world.claude, world.codex]) {
-      expect(toolData(await agent.call('khala_status')), context('AE12')).toMatchObject({ state: 'disconnected', detail: 'channel_deleted' });
+      expect(toolData(await agent.call('status')), context('AE12')).toMatchObject({ state: 'disconnected', detail: 'channel_deleted' });
     }
     evidence.deletedSessionDetail = 'channel_deleted';
     await world.page!.goto(`${world.origin}/conversations`);
@@ -470,7 +470,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const optimism = await create('Optimism');
       let agent = multi.claude;
       type ChannelStatus = { channel: string; roomId: string; state: string; you: string; agentUserId: string; listeningMode: ListeningMode };
-      const status = async () => toolData<{ channels: ChannelStatus[] }>(await agent.call('khala_status')).channels;
+      const status = async () => toolData<{ channels: ChannelStatus[] }>(await agent.call('status')).channels;
       const room = (target: LocalChannelCreated) => `/api/local/rooms/${enc(target.roomId)}`;
       const files = (target: LocalChannelCreated) => channelFiles(agent.files, target.roomId);
       const roster = async (target: LocalChannelCreated) => {
@@ -493,7 +493,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
         return text;
       };
       for (const target of [ecosystem, optimism]) {
-        expect(toolData(await agent.call('khala_join', { link: target.selfLink }))).toMatchObject({ state: 'connected' });
+        expect(toolData(await agent.call('join', { link: target.selfLink }))).toMatchObject({ state: 'connected' });
       }
       const original = await status();
       expect(original).toHaveLength(2);
@@ -525,23 +525,23 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       // both channels without replaying the PostToolUse message.
       const stopSteer = await human(optimism, 'multi-stop-steer');
       const stop = await deliver(agent, 'Stop');
-      // Stop only nudges; the per-channel khala_read checks below find both batches.
+      // Stop only nudges; the per-channel read checks below find both batches.
       expect(stop).toEqual({ decision: 'block', reason: STOP_NUDGE });
 
       const routed = message('multi-routed');
-      expect(toolData(await agent.call('khala_send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
+      expect(toolData(await agent.call('send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
       expect(await history(optimism)).toContain(routed); expect(await history(ecosystem)).not.toContain(routed);
       const unsent = message('multi-no-channel');
-      expect(toolData(await agent.call('khala_send', { text: unsent }))).toMatchObject({ error: 'channel_required' });
+      expect(toolData(await agent.call('send', { text: unsent }))).toMatchObject({ error: 'channel_required' });
       for (const target of [ecosystem, optimism]) expect(await history(target)).not.toContain(unsent);
       for (const [target, own, other] of [[ecosystem, sync, stopSteer], [optimism, stopSteer, sync]] as const) {
-        const read = toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: target.name, limit: 100 }));
+        const read = toolData<{ messages: InboxEntry[] }>(await agent.call('read', { channel: target.name, limit: 100 }));
         expect(read.messages.some(entry => entry.body === own)).toBe(true);
         expect(read.messages.some(entry => entry.body === other)).toBe(false);
         expect(read.messages.every(entry => entry.roomId === target.roomId)).toBe(true);
       }
       const eventText = message('multi-event');
-      expect(toolData(await agent.call('khala_event', { channel: 'Optimism',
+      expect(toolData(await agent.call('event', { channel: 'Optimism',
         event: { v: 1, kind: 'test', summary: eventText, body: eventText, status: 'success' },
       }))).toHaveProperty('eventId');
       expect(await history(optimism)).toContain(eventText); expect(await history(ecosystem)).not.toContain(eventText);
@@ -561,7 +561,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       await sleep(3000);
       expect(wake.running).toBe(true);
       for (const event of ['PostToolUse', 'UserPromptSubmit', 'Stop'] as const) expect(await deliver(agent, event)).toBeNull();
-      const asyncRead = toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: 'Optimism' }));
+      const asyncRead = toolData<{ messages: InboxEntry[] }>(await agent.call('read', { channel: 'Optimism' }));
       expect(asyncRead.messages.some(entry => entry.body === asyncText)).toBe(true);
       // The same watcher must still notice the other channel's sync message.
       const stillSync = await human(ecosystem, 'multi-still-sync');
@@ -569,15 +569,15 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const awake = frameText(await deliver(agent, 'UserPromptSubmit'));
       expect(awake).toContain(stillSync); expect(awake).not.toContain(asyncText);
 
-      expect(toolData(await agent.call('khala_leave', { channel: 'Optimism' }))).toMatchObject({ left: optimism.name });
+      expect(toolData(await agent.call('leave', { channel: 'Optimism' }))).toMatchObject({ left: optimism.name });
       expect(await status()).toEqual([expect.objectContaining({ roomId: ecosystem.roomId, state: 'connected' })]);
       const afterLeave = message('multi-after-leave');
-      expect(toolData(await agent.call('khala_send', { text: afterLeave }))).toHaveProperty('eventId');
+      expect(toolData(await agent.call('send', { text: afterLeave }))).toHaveProperty('eventId');
       expect(await history(ecosystem)).toContain(afterLeave); expect(await history(optimism)).not.toContain(afterLeave);
       const beforeRestart = await human(ecosystem, 'multi-before-restart');
-      // #1303: Stop only nudges; khala_read shows the content.
+      // #1303: Stop only nudges; read shows the content.
       expect(await deliver(agent, 'Stop')).toEqual({ decision: 'block', reason: STOP_NUDGE });
-      expect(toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: ecosystem.name })).messages.some(entry => entry.body === beforeRestart)).toBe(true);
+      expect(toolData<{ messages: InboxEntry[] }>(await agent.call('read', { channel: ecosystem.name })).messages.some(entry => entry.body === beforeRestart)).toBe(true);
 
       const rejoinFile = path.join(agent.files.dir, 'rejoin.json');
       const rejoin = await readFile(rejoinFile, 'utf8');
@@ -589,7 +589,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
         const linked = await cli(multi, 'link', target.name);
         expect(linked.code).toBe(0);
         const { shareLink } = linked.data as { shareLink: string };
-        expect(toolData(await agent.call('khala_join', { link: shareLink }))).toMatchObject({ state: 'connected' });
+        expect(toolData(await agent.call('join', { link: shareLink }))).toMatchObject({ state: 'connected' });
       }
       expect(await readFile(rejoinFile, 'utf8')).toBe(rejoin);
       const restarted = await status();

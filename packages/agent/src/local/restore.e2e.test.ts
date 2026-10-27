@@ -18,7 +18,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('MCP restore delivery', () 
       });
       expect((await send('before-original-join')).status).toBe(200);
       const agent = world[harness];
-      const joined = await agent.call('khala_join', { link: channel.selfLink });
+      const joined = await agent.call('join', { link: channel.selfLink });
       expect(joined.structuredContent.state).toBe('connected');
       await deliver(agent, 'UserPromptSubmit');
       expect(await deliver(agent, 'Stop')).toBeNull();
@@ -30,9 +30,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('MCP restore delivery', () 
       expect((await inbox(agent)).some(entry => entry.body === body)).toBe(false);
       const restarted = await startAgent(world, harness, agent.sessionId);
       world[harness] = restarted;
-      if (harness === 'codex') await restarted.call('khala_status');
+      if (harness === 'codex') await restarted.call('status');
       await eventually(async () => (await inbox(restarted)).some(entry => entry.body === body));
-      const status = await restarted.call('khala_status');
+      const status = await restarted.call('status');
       expect(status.structuredContent.unread).toBeGreaterThanOrEqual(1);
       expect((await inbox(restarted)).some(entry => entry.body === 'before-original-join')).toBe(false);
       if (watcher) expect((await watcher.exited).code).toBe(2);

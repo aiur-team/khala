@@ -35,6 +35,16 @@ describe('MCP tool registry', () => {
     const registry = createToolRegistry([]);
     for (const name of ['nope', 'constructor', '__proto__']) expect(registry.resolve(name)).toBeUndefined();
   });
+  it('still accepts the old khala_ names without listing them', async () => {
+    const registry = createToolRegistry([tool('read', 'hello')]);
+    const [list, call] = await exchange(registry, [
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'khala_read', arguments: {} } },
+    ]);
+    expect(list.result.tools.map((entry: { name: string }) => entry.name)).toEqual(['read']);
+    expect(call.result).toEqual({ content: [{ type: 'text', text: 'hello' }] });
+    expect(registry.resolve('khala_nope')).toBeUndefined();
+  });
   it('answers an unknown tool call with Invalid params', async () => {
     const [response] = await exchange(createToolRegistry([]), [
       { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'khala_nope', arguments: {} } },
