@@ -58,9 +58,11 @@ export interface HumanApplicationPorts {
   readonly isJoined?: (roomId: RoomId) => boolean;
   /** The listening mode a Matrix user reports in `roomId`; `sync` when unknown. */
   readonly listeningMode?: (roomId: RoomId, matrixUserId: string) => ListeningMode;
+  /** Hosted only: whether the viewer locked this agent's mode (set_mode refuses). */
+  readonly modeLocked?: (roomId: RoomId, matrixUserId: string) => boolean;
   readonly subscribeListeningModes?: (roomId: RoomId, listener: () => void) => Disposer;
-  /** Sends the owner's listening-mode command to their agent. */
-  readonly setListeningMode?: (roomId: RoomId, matrixUserId: string, mode: ListeningMode, txnId: string) => Promise<'sent' | 'failed'>;
+  /** Sends the owner's listening-mode command to their agent; `locked`, when given, sets or clears the mode lock. */
+  readonly setListeningMode?: (roomId: RoomId, matrixUserId: string, mode: ListeningMode, txnId: string, locked?: boolean) => Promise<'sent' | 'failed'>;
   readonly identity: IdentityPort;
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;

@@ -3,12 +3,12 @@ import path from 'node:path';
 import { advanceCursor, markNudged, readCursor, readEntries, unread } from './inbox';
 import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
-/** The owner-chosen mode and whether the owner archived the channel. */
-export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean }> {
+/** The owner-chosen mode, whether the owner archived the channel, and whether they locked the mode. */
+export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean; locked: boolean }> {
   const content = await readJson<unknown>(files.mode);
   const record = typeof content === 'object' && content !== null ? content as Record<string, unknown> : {};
   const decoded = decodeListeningMode(record.mode);
-  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true };
+  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true, locked: record.locked === true };
 }
 const delegateFile = (files: SessionFiles) => path.join(files.dir, 'delegate.json');
 /** A background agent waiting on this channel (read wait) holds a lease until `ms` from now. */
@@ -53,12 +53,12 @@ const QUIET: ReadonlySet<ListeningMode> = new Set(['async', 'mute']);
 /** An agent change records `eventTs` (its own time) so a replayed older owner command cannot undo it.
  * Leaving a quiet mode (`async`, `mute`) skips the queued backlog unless `keepBacklog` is set. */
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
-  meta: ({ changedBy: 'owner'; eventId: string } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
+  meta: ({ changedBy: 'owner'; eventId: string; locked?: boolean } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
   now: () => Date = () => new Date()) {
   const { keepBacklog, ...record } = meta;
-  const { mode: previous, archived } = await readModeState(files);
+  const { mode: previous, archived, locked } = await readModeState(files);
   if (QUIET.has(previous) && !QUIET.has(next) && !keepBacklog) await skipBacklog(files);
   if (previous === 'mute' && next === 'async') await skipPings(files);
-  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...record, updatedAt: now().toISOString() });
+  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...(locked ? { locked } : {}), ...record, updatedAt: now().toISOString() });
   return { previous, next };
 }

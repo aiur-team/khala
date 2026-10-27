@@ -64,6 +64,15 @@ describe('ChannelRoster', () => {
     expect(html).toContain('Mute · silent');
   });
 
+  it('shows the owner\'s mode lock on the mode control', () => {
+    const resolved = members([scout]);
+    const roster = (locked: boolean) => renderToStaticMarkup(<KhalaApp theme="dark" main={<ChannelRoster phase="ready" onOpen={() => {}}
+      members={{ ...resolved, agents: resolved.agents.map(agent => ({ ...agent, harness: 'claude' })) }}
+      modeFor={() => 'sync'} lockedFor={() => locked} onSetMode={async () => 'sent'} />} />);
+    expect(roster(true)).toContain('aria-label="Listening mode for Scout: Sync · next turn · Locked"');
+    expect(roster(false)).not.toContain('Locked');
+  });
+
   it('badges names that collide across owners with the thread owner suffix', () => {
     const theosScout = { ...scout, participantId: 'agent_other' as ParticipantId, ownerId: 'owner_theo' as OwnerId };
     const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout, theosScout])} />);

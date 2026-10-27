@@ -44,7 +44,7 @@ import { ARCHIVED_ACCOUNT_DATA_TYPE, ARCHIVED_MEMBER_KEY, ARCHIVE_NOTICE_TYPE, m
 import type { ChannelNameResult, ChannelNamesPort, MediaPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
-  DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
+  DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, MODE_LOCKS_ACCOUNT_DATA_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
 } from '@khala/contracts/m1/listening-mode';
 import {
   createBrowserDeviceService,
@@ -746,6 +746,11 @@ export function readListeningMode(client: Pick<MatrixClient, 'getRoom'>, roomId:
   return memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
 }
 
+/** Whether the viewer locked agent `userId`'s mode in `roomId`, from their private room account data. */
+export function readModeLocked(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): boolean {
+  return client.getRoom(roomId)?.getAccountData(MODE_LOCKS_ACCOUNT_DATA_TYPE)?.getContent()[userId] === true;
+}
+
 type OwnMemberClient = Pick<MatrixClient, 'getRoom' | 'getUserId' | 'getStateEvent' | 'sendStateEvent'>;
 const ownMemberWrites = new Map<string, Promise<unknown>>();
 
@@ -899,13 +904,20 @@ export function sendTyping(client: Pick<MatrixClient, 'sendTyping'>, sent: Map<s
   void client.sendTyping(roomId, typing, TYPING_TIMEOUT_MS).catch(() => undefined);
 }
 
-/** Sends the owner's encrypted listening-mode command to one agent. */
-export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent'>, roomId: string, userId: string,
-  mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'> {
+/** Sends the owner's encrypted listening-mode command to one agent. A `locked` change is first saved in the owner's account data. */
+export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'setRoomAccountData'>, roomId: string, userId: string,
+  mode: ListeningMode, txnId: string, locked?: boolean): Promise<'sent' | 'failed'> {
   try {
-    if (!client.getRoom(roomId)?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return 'failed';
+    const room = client.getRoom(roomId);
+    if (!room?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return 'failed';
+    if (locked !== undefined) {
+      const locks: Record<string, unknown> = { ...room.getAccountData(MODE_LOCKS_ACCOUNT_DATA_TYPE)?.getContent() };
+      if (locked) locks[userId] = true; else delete locks[userId];
+      const setData = client.setRoomAccountData as unknown as (roomId: string, type: string, content: object) => Promise<unknown>;
+      await setData.call(client, roomId, MODE_LOCKS_ACCOUNT_DATA_TYPE, locks);
+    }
     const send = client.sendEvent as unknown as (roomId: string, type: string, content: object, txnId: string) => Promise<unknown>;
-    const content: ListeningModeCommandContent = { v: 1, agent: userId, mode };
+    const content: ListeningModeCommandContent = { v: 1, agent: userId, mode, ...(locked !== undefined ? { locked } : {}) };
     await send.call(client, roomId, LISTENING_MODE_COMMAND_TYPE, content, txnId);
     return 'sent';
   } catch { return 'failed'; }
@@ -919,9 +931,10 @@ export type MatrixBrowserPorts = Readonly<{
   /** Current SDK membership, independent of timeline attribution readiness. */
   isJoined(roomId: RoomId): boolean;
   listeningMode(roomId: RoomId, userId: string): ListeningMode;
-  /** Calls `listener` whenever a member event lands in `roomId`. */
+  modeLocked(roomId: RoomId, userId: string): boolean;
+  /** Calls `listener` whenever a member event or the viewer's mode locks change in `roomId`. */
   subscribeListeningModes(roomId: RoomId, listener: () => void): () => void;
-  setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'>;
+  setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string, locked?: boolean): Promise<'sent' | 'failed'>;
   participant(): ParticipantView | null;
   channelNames: ChannelNamesPort;
   memberSince(roomId: RoomId, userId: string): number | null;
@@ -1068,11 +1081,16 @@ export function createMatrixBrowserPorts(input: Readonly<{
       const publish = (event: MatrixEvent) => {
         if (runtime.active === active && event.getRoomId() === roomId && event.getType() === EventType.RoomMember) listener();
       };
+      const locks = (event: MatrixEvent, room: Room) => {
+        if (runtime.active === active && room.roomId === roomId && event.getType() === MODE_LOCKS_ACCOUNT_DATA_TYPE) listener();
+      };
       active.client.on(RoomStateEvent.Events, publish);
-      return () => { active.client.off(RoomStateEvent.Events, publish); };
+      active.client.on(RoomEvent.AccountData, locks);
+      return () => { active.client.off(RoomStateEvent.Events, publish); active.client.off(RoomEvent.AccountData, locks); };
     },
-    setListeningMode: (roomId, userId, mode, txnId) => runtime.active
-      ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId) : Promise.resolve('failed'),
+    modeLocked: (roomId, userId) => !!runtime.active && readModeLocked(runtime.active.client, roomId, userId),
+    setListeningMode: (roomId, userId, mode, txnId, locked) => runtime.active
+      ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId, locked) : Promise.resolve('failed'),
     device, room, conversations, syncStatus, participant: () => runtime.active?.actor ?? null,
     channelNames: { setOwnName: (roomId, name) => runtime.active
       ? setOwnChannelName(runtime.active.client, roomId, name) : Promise.resolve({ kind: 'error', code: 'unavailable' }) },

@@ -158,7 +158,8 @@ export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
 
 export const harnessName = (agent: AgentMember) => agent.harness ? harnessDisplayName(agent.harness) : 'Agent';
 
-export type SetModeHandler = (participantId: string, mode: ListeningMode) => Promise<'sent' | 'failed'>;
+/** `locked`, when given, sets or clears the owner's mode lock (the agent's set_mode then refuses). */
+export type SetModeHandler = (participantId: string, mode: ListeningMode, locked?: boolean) => Promise<'sent' | 'failed'>;
 
 /** How long a requested mode stays selected before an unconfirmed request reverts. */
 export const MODE_CONFIRM_MS = 15_000;
@@ -170,9 +171,11 @@ const MODES = MODE_COPY.map(([value]) => ({ value, label: <ModeIcon mode={value}
  * selected until the agent's member state reports it, or reverts after
  * `MODE_CONFIRM_MS`.
  */
-function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
+function ModeControl({ agent, mode, locked, onSetMode, rename, children }: Readonly<{
   agent: AgentMember;
   mode: ListeningMode;
+  /** The owner's mode lock; undefined hides the Lock mode toggle. */
+  locked: boolean | undefined;
   onSetMode: SetModeHandler;
   /** The row's Rename button, placed before the mode control. */
   rename: ReactNode;
@@ -190,6 +193,7 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
     : statusKind === 'offline' ? `${label} didn't confirm. It may be offline.`
     : statusKind === 'failed' ? `Couldn't send the mode change to ${label}. Try again.` : '';
   const shown = pending ?? mode;
+  const lockTip = locked ? ' · Locked' : '';
 
   useEffect(() => {
     if (pending === null || mode !== pending) return;
@@ -212,7 +216,7 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
   function moveFocus(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     event.preventDefault();
-    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"], [role="menuitemcheckbox"]')];
     const at = items.indexOf(document.activeElement as HTMLButtonElement);
     const step = event.key === 'ArrowDown' ? 1 : -1;
     items[(at + step + items.length) % items.length]?.focus();
@@ -231,6 +235,13 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
     setStatus('failed');
   }
 
+  async function toggleLock(): Promise<void> {
+    setMenuOpen(false);
+    anchor.current?.focus();
+    const result = await onSetMode(agent.participantId, shown, !locked).catch(() => 'failed' as const);
+    setStatus(result === 'sent' ? null : 'failed');
+  }
+
   /** A menu pick closes the menu and returns focus to the trigger, as Escape does. */
   function chooseFromMenu(next: ListeningMode): void {
     anchor.current?.focus();
@@ -241,14 +252,16 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
     <div className="kh-rrow">{children}<span className="kh-racts">
       {rename}
       <Segmented icon label={`Listening mode for ${label}`} value={shown} options={MODES} onChange={value => void choose(value)} />
-      <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown)} aria-haspopup="menu"
-        aria-expanded={menuOpen} aria-label={`Listening mode for ${label}: ${modeTip(shown)}`}
+      <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown) + lockTip} aria-haspopup="menu"
+        aria-expanded={menuOpen} aria-label={`Listening mode for ${label}: ${modeTip(shown)}${lockTip}`}
         onClick={() => setMenuOpen(open => !open)}><ModeIcon mode={shown} /></button>
       <Popover anchor={anchor} open={menuOpen} menu onClose={() => setMenuOpen(false)}>
         <div role="menu" aria-label={`Listening mode for ${label}`} onKeyDown={moveFocus}>
           {MODE_COPY.map(([value, name, desc]) => <button key={value} ref={value === shown ? activeItem : undefined} type="button"
             role="menuitemradio" aria-checked={value === shown} className={`kh-mi${value === shown ? ' on' : ''}`}
             data-v={value} onClick={() => chooseFromMenu(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
+          {locked === undefined ? null : <button type="button" role="menuitemcheckbox" aria-checked={locked} className={`kh-mi${locked ? ' on' : ''}`}
+            onClick={() => void toggleLock()}>Lock mode<em>{label} can't change its own mode</em></button>}
         </div>
       </Popover>
     </span></div>
@@ -256,9 +269,10 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
   </>;
 }
 
-function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
+function AgentRow({ agent, mode, locked, onOpen, onRename, onSetMode }: Readonly<{
   agent: AgentMember;
   mode: ListeningMode;
+  locked: boolean | undefined;
   onOpen(participantId: string): void;
   onRename?: ((participantId: string) => void) | undefined;
   onSetMode?: SetModeHandler | undefined;
@@ -277,7 +291,7 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   const rename = agent.isViewerOwned && onRename ? <button type="button" className="kh-ib sm kh-rename-btn" aria-label={`Rename ${label}`}
     data-tip="Rename" onClick={() => onRename(agent.participantId)}><PencilIcon /></button> : null;
   if (agent.isViewerOwned && onSetMode && !asyncOnly) {
-    return <ModeControl agent={agent} mode={shownMode} onSetMode={onSetMode} rename={rename}>{opener}</ModeControl>;
+    return <ModeControl agent={agent} mode={shownMode} locked={locked} onSetMode={onSetMode} rename={rename}>{opener}</ModeControl>;
   }
   return <div className="kh-rrow">
     {opener}
@@ -350,12 +364,14 @@ export type ChannelRosterProps = Readonly<{
   renderColors?: (() => ReactNode) | undefined;
   /** An agent's reported listening mode; `sync` when absent. */
   modeFor?: ((participantId: string) => ListeningMode) | undefined;
+  /** Whether the viewer locked an agent's mode; adds the Lock mode toggle. */
+  lockedFor?: ((participantId: string) => boolean) | undefined;
   /** Makes the viewer's agents' mode controls live. */
   onSetMode?: SetModeHandler | undefined;
 }>;
 
 /** The roster tree: one group per human, each with the agents it owns. */
-export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, renderColors, modeFor, onSetMode, creatorOwnerId, onRemoveHuman }: ChannelRosterProps) {
+export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, renderColors, modeFor, lockedFor, onSetMode, creatorOwnerId, onRemoveHuman }: ChannelRosterProps) {
   const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
   const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
   return <>
@@ -381,7 +397,7 @@ export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent
           {human?.isViewer && renderAddAgent ? <RowPopover label="Add agent" icon={<AgentIcon />} render={renderAddAgent} /> : null}
         </div>
         {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent}
-          mode={modeFor?.(agent.participantId) ?? 'sync'} onOpen={onOpen} onRename={onRename} onSetMode={onSetMode} />)}</div> : null}
+          mode={modeFor?.(agent.participantId) ?? 'sync'} locked={lockedFor?.(agent.participantId)} onOpen={onOpen} onRename={onRename} onSetMode={onSetMode} />)}</div> : null}
       </div>;
     })}
   </>;

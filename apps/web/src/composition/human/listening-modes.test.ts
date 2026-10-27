@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OwnerId, ParticipantId, ParticipantView, RoomId } from '@khala/contracts/messaging/index';
 import type { MatrixClient } from 'matrix-js-sdk';
 import { guardedListeningModeSetter } from './listening-modes';
-import { readListeningMode, sendListeningMode } from './matrix-browser';
+import { readListeningMode, readModeLocked, sendListeningMode } from './matrix-browser';
 
 const roomId = '!room:khala.example' as RoomId;
 const mira = 'owner_mira' as OwnerId;
@@ -32,6 +32,13 @@ describe('guardedListeningModeSetter', () => {
     expect(send).not.toHaveBeenCalledWith(roomId, '@agent-own:khala.example', expect.anything(), expect.anything());
   });
 
+  it('passes a lock change through, and refuses another owner’s lock', async () => {
+    const { set, send } = setter();
+    await expect(set('agent_own', 'sync', true)).resolves.toBe('sent');
+    expect(send).toHaveBeenCalledExactlyOnceWith(roomId, '@agent-own:khala.example', 'sync', expect.any(String), true);
+    await expect(set('agent_theo', 'sync', true)).resolves.toBe('failed');
+  });
+
   it('refuses another owner’s agent without sending', async () => {
     const { set, send } = setter();
     await expect(set('agent_theo', 'steer')).resolves.toBe('failed');
@@ -48,14 +55,28 @@ describe('guardedListeningModeSetter', () => {
 });
 
 describe('listening mode on Matrix', () => {
-  function client(content: unknown, encrypted = true) {
+  function client(content: unknown, encrypted = true, locks: Record<string, unknown> = {}) {
     const member = { getContent: () => content };
     return {
       getRoom: vi.fn(() => ({ hasEncryptionStateEvent: () => encrypted,
+        getAccountData: (type: string) => type === 'com.khala.mode_locks' ? { getContent: () => locks } : undefined,
         currentState: { getStateEvents: vi.fn((type: string, key: string) => type === 'm.room.member' && key === '@a:x' ? member : null) } })),
       sendEvent: vi.fn(async () => ({ event_id: '$1' })),
-    } as unknown as Pick<MatrixClient, 'getRoom' | 'sendEvent'>;
+      setRoomAccountData: vi.fn(async () => ({})),
+    } as unknown as Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'setRoomAccountData'>;
   }
+
+  it('saves a lock privately in the owner\'s account data, then sends it with the command', async () => {
+    const sdk = client({}, true, { '@b:x': true });
+    expect(readModeLocked(sdk, roomId, '@b:x')).toBe(true);
+    expect(readModeLocked(sdk, roomId, '@a:x')).toBe(false);
+    await expect(sendListeningMode(sdk, roomId, '@a:x', 'sync', 'txn_l', true)).resolves.toBe('sent');
+    expect(sdk.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.mode_locks', { '@b:x': true, '@a:x': true });
+    expect(sdk.sendEvent).toHaveBeenCalledWith(roomId, 'com.khala.listening_mode.v1', { v: 1, agent: '@a:x', mode: 'sync', locked: true }, 'txn_l');
+    const locked = client({}, true, { '@a:x': true });
+    await sendListeningMode(locked, roomId, '@a:x', 'sync', 'txn_u', false);
+    expect(locked.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.mode_locks', {});
+  });
 
   it('reads the member key, defaulting to sync', () => {
     expect(readListeningMode(client({ membership: 'join', 'com.khala.listening_mode': 'async' }), roomId, '@a:x')).toBe('async');
@@ -67,6 +88,7 @@ describe('listening mode on Matrix', () => {
     const encrypted = client({});
     await expect(sendListeningMode(encrypted, roomId, '@a:x', 'steer', 'txn_1')).resolves.toBe('sent');
     expect(encrypted.sendEvent).toHaveBeenCalledExactlyOnceWith(roomId, 'com.khala.listening_mode.v1', { v: 1, agent: '@a:x', mode: 'steer' }, 'txn_1');
+    expect(encrypted.setRoomAccountData).not.toHaveBeenCalled();
     const plain = client({}, false);
     await expect(sendListeningMode(plain, roomId, '@a:x', 'steer', 'txn_2')).resolves.toBe('failed');
     expect(plain.sendEvent).not.toHaveBeenCalled();

@@ -179,10 +179,14 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     const userId = matrixUserId(participantId);
     return userId && context.listeningMode ? context.listeningMode(roomId, userId) : 'sync';
   };
+  const lockedFor = context.modeLocked ? (participantId: string): boolean => {
+    const userId = matrixUserId(participantId);
+    return !!userId && context.modeLocked!(roomId, userId);
+  } : undefined;
   const subscribeModes = useCallback((listener: () => void) => context.subscribeListeningModes?.(roomId, listener) ?? (() => undefined),
     [context, roomId]);
   // Re-renders the roster when any agent's reported mode changes.
-  const modesSnapshot = () => presence.agents.map(agent => modeFor(agent.participantId)).join();
+  const modesSnapshot = () => presence.agents.map(agent => modeFor(agent.participantId) + (lockedFor?.(agent.participantId) ? '!' : '')).join();
   useSyncExternalStore(subscribeModes, modesSnapshot, modesSnapshot);
   // Each human's colours here (#1308), from their own member event, by owner id; the same member-state subscription.
   const colorsSnapshot = () => JSON.stringify(context.channelColors ? [
@@ -300,6 +304,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       {...(currentNames ? { currentNames } : {})}
       {...(describeParticipant ? { describeParticipant } : {})}
       modeFor={modeFor}
+      {...(lockedFor ? { lockedFor } : {})}
       {...(context.setListeningMode ? { onSetMode: guardedListeningModeSetter({ roomId, viewer, matrixUserId,
         ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
         joined: () => context.isJoined?.(roomId) ?? timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
