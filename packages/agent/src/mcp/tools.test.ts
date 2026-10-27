@@ -45,7 +45,7 @@ describe('seven Khala tools through stdio', () => {
     expect(client.join).toHaveBeenCalledWith(link, 'Codex');
     expect(clientFor).toHaveBeenCalledWith({ threadId: '019a-thread' });
     expect(responses[0]).toEqual({ jsonrpc: '2.0', id: 7, result: {
-      content: [{ type: 'text', text: `Ask your human to open ${confirmUrl} and confirm. Then repeat join with the same link until state is "connected".` }],
+      content: [{ type: 'text', text: `Ask your human to open ${confirmUrl} and confirm. Then repeat join with the same link (none for a rejoin) until state is "connected".` }],
       structuredContent: { state: 'awaiting_confirmation', confirmUrl },
     } });
   });
@@ -57,10 +57,17 @@ describe('seven Khala tools through stdio', () => {
     expect(client.join).toHaveBeenNthCalledWith(2, link, 'Reviewer');
     expect(responses[0].result.content[0].text).toBe('Connected to Review.');
   });
+  it('rejoins saved channels when join has no link', async () => {
+    const client = fake();
+    client.join = vi.fn(async () => ({ state: 'connected' as const, channelName: 'Review' }));
+    const { responses } = await exchange([call('join', {})], client, 'claude');
+    expect(client.join).toHaveBeenCalledWith(undefined, 'Claude');
+    expect(responses[0].result.content[0].text).toBe('Connected to Review.');
+  });
   it.each([
     ['join', { link, label: '' }], ['join', { link, label: '   ' }],
     ['join', { link, label: 'a'.repeat(41) }], ['join', { link: 3 }],
-    ['join', { link, label: null }], ['join', {}],
+    ['join', { link, label: null }],
     ['send', { text: '' }], ['send', { text: 'a'.repeat(8001) }],
     ['send', { text: 3 }], ['send', {}],
     ['read', { limit: 0 }], ['read', { limit: 101 }], ['read', { limit: 1.5 }],

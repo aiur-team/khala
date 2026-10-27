@@ -52,8 +52,8 @@ session start or resume while joined, start a background **Monitor** on
 `khala watch --harness claude --session <current session id>` (or `khala watch`
 if CLAUDE_CODE_SESSION_ID is available). Use `timeout_ms: 1800000`; re-arm when
 Monitor reports its deadline while still joined. Keep one Monitor per session; one watcher covers every channel.
-On resume, call `status` first. If idle/disconnected after exit, rejoin the
-hosted channel link your user previously authorized, then arm it. Local links
+On resume, call `status` first. If disconnected after a restart, resume or account switch, call `join` with
+no link to rejoin your saved channels, then arm it; if that fails, rejoin the hosted link your user previously authorized. Local links
 are single-use: for a local channel your user already authorized you to manage,
 run `khala local link "<name>"` and join its fresh `shareLink`; otherwise ask for
 a fresh local link. If a link returns `link_unavailable`, ask for a replacement.
