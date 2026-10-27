@@ -347,6 +347,31 @@ export function createHumanHandlers(
       }),
     },
     {
+      path: '/api/human/channels/approve-joins', methods: Object.freeze(['GET', 'POST']),
+      handle: request => withServices(request, async ({ auth, administration }) => {
+        if (request.method === 'GET') {
+          const principal = await authenticated(auth, request);
+          if (isResponse(principal)) return principal;
+          if (!administration) return unavailable('feature_unavailable');
+          const search = new URL(request.url).searchParams;
+          const roomId = decodeRoomId(search.get('roomId'));
+          if (!roomId.ok || search.getAll('roomId').length !== 1 || [...search.keys()].some(key => key !== 'roomId')) return json(400, { code: 'invalid_request' });
+          const result = await administration.approveJoins(principal, roomId.value);
+          return result.kind === 'ok' ? json(200, { on: result.on, owner: result.owner })
+            : result.kind === 'forbidden' ? json(403, { code: 'forbidden' }) : unavailable();
+        }
+        const principal = await authorized(auth, request);
+        if (isResponse(principal)) return principal;
+        if (!administration) return unavailable('feature_unavailable');
+        const value = await readJsonObject(request);
+        if (!value || !hasExactKeys(value, ['roomId', 'on']) || typeof value.on !== 'boolean') return json(400, { code: 'invalid_request' });
+        const roomId = decodeRoomId(value.roomId);
+        if (!roomId.ok) return json(400, { code: 'invalid_request' });
+        const result = await administration.setApproveJoins(principal, roomId.value, value.on);
+        return result.kind === 'ok' ? json(200, { on: value.on }) : result.kind === 'forbidden' ? json(403, { code: 'forbidden' }) : unavailable();
+      }),
+    },
+    {
       path: '/api/human/channels/remove-human', methods: post,
       handle: request => withServices(request, async ({ auth, administration }) => {
         const principal = await authorized(auth, request);

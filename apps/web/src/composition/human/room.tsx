@@ -324,7 +324,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       onRosterOpen={() => composer.current?.closeChips()}
       {...(navigate && routes ? { onBack: () => navigate(routes.conversationsPath()) } : {})}
       {...(linkSource ? {
-        renderShare: () => <ChannelInvite key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
+        renderShare: () => <ChannelInvite key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource}
+          administration={context.room.administration} />,
         renderAddAgent: () => <ChannelAddAgent key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
       } : {})}
       renderTimeline={(openParticipant, openInvite, onMentionRoster) => (

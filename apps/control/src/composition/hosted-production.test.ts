@@ -56,6 +56,7 @@ const keptRoutes = [
   ['/api/human/invitations/inspect', ['GET']],
   ['/api/human/invitations/admit', ['POST']],
   ['/api/human/channels/creator', ['GET']],
+  ['/api/human/channels/approve-joins', ['GET', 'POST']],
   ['/api/human/channels/remove-human', ['POST']],
   ['/api/human/messaging/session', ['POST']],
   ['/api/human/messaging/participants', ['POST']],

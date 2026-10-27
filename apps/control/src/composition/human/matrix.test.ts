@@ -909,6 +909,13 @@ it('uses the Matrix creator and removes only the selected human and their verifi
   });
   const matrix = services(fetch, store);
   expect(await matrix.administration.creator(principal, roomId)).toEqual({ kind: 'ok', ownerId: principal.ownerId });
+  // Approve joins: off by default, only the creator changes it, every member reads the stored value.
+  expect(await matrix.administration.approveJoins(principal, roomId)).toEqual({ kind: 'ok', on: false, owner: true });
+  expect(await matrix.administration.setApproveJoins({ ...principal, ownerId: target }, roomId, true)).toEqual({ kind: 'forbidden' });
+  expect(await matrix.administration.approveJoins({ ...principal, ownerId: target }, roomId)).toEqual({ kind: 'ok', on: false, owner: false });
+  expect(await matrix.administration.setApproveJoins(principal, roomId, true)).toEqual({ kind: 'ok' });
+  expect(await matrix.administration.approveJoins({ ...principal, ownerId: target }, roomId)).toEqual({ kind: 'ok', on: true, owner: false });
+  expect(await matrix.administration.setApproveJoins(principal, roomId, false)).toEqual({ kind: 'ok' });
   expect(await matrix.administration.removeHuman({ ...principal, ownerId: target }, roomId, principal.ownerId)).toEqual({ kind: 'forbidden' });
   expect(await matrix.administration.removeHuman(principal, roomId, principal.ownerId)).toEqual({ kind: 'forbidden' });
   expect(await matrix.administration.removeHuman(principal, roomId, 'missing' as OwnerId)).toEqual({ kind: 'not_found' });

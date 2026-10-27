@@ -2,6 +2,7 @@ import { withMembershipLease } from '../../invitations/membership-lock';
 import { roomAgents } from '../../agent-join/session-status';
 import { CHANNEL_EVENT_TYPE, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import { readRoomRemovals, recordRemoval, completeRemoval } from '../../invitations/removals';
+import { readApproveJoins, writeApproveJoins } from '../../invitations/approve-joins';
 import { decodeHumanInitialsRecord, humanInitialsRecordKey } from '@khala/contracts/m1/initials';
 import { createHash, createHmac } from 'node:crypto';
 import {
@@ -77,6 +78,10 @@ export type MatrixParticipant = Participant;
 export interface MatrixChannelAdministration {
   creator(principal: AuthPrincipal, roomId: RoomId): Promise<{ kind: 'ok'; ownerId: OwnerId } | { kind: 'forbidden' | 'unavailable' }>;
   removeHuman(principal: AuthPrincipal, roomId: RoomId, ownerId: OwnerId): Promise<{ kind: 'ok' | 'forbidden' | 'not_found' | 'unavailable' }>;
+  /** Any member reads the channel's Approve joins setting; `owner` says whether they may change it. */
+  approveJoins(principal: AuthPrincipal, roomId: RoomId): Promise<{ kind: 'ok'; on: boolean; owner: boolean } | { kind: 'forbidden' | 'unavailable' }>;
+  /** Only the channel creator changes it. */
+  setApproveJoins(principal: AuthPrincipal, roomId: RoomId, on: boolean): Promise<{ kind: 'ok' | 'forbidden' | 'unavailable' }>;
 }
 
 export type MatrixHumanServices = Readonly<{
@@ -721,6 +726,18 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       }
       const ownerId = creatorUser ? ownerFromMatrixUserId(creatorUser, serverName) : null;
       return ownerId ? { kind: 'ok', ownerId } : { kind: 'unavailable' };
+    },
+    async approveJoins(principal, roomId) {
+      const creator = await administration.creator(principal, roomId);
+      if (creator.kind !== 'ok') return creator;
+      const on = await readApproveJoins(options.store, roomId);
+      return on === 'unavailable' ? { kind: 'unavailable' } : { kind: 'ok', on, owner: creator.ownerId === principal.ownerId };
+    },
+    async setApproveJoins(principal, roomId, on) {
+      const creator = await administration.creator(principal, roomId);
+      if (creator.kind !== 'ok') return creator;
+      if (creator.ownerId !== principal.ownerId) return { kind: 'forbidden' };
+      return { kind: await writeApproveJoins(options.store, roomId, on) ? 'ok' : 'unavailable' };
     },
     async removeHuman(principal, roomId, ownerId) {
       return withMembershipLease(options.store, roomId, ownerId, async lease => {

@@ -185,6 +185,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/invitations/inspect', methods: ['GET'], domain: 'human' },
       { path: '/api/human/invitations/admit', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channels/creator', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/channels/approve-joins', methods: ['GET', 'POST'], domain: 'human' },
       { path: '/api/human/channels/remove-human', methods: ['POST'], domain: 'human' },
       { path: '/api/human/messaging/session', methods: ['POST'], domain: 'human' },
       { path: '/api/human/messaging/participants', methods: ['POST'], domain: 'human' },

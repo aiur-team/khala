@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AdmissionPort, RoomId } from '@khala/contracts/messaging/index';
+import type { AdmissionPort, ChannelAdministrationPort, RoomId } from '@khala/contracts/messaging/index';
 import { copyShareLink, type CopyResult } from '../../ui/share-link';
 import { AddAgentPopover } from '../../ui/khala/AddAgentPopover';
-import { CopyFallback, InvitePopover, type CopyableLink } from '../../ui/khala/InvitePopover';
+import { CopyFallback, InvitePopover, type ApproveJoins, type CopyableLink } from '../../ui/khala/InvitePopover';
 import type { HumanChannelLinks } from '../../composition/human/channel-links';
 
 type ShareState = Readonly<{ operationId: string; url: string | null; status: 'idle' | 'busy' | 'ready' | 'error'; error: string | null }>;
@@ -78,9 +78,33 @@ export function useChannelLink(admission: ChannelLinkSource['admission'], channe
   return { url: link.url, status: link.status, error: link.error, copying, copied, copy };
 }
 
+type Administration = Pick<ChannelAdministrationPort, 'approveJoins' | 'setApproveJoins'>;
+
+/** The channel's Approve joins setting, read fresh on every mount (each popover open); undefined without the port. */
+export function useApproveJoins(administration: Administration | undefined, roomId: RoomId): ApproveJoins | undefined {
+  const [state, setState] = useState<Readonly<{ on: boolean | null; owner: boolean }>>({ on: null, owner: false });
+  useEffect(() => {
+    const abort = new AbortController();
+    void administration?.approveJoins?.(roomId, { signal: abort.signal }).then(result => {
+      if (!abort.signal.aborted && result.kind === 'ok') setState(result.value);
+    }, () => undefined);
+    return () => abort.abort();
+  }, [administration, roomId]);
+  if (!administration?.approveJoins || !administration.setApproveJoins) return undefined;
+  const save = administration.setApproveJoins;
+  return { ...state, set(on) {
+    setState(current => ({ ...current, on }));
+    // A refused or failed save shows the stored value again.
+    void save({ roomId, on }).then(result => result.kind === 'ok', () => false)
+      .then(saved => { if (!saved) setState(current => ({ ...current, on: !on })); });
+  } };
+}
+
 /** The Invite popover body over this channel's live link. */
-export function ChannelInvite({ admission, channelLinks, roomId, onCopy }: ChannelLinkSource & Readonly<{ onCopy?: (url: string) => Promise<CopyResult> }>) {
-  return <InvitePopover link={useChannelLink(admission, channelLinks, roomId, { onCopy, eager: true })} />;
+export function ChannelInvite({ admission, channelLinks, roomId, onCopy, administration }: ChannelLinkSource & Readonly<{
+  onCopy?: (url: string) => Promise<CopyResult>; administration?: Administration | undefined }>) {
+  return <InvitePopover link={useChannelLink(admission, channelLinks, roomId, { onCopy, eager: true })}
+    approval={useApproveJoins(administration, roomId)} />;
 }
 
 /** The Add agent popover body: the same link is the agent's `join` input (C7). */

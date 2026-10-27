@@ -95,12 +95,28 @@ export function createAgentConfirmController({
       case 'pending':
         // A lost confirmation response may still have reached the server.
         if (confirmAttempted) poll(view);
-        else publish({ state: 'review', view });
+        else {
+          publish({ state: 'review', view });
+          // Approve joins is off and this member issued the agent's link: confirm without a click.
+          if (view.access === 'auto') void confirm();
+        }
         break;
       case 'confirmed': poll(view); break;
       case 'ready': publish({ state: 'done', view }); break;
       case 'expired': error('expired', view); break;
     }
+  }
+
+  async function confirm() {
+    if (disposed || snapshot.state !== 'review' || confirmAttempted) return;
+    confirmAttempted = true;
+    const view = snapshot.view;
+    const token = endOperation();
+    publish({ state: 'connecting', view });
+    const result = await request(signal => port.confirm(joinId, signal));
+    if (!current(token)) return;
+    if (result.kind === 'error') error(result.code, view);
+    else accept(result);
   }
 
   async function load() {
@@ -122,17 +138,7 @@ export function createAgentConfirmController({
       started = true;
       void load();
     },
-    async confirm() {
-      if (disposed || snapshot.state !== 'review' || confirmAttempted) return;
-      confirmAttempted = true;
-      const view = snapshot.view;
-      const token = endOperation();
-      publish({ state: 'connecting', view });
-      const result = await request(signal => port.confirm(joinId, signal));
-      if (!current(token)) return;
-      if (result.kind === 'error') error(result.code, view);
-      else accept(result);
-    },
+    confirm,
     retry() {
       if (disposed || snapshot.state !== 'error') return;
       const { code, view } = snapshot;
