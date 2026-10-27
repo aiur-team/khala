@@ -239,7 +239,7 @@ it('does not let a share-link holder hijack a cursor-default member', async () =
       expect(store.agentForToken(original.accessToken)).toEqual({ roomId: created.roomId, userId: original.userId });
     }
     expect(store.members(created.roomId).filter(member => member.kind === 'agent').map(member => member.displayName))
-      .toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3']);
+      .toEqual(['kevin-Cursor', 'Evil', 'Evil-2']);
     expect(await victim.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
   } finally { await victim.close(); }
 });
