@@ -17,6 +17,7 @@
 .kh-name b { color: hsl(var(--h) 75% 72%); font-weight: 600; }
 .khala-app[data-theme="light"] .kh-name b { color: hsl(var(--h) 60% 35%); }
 .kh-name:hover b { text-decoration: underline; }
+.kh-row.me .kh-name { flex-direction: row-reverse; }
 .kh-id { font-family: "JetBrains Mono", monospace; font-size: .68rem; padding: 1px 6px; border-radius: 999px; background: hsl(var(--h) 60% 50% / .14); color: hsl(var(--h) 70% 72%); border: 1px solid hsl(var(--h) 60% 50% / .3); }
 .khala-app[data-theme="light"] .kh-id { color: hsl(var(--h) 60% 32%); }
 .kh-b { padding: .5rem .8rem; border-radius: 18px; font-size: .92rem; line-height: 1.4; background: var(--surface-3); color: var(--fg); text-wrap: pretty; overflow-wrap: anywhere; position: relative; }

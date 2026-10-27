@@ -96,13 +96,14 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
 
     // Attribution: the review action slot is present per exact EventRef, and
     // each row is marked by its own author's kind and ownership. The harness
-    // viewer *is* Alice, so her rows are `.me` bubbles with no name line; the
+    // viewer *is* Alice, so her rows are `.me` bubbles under a `Me` name line with no avatar; the
     // release agent's row (owned by Alice) is an ordinary agent row marked
     // `.agent.yours` with no machine tag, scoped to that row.
     await page.getByTestId('review-recent_1').waitFor();
     const welcomeRow = page.locator('[data-event-id="recent_1"]');
     assert.equal(await welcomeRow.evaluate(row => row.classList.contains('me')), true);
-    assert.equal(await welcomeRow.locator('.kh-name, .kh-av').count(), 0);
+    assert.equal(await welcomeRow.locator('.kh-av').count(), 0);
+    assert.equal(await welcomeRow.locator('.kh-name b').textContent(), 'Me');
     const agentRow = page.locator('[data-event-id="recent_2"]');
     await agentRow.locator('.kh-name').waitFor();
     assert.equal(await agentRow.evaluate(row => row.classList.contains('me')), false);

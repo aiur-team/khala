@@ -24,9 +24,11 @@ describe('computeRuns', () => {
     expect(positions[2]).toMatchObject({ first: true, ghost: false });
   });
 
-  it('gives a viewer message no avatar and no name', () => {
-    const [position] = computeRuns([from('me', true)]);
-    expect(position).toMatchObject({ first: true, showName: false, showAvatar: false, ghost: false });
+  it('gives a viewer run no avatar but a name line on its first row', () => {
+    const positions = computeRuns([from('me', true), from('me', true)]);
+    expect(positions.map(position => position!.showName)).toEqual([true, false]);
+    const [position] = positions;
+    expect(position).toMatchObject({ first: true, showName: true, showAvatar: false, ghost: false });
   });
 
   it('splits runs between different senders', () => {

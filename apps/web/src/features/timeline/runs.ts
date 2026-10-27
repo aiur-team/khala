@@ -8,7 +8,7 @@ export type RunPosition = Readonly<{
   first: boolean;
   mid: boolean;
   lastOf: boolean;
-  /** The name line: first row of a run, never the viewer's. */
+  /** The name line (`Me` for the viewer): first row of a run. */
   showName: boolean;
   /** Viewer rows have no avatar element at all. */
   showAvatar: boolean;
@@ -29,7 +29,7 @@ export function computeRuns(items: readonly RunInput[]): readonly (RunPosition |
       first,
       mid: !first && !last,
       lastOf: last && !first,
-      showName: first && !item.isViewer,
+      showName: first,
       showAvatar: !item.isViewer,
       ghost: !item.isViewer && !last,
     };
