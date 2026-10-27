@@ -144,6 +144,7 @@ export function createAgentConfirmController({
     /** Stops a pending no-click confirm; the page then waits for Confirm as usual. */
     cancelAuto() {
       if (disposed || snapshot.state !== 'review' || snapshot.view.access !== 'auto') return;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- drops access from the view
       const { access: _auto, ...view } = snapshot.view;
       endOperation();
       publish({ state: 'review', view });
