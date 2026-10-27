@@ -157,9 +157,21 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       }, !capabilities.sync);
       await row('async', async () => {
         await setMode('async'); await publish('tier-b-async');
-        const before = await readCursor(files());
+        const before = await unread(files());
+        expect(before.entries.some(entry => entry.body.endsWith(' tier-b-async'))).toBe(true);
+        // publish addresses the agent: async emits one constant nudge, never the body.
+        const nudgeEvent = adapter.codec?.promptAcceptsContext ? 'prompt' : 'stop';
+        for (const event of ['prompt', 'tool', 'stop'] as const) {
+          const output = await hook(agent, event);
+          if (event === nudgeEvent) expect(output).toEqual({
+            kind: event === 'prompt' ? 'context' : 'continue', frame: driver.syncNudge,
+          });
+          else expect(output.kind).toBe('none');
+        }
+        expect(await readCursor(files())).toEqual({ ...before.cursor,
+          nudgedCount: before.cursor.deliveredCount + before.entries.length });
+        expect((await unread(files())).entries).toEqual(before.entries);
         for (const event of ['prompt', 'tool', 'stop'] as const) expect((await hook(agent, event)).kind).toBe('none');
-        expect(await readCursor(files())).toEqual(before);
       });
       const nativeWakeReason: Record<string, string> = {
         opencode: 'NOT RUN: U10 native OpenCode plugin acknowledgement has no spawned-process fixture',

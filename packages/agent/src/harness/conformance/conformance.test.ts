@@ -46,7 +46,8 @@ describe('Tier A conformance', () => {
       const parsed = codex.codec!.parse(stdin);
       return parsed?.event === 'tool' ? null : parsed;
     } } };
-    const { syncNudge: _nudge, ...frameDriver } = driver;
+    const frameDriver = { ...driver };
+    delete frameDriver.syncNudge;
     const result = await runConformance(adapter, frameDriver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } });
     expect(result.rows.find(row => row.feature === 'steer')).toEqual({ feature: 'steer', status: 'absent' });
     await expect(runConformance({ ...synthetic, codec: frameCodec }, frameDriver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } }))
