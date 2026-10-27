@@ -49,12 +49,12 @@ describe('seven Khala tools through stdio', () => {
       structuredContent: { state: 'awaiting_confirmation', confirmUrl },
     } });
   });
-  it('supports Claude, explicit labels and connected join text', async () => {
+  it('supports Claude, ignores explicit labels and connected join text', async () => {
     const client = fake();
     client.join = vi.fn(async () => ({ state: 'connected' as const, channelName: 'Review' }));
     const { responses } = await exchange([call('join', { link }), call('join', { link, label: 'Reviewer' })], client, 'claude');
     expect(client.join).toHaveBeenNthCalledWith(1, link, 'Claude');
-    expect(client.join).toHaveBeenNthCalledWith(2, link, 'Reviewer');
+    expect(client.join).toHaveBeenNthCalledWith(2, link, 'Claude');
     expect(responses[0].result.content[0].text).toBe('Connected to Review.');
   });
   it('rejoins saved channels when join has no link', async () => {

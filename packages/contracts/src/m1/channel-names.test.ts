@@ -36,6 +36,12 @@ it('picks the lowest free default agent name in a channel', () => {
   expect(freeAgentName('kevin', 'claude', ['kevin-Claude', 'kevin-Claude-3'])).toBe('kevin-Claude-2');
 });
 
+it('names a new agent after a valid session-title label, else the default', () => {
+  expect(freeAgentName('kevin', 'claude', [], 'PC-Kevin')).toBe('PC-Kevin');
+  expect(freeAgentName('kevin', 'claude', ['pc-kevin', 'PC-Kevin-2'], 'PC-Kevin')).toBe('PC-Kevin-3');
+  for (const label of ['Claude', 'claude', 'My Chat', 'System', 'x', undefined]) expect(freeAgentName('kevin', 'claude', [], label)).toBe('kevin-Claude');
+});
+
 describe('nameCollisions', () => {
   it('lists only the later holder of a shared name', () => {
     const collisions = nameCollisions([

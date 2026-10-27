@@ -3,6 +3,7 @@ import { writeApproveJoins } from '../invitations/approve-joins';
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { ownerAgentsKey } from '@khala/contracts/m1/names';
+import { harnessInfo } from '@khala/contracts/m1/harness';
 import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import type { AuthPrincipal, OwnerId, RoomId } from '@khala/contracts/messaging/index';
@@ -17,13 +18,13 @@ import { durableStores } from './testing/store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
 
-async function fixture(options: { username?: string; harness?: string; email?: string; invite?: boolean; issuer?: string } = {}) {
+async function fixture(options: { username?: string; harness?: string; email?: string; invite?: boolean; issuer?: string; label?: string } = {}) {
   let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
   const blobs = durableStores();
   const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
   const joins = createJoinStore({ store, clock, random: randomBytes });
   const joinId = randomBytes(16).toString('base64url');
-  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString(),
+  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: options.label ?? harnessInfo(options.harness ?? 'claude').modelName, harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString(),
     ...(options.invite ? { sealedInvite: sealInvite(secret, joinId, 'inv_abcdefgh') } : {}), ...(options.issuer ? { issuerOwnerId: options.issuer } : {}) };
   expect(await joins.create(record)).toBe('created');
   let ownerId = 'owner' as OwnerId;
@@ -211,7 +212,8 @@ it('keeps one hosted identity and its rename across fresh join requests for the 
   expect(identityId).toMatch(/^session\.[a-f0-9]{64}$/);
   expect(await renameAgent(f.deps, 'owner' as OwnerId, credentials.userId, 'Reviewer')).toBe('ok');
   const nextId = randomBytes(16).toString('base64url');
-  await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
+  // A session title set after the first join never renames the existing agent.
+  await f.joins.create({ ...f.record, joinId: nextId, label: 'New-Title', sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
   const rejoined = await f.handlers.confirm(f.request('POST', `joinId=${nextId}`));
   expect(rejoined.status).toBe(200);
   expect(await rejoined.json()).toMatchObject({ label: 'Reviewer', agentUserId: credentials.userId });
@@ -311,6 +313,13 @@ it('previews and confirms the lowest free number when someone in the channel hol
   expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ state: 'confirmed', label: 'Kevin-Codex-2' });
   expect(f.deps.provisioner.provision).toHaveBeenCalledWith(expect.objectContaining({ label: 'Kevin-Codex-2' }));
   expect(f.deps.roomMemberNames).toHaveBeenCalledWith('owner', credentials.roomId);
+});
+it('previews and confirms the session-title label, numbered when someone in the channel holds it', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex', label: 'PC-Kevin' });
+  f.roomNames.push('pc-kevin');
+  expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ state: 'pending', label: 'PC-Kevin-2' });
+  expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ state: 'confirmed', label: 'PC-Kevin-2' });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledWith(expect.objectContaining({ label: 'PC-Kevin-2' }));
 });
 it('lets the same default name exist in another channel', async () => {
   const f = await fixture({ username: 'Kevin', harness: 'codex' });

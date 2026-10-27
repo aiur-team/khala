@@ -3,7 +3,7 @@
 // Identity, owners, colours and mentions stay keyed by ids; these helpers only
 // pick which name a member shows in one channel and who has to change it.
 import { type Decoded, decodeWith, fail, identifier, object } from '../messaging/decode';
-import type { HarnessId } from './harness';
+import { harnessInfo, type HarnessId } from './harness';
 import { AGENT_NAME_MAX, checkName, defaultAgentName, USERNAME_MAX, type NameKind } from './names';
 
 /** `POST` `{ name }` sets the local owner's name in one channel; answers `{ name }`. */
@@ -45,9 +45,14 @@ export function channelNameSuggestion(name: string, kind: NameKind, taken: Itera
   return trimmed;
 }
 
-/** An agent's default name with the lowest `-N` free among `taken` in its channel. */
-export function freeAgentName(username: string, harness: HarnessId, taken: Iterable<string>): string {
+/**
+ * A new agent's name in its channel: the session-title `label` its client sent when that is a valid
+ * name other than the bare model name, else `<username>-<Model>`; either gets the lowest free `-N`.
+ */
+export function freeAgentName(username: string, harness: HarnessId, taken: Iterable<string>, label?: string): string {
   const used = takenNames(taken);
+  const titled = label === undefined || key(label) === key(harnessInfo(harness).modelName) ? null : checkName(label, 'agent');
+  if (titled?.ok) return used.has(key(titled.name)) ? channelNameSuggestion(titled.name, 'agent', used) : titled.name;
   let n = 1;
   while (n < 1000 && used.has(key(defaultAgentName(username, harness, n)))) n++;
   return defaultAgentName(username, harness, n);

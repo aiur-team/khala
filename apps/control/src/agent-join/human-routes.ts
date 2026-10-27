@@ -112,13 +112,13 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (existing.kind === 'record' && (!decoded?.ok || decoded.value.ownerId !== principal.ownerId || decoded.value.harness !== record.harness)) return unavailable();
       const previous = decoded?.ok ? decoded.value : undefined;
       // A rejoining session keeps its name. Agent names are not unique across Khala, only within a
-      // channel: a new agent takes its default name, or the lowest free `-N` when someone here holds it.
+      // channel: a new agent takes its session title or default name, or the lowest free `-N` when someone here holds it.
       const rejoin = previous !== undefined;
       let name = previous?.label ?? (record.agentUserId === userId ? record.label : null);
       if (name === null) {
         const names = await deps.roomMemberNames(principal.ownerId, record.roomId as RoomId);
         if (!names) return unavailable();
-        name = freeAgentName(username, record.harness, names);
+        name = freeAgentName(username, record.harness, names, record.label);
       }
       const removal = await readRoomRemovals(deps.store, record.roomId as RoomId);
       if (removal === 'unavailable' || removal?.owners[principal.ownerId] && !removal.owners[principal.ownerId]!.complete) return unavailable();
@@ -258,9 +258,9 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();
-        // The name it will join as: its default, numbered when someone in this channel holds it.
+        // The name it will join as: its session title or default, numbered when someone in this channel holds it.
         const names = await deps.roomMemberNames(principal.ownerId, read.record.roomId as RoomId);
-        view.label = freeAgentName(username, read.record.harness, names ?? []);
+        view.label = freeAgentName(username, read.record.harness, names ?? [], read.record.label);
       }
       return json(200, view);
     } catch { return unavailable(); }

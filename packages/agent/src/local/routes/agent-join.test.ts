@@ -173,7 +173,7 @@ describe('agentJoinRoutes', () => {
       expect(attacker.userId).not.toBe(original.userId);
     }
     expect(f.tokens.filter(token => token.userId === original.userId)).toEqual([{ roomId, userId: original.userId, tokenSha256: hash(original.accessToken) }]);
-    expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3', 'kevin-Cursor-4']);
+    expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Cursor', 'Evil', 'Evil-2', 'Evil-3']);
     expect(f.events.every(e => !Object.hasOwn(e.content, 'com.khala.rejoin'))).toBe(true);
     const rejoined = await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Cursor', sessionId: 'cursor-default', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
     expect(rejoined.userId).toBe(original.userId);
@@ -237,11 +237,19 @@ describe('agentJoinRoutes', () => {
     await f.create({ link, harness: 'claude' });
   });
 
-  it.each(['System', '', 42, undefined])('ignores label %j', async label => {
+  it.each(['System', '', 42, undefined, 'claude', 'My Chat'])('ignores unusable label %j', async label => {
     const f = fixture();
     const body = { link: f.link(), harness: 'claude', ...(label === undefined ? {} : { label }) };
     expect((await f.call({ url: joinPath, body })).status).toBe(201);
     expect(f.events[0]!.content.displayname).toBe('kevin-Claude');
+  });
+
+  it('names a new agent after its session title, suffixes a taken one and keeps the name on rejoin', async () => {
+    const f = fixture({ names: ['PC-Kevin'] });
+    const identity = { harness: 'claude' as const, sessionId: 'thread-1', rejoinSecret: 'S'.repeat(43) };
+    await requestJoin({ link: f.link(), ...identity, label: 'PC-Kevin' }, { fetch: f.fetchVia });
+    await requestJoin({ link: f.link(), ...identity, label: 'Renamed-Later' }, { fetch: f.fetchVia });
+    expect(f.events.map(e => e.content.displayname)).toEqual(['PC-Kevin-2', 'PC-Kevin-2']);
   });
 
   it.each([
@@ -370,7 +378,7 @@ describe('agentJoinRoutes', () => {
 
 it('completes a Cline join with the generic model name', async () => {
   const f = fixture();
-  const joined = await requestJoin({ link: f.link(), harness: 'cline', label: 'Cline' }, { fetch: f.fetchVia });
+  const joined = await requestJoin({ link: f.link(), harness: 'cline', label: 'Agent' }, { fetch: f.fetchVia });
   const credentials = await pollJoin(joined, { fetch: f.fetchVia, sleep: async () => {} });
   expect(f.store.members(roomId)).toEqual(expect.arrayContaining([expect.objectContaining({ userId: credentials.userId, harness: 'cline', displayName: 'kevin-Agent' })]));
   await reportReady(joined, { fetch: f.fetchVia });
