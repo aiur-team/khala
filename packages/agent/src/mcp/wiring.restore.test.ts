@@ -206,3 +206,54 @@ it.each(['session-start', 'idle'])('restores both OpenCode channels from a late 
     expect(start).toHaveBeenCalledTimes(2);
   } finally { input.end(); await running; output.destroy(); await fs.rm(root, { recursive: true, force: true }); }
 });
+
+it('restores a Claude channel across MCP restarts and config dirs, rejoins without a link, and forgets a left channel', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-claude-switch-'));
+  const env = { XDG_STATE_HOME: root, PWD: process.cwd(), CLAUDE_CODE_SESSION_ID: 'thread' };
+  const files = await openSessionDir('claude', 'thread', env);
+  const roomId = '!switch:local';
+  const nested = channelFiles(files, roomId);
+  const secret = 'S'.repeat(43);
+  const credentials = { transport: 'local' as const, homeserver: 'http://127.0.0.1:47830', userId: '@agent:local', accessToken: 'private', deviceId: 'device', roomId };
+  await ensureStateDir(nested.dir);
+  await writeStateFile(files.dir, 'rejoin.json', { secret });
+  await writeStateFile(nested.dir, 'channel.json', { roomId, channelName: 'Switch', joinedAt: new Date().toISOString() });
+  await writeStateFile(nested.dir, 'resume.json', { link: 'http://127.0.0.1:47830/join/abcdefgh', label: 'Agent', roomId,
+    workspace: process.cwd(), secretHash: createHash('sha256').update(secret).digest('hex'), localCredentials: credentials });
+  const session: ChannelSession = {
+    userId: credentials.userId, inviter: () => '@owner:local', displayName: () => 'Agent', roomName: () => 'Switch',
+    onMessage: () => () => {}, onListeningModeCommand: () => () => {}, publishListeningMode: async () => {}, waitForInvite: async () => {}, join: async () => {},
+    history: async () => ({ messages: [] }), send: async () => ({ eventId: '$send' }), sendChannelEvent: async () => ({ eventId: '$event' }), stop: async () => {},
+  };
+  let offline = false;
+  const start = vi.fn(async () => { if (offline) throw new Error('offline'); return session; });
+  const factory = (configDir: string) => createRealClientFactory({ ...env, CLAUDE_CONFIG_DIR: configDir },
+    { createClient: options => createKhalaAgentClient({ ...options, startSession: start, autoConfirmWaitMs: 1_000 }) });
+  try {
+    // A login switch restarts MCP with the same session ID and another CLAUDE_CONFIG_DIR.
+    for (const configDir of ['/profile/default', '/profile/second']) {
+      const input = new PassThrough(), output = new PassThrough();
+      const running = runMcpCommand([], { env: { ...env, CLAUDE_CONFIG_DIR: configDir }, input, output, createClient: factory(configDir) });
+      try { await vi.waitFor(async () => expect(await readStatus(nested)).toMatchObject({ state: 'connected' })); }
+      finally { input.end(); await running; output.destroy(); }
+      expect(await readStatus(nested)).toMatchObject({ state: 'disconnected', detail: 'closed' });
+    }
+    // Auto-restore fails transiently; an explicit join without a link rejoins from saved state.
+    offline = true;
+    const client = factory('/profile/default')({ harness: 'claude', sessionId: 'thread' });
+    try {
+      await vi.waitFor(async () => expect(await readStatus(nested)).toMatchObject({ state: 'disconnected' }));
+      offline = false;
+      await expect(client.join(undefined, 'Claude')).resolves.toMatchObject({ state: 'connected', channelName: 'Switch' });
+      await client.leave('Switch');
+    } finally { await client.close(); }
+    // An explicit leave is never restored, and a bare rejoin has nothing to use.
+    const calls = start.mock.calls.length;
+    const after = factory('/profile/second')({ harness: 'claude', sessionId: 'thread' });
+    try {
+      await expect(after.join(undefined, 'Claude')).rejects.toMatchObject({ code: 'link_unavailable' });
+      expect((await after.status()).channels).toEqual([]);
+      expect(start).toHaveBeenCalledTimes(calls);
+    } finally { await after.close(); }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

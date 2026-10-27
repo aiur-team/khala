@@ -10,7 +10,8 @@ import type { MemberPresence } from './transport';
 
 export interface KhalaAgentClient {
   resume?(): Promise<void>;
-  join(link: string, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string; autoConfirmed?: true } | { state: 'connected'; channelName: string; channels?: string[] }>;
+  /** Without a link, rejoins this session's saved channels (after a restart, resume or account switch). */
+  join(link: string | undefined, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string; autoConfirmed?: true } | { state: 'connected'; channelName: string; channels?: string[] }>;
   status(channel?: string): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; you?: string; unread: number; idleWake?: import('./wake/status').IdleWakeStatus; watcherArmed?: boolean; watcherHint?: string; listeningMode?: ListeningMode; archived?: true; channels?: ChannelStatus[] }>;
   /** `you` is your own current display name in the channel. `members` and `seenBy` (on your own messages) are hosted only. */
   /** Derived coordination state is present only when nonempty. */

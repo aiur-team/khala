@@ -699,8 +699,28 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       return { ...presence(messages), ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}), ...state };
     } catch (error) { throw safeError(error); }
   }
-  return {
-    join,
+  /** Explicit rejoin without a link: reuse this session's saved, still-valid authorizations (resume() discards invalid ones). */
+  async function rejoin(): ReturnType<KhalaAgentClient['join']> {
+    await client.resume();
+    let result: Awaited<ReturnType<KhalaAgentClient['join']>> | undefined;
+    let failure: unknown;
+    for (const ref of refs()) {
+      const authorization = await readStateFile<ResumeAuthorization>(ref.files.dir, 'resume.json');
+      if (!rejoinSecret || authorization?.secretHash !== secretHash() || authorization.roomId !== ref.roomId) continue;
+      try {
+        const joined = await join(authorization.link, authorization.label, authorization).catch(error => {
+          // Control asked for confirmation: an explicit rejoin returns the confirmation link instead of failing.
+          if (safeError(error).message !== 'rejoin_needed') throw error;
+          return join(authorization.link, authorization.label);
+        });
+        if (result?.state !== 'awaiting_confirmation') result = joined;
+      } catch (error) { failure ??= error; }
+    }
+    if (result) return result;
+    throw failure ? safeError(failure) : new KhalaClientError('link_unavailable', 'no_saved_channel');
+  }
+  const client: KhalaAgentClient & { resume(): Promise<void> } = {
+    join: (link, label) => link === undefined ? rejoin() : join(link, label),
     resume() {
       return resuming ??= (async () => {
         await initialize();
@@ -996,4 +1016,5 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       return closing;
     },
   };
+  return client;
 }
