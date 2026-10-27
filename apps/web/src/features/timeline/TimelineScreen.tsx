@@ -21,7 +21,7 @@ import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
-import type { MediaPort, TypingPort } from '../channel/ports';
+import type { MediaPort, TypingPort } from '../../ui/conversation/ports';
 import { IMAGE_ERROR_TEXT, loadedImage, loadImage, prepareImage, rememberImage, saveImage, uploadImage, type PreparedImage } from './image-media';
 import type { ImageRef } from '@khala/contracts/m1/image';
 import { ChatComposer, ChatMessage, insertMention, type MentionTarget } from '../../ui/conversation';
