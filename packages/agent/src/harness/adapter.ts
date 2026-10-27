@@ -11,21 +11,8 @@ export type { SessionSource } from './session-sources';
 /** Stop continuations become user turns in most harnesses, so they never carry channel content. */
 export const STOP_NUDGE = 'Khala: channel messages are waiting. Call khala_read.';
 
-/** Hook dialect parsing and stdout, separate from shared delivery state. */
-export type DeliverCodec = Readonly<{
-  parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop' | 'limit'; continuation: boolean; promptText?: string; workspace?: string; replay?: boolean; transcriptPath?: string } | null;
-  /** stopContext: the running harness is known to honour Stop additionalContext (see stopContextFloor). */
-  render(kind: 'prompt' | 'tool' | 'stop', frame: string, stopContext?: boolean): string;
-  /** Lowest harness version verified to show Stop additionalContext once and continue the turn. */
-  stopContextFloor?: string;
-  noop(kind?: 'start' | 'prompt' | 'tool' | 'stop' | 'limit'): string;
-  /** Some prompt hooks can only record activity, without injecting context. */
-  promptAcceptsContext: boolean;
-  /** Cursor silently tolerates a closed stdout pipe; Claude-style reports it. */
-  suppressOutputErrors: boolean;
-  promptDeliversWithoutWake: boolean;
-  fallbackSession?: string;
-}>;
+import type { DeliverCodec } from '@khala/listener';
+export type { DeliverCodec } from '@khala/listener';
 
 export type HarnessAdapter = Readonly<{
   id: HarnessId;
