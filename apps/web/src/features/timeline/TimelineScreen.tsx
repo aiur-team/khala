@@ -656,6 +656,12 @@ export function TimelineScreen({
     };
   }
 
+  /** The viewer's own name line: `Me`, mirrored right by `.kh-row.me`; a pending send has no time yet. */
+  function meName(time?: string): ThreadRowName {
+    return { label: 'Me', hue: identityFor(viewer, fullNameFor(viewer, null)).hue, tag: null,
+      ariaLabel: time ? `Me, ${clockLabel(new Date(time), timeOptions)}` : 'Me', onClick: open(viewer.participantId) };
+  }
+
   function avatarFor(identity: Identity, ghost: boolean): ReactNode {
     if (identity.kind === 'unknown') {
       return <span className={`kh-av${ghost ? ' ghost' : ''}`} style={{ '--h': identity.hue } as CSSProperties} aria-hidden="true">
@@ -817,7 +823,7 @@ export function TimelineScreen({
       render: (run, solo = false) => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
         {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.hue, tint: identity.color?.tint } }
           : { humanColor: identity.color })}
-        time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
+        time={item.receivedAt} timeOptions={timeOptions} name={isViewer ? meName(item.receivedAt) : nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
         bubble={solo ? undefined : bubbleFor(eventId)}
         quote={isReadableItem(item) && item.content.inReplyTo ? quoteFor(item.content.inReplyTo, eventId) : null}
@@ -856,7 +862,7 @@ export function TimelineScreen({
     entries.push({
       type: 'message', key: entry.clientTxnId, receipt: entry.phase,
       run: { kind: 'message', participantId: viewer.participantId, isViewer: true },
-      render: run => <ChatMessage id={entry.clientTxnId} run={run} sender="me" live pending={entry.phase === 'pending'}
+      render: run => <ChatMessage id={entry.clientTxnId} run={run} sender="me" live name={meName()} pending={entry.phase === 'pending'}
         failed={isUnresolved(entry.phase)} pop={popIds.has(entry.clientTxnId)} onPopEnd={() => dropPop(entry.clientTxnId)}
         className="timeline__row timeline__row--pending"
         quote={entry.content.kind === 'text' && entry.content.inReplyTo ? quoteFor(entry.content.inReplyTo, entry.content.inReplyTo) : null}

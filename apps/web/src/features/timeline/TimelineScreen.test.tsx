@@ -531,7 +531,7 @@ describe('thread design (KM-182)', () => {
       roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
     expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first timeline__row"/);
     expect(html).not.toContain('Your machine');
-    expect(html).toMatch(/<li data-event-id="E2" class="kh-row me first timeline__row"[^>]*><div class="kh-col"><div class="kh-b"[^>]*>/);
+    expect(html).toMatch(/<li data-event-id="E2" class="kh-row me first timeline__row"[^>]*><div class="kh-col"><button type="button" class="kh-name"[^>]*><b dir="auto">Me<\/b><time [^>]*>[^<]+<\/time><\/button><div class="kh-b"[^>]*>/);
   });
 
   it('renders exactly one Delivered receipt, right after the viewer\'s last message, and never Read', () => {
@@ -541,6 +541,21 @@ describe('thread design (KM-182)', () => {
     expect(html.match(/class="kh-rcpt/g)).toHaveLength(1);
     expect(html).toMatch(/data-event-id="E2"[\s\S]*<\/li><li class="kh-rcpt" role="status">Delivered<\/li><li data-event-id="E3"/);
     expect(html).not.toMatch(/>Read</);
+  });
+
+  it('labels the viewer\'s own run `Me` with its time once, like others\' name lines', () => {
+    const alice = participant('alice', 'human', 'Alice');
+    const html = renderToStaticMarkup(<TimelineScreen controller={ready([{ ...item('E1', viewer, 'one'), receivedAt: '2026-09-17T12:47:00Z' },
+      item('E2', viewer, 'two'), item('E3', alice, 'reply')])} roomPort={noopSendPort} roomId={roomId} viewer={viewer} timeOptions={{ timeZone: 'UTC' }} />);
+    expect(html.match(/<b dir="auto">Me<\/b>/g)).toHaveLength(1);
+    expect(html).toMatch(/data-event-id="E1"[^>]*><div class="kh-col"><button type="button" class="kh-name"[^>]*aria-label="Me, 12:47[^"]*"[^>]*><b dir="auto">Me<\/b><time dateTime="2026-09-17T12:47:00Z"/);
+    expect(html).toMatch(/data-event-id="E2"[^>]*><div class="kh-col"><div class="kh-b"/);
+  });
+
+  it('shows `Me` above a pending send that starts a run', () => {
+    const html = renderToStaticMarkup(<TimelineScreen controller={ready([])} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      pendingStore={store('pending')} />);
+    expect(html).toMatch(/timeline__row--pending"[^>]*><div class="kh-col"><button type="button" class="kh-name"[^>]*aria-label="Me"[^>]*><b dir="auto">Me<\/b><\/button>/);
   });
 
   it('marks a failed send with a Retry button and Not sent', () => {
