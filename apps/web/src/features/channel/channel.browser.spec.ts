@@ -122,7 +122,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     await page.getByRole('button', { name: 'Invite' }).click();
     const pop = page.locator('.kh-pop');
     await pop.locator('.kh-link code', { hasText: 'https://khala.example/c/release' }).waitFor();
-    assert.equal(await pop.locator('button[disabled][title="Coming soon"]').count(), 5);
+    assert.equal(await pop.locator('button[disabled][title="Coming soon"]').count(), 4);
     await pop.getByRole('button', { name: 'Copy link' }).click();
     await page.locator('.kh-toast.on', { hasText: 'Copied' }).waitFor();
     assert.deepEqual(await page.evaluate(() => window.__copied), ['https://khala.example/c/release']);
