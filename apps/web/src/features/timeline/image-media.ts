@@ -1,7 +1,7 @@
 // Image attachments in the browser: prepare (validate, drop metadata), encrypt
 // and upload, decrypt and cache for display, and save through the platform.
 import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageFileName, sniffImage, stripJpegMetadata, type ImageRef, type SniffedImage } from '@khala/contracts/m1/image';
-import type { MediaPort } from '../channel/ports';
+import type { MediaPort } from '../../ui/conversation/ports';
 
 export type PreparedImage = Readonly<SniffedImage & { bytes: Uint8Array; name: string }>;
 export type ImageError = 'unsupported_type' | 'too_large' | 'empty' | 'unreadable' | 'upload_failed';

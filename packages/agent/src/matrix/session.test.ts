@@ -47,7 +47,7 @@ function fake() {
     sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$state' }),
     sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
-    setPresence: vi.fn().mockResolvedValue(undefined), setSyncPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn((_id: string) => null as unknown),
+    setPresence: vi.fn().mockResolvedValue(undefined), setSyncPresence: vi.fn().mockResolvedValue(undefined), getUser: vi.fn<(id: string) => unknown>(() => null),
     setRoomReadMarkersHttpRequest: vi.fn().mockResolvedValue({}), sendTyping: vi.fn().mockResolvedValue({}),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
   });

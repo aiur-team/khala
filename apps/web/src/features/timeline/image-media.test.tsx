@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MessageContent } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, type ParticipantView } from '@khala/contracts/messaging/index';
-import type { MediaPort } from '../channel/ports';
+import type { MediaPort } from '../../ui/conversation/ports';
 import { loadedImage, loadImage, prepareImage, saveImage, uploadImage } from './image-media';
 import { renderMessageContent } from './message-renderer';
 import { encodeMessageContent, projectWireEvent } from '../../composition/human/message-wire';

@@ -12,17 +12,7 @@ export type AgentPresenceReceipt = Readonly<{
 /** An offline member's `since` is its last heartbeat (ms); `reason` is what it said on a clean exit. */
 export type MemberPresence = Readonly<{ connection: 'connected' } | { connection: 'offline'; since: number; reason?: string }>;
 
-/** Hosted Matrix `m.typing`: who else is typing in a room, and the viewer's own state. Web only; agents never receive it. */
-export type TypingPort = Readonly<{
-  subscribe(roomId: RoomId, onNames: (names: readonly string[]) => void): () => void;
-  set(roomId: RoomId, typing: boolean): void;
-}>;
-
-/** Hosted Matrix media repo. Bytes are ciphertext both ways: callers encrypt before upload and decrypt after download. */
-export type MediaPort = Readonly<{
-  upload(ciphertext: Uint8Array): Promise<string>;
-  download(mxc: string): Promise<Uint8Array>;
-}>;
+export type { TypingPort, MediaPort } from '../../ui/conversation/ports';
 
 export type AgentPresence = Readonly<{
   participantId: ParticipantId;

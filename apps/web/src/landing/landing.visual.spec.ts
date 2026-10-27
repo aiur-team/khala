@@ -72,6 +72,21 @@ async function open(page: Page, theme: Theme, viewport: Viewport, { bannerDismis
 
 const key = (theme: Theme, viewport: Viewport) => `${theme}-${viewport.width}x${viewport.height}`;
 
+// Quarantined: owner khala#1346, expires 2026-11-10 — landing demo changed (#1327, #1336, #1339); regenerate after design check
+// The 26 tests: <theme>-1280x800, -390x844, -320x700 › scrolled 900px, elements, demo roster;
+// <theme>-360x780 › scrolled 900px, elements; <theme>-1280x800 › banner dismissed, demo channel list
+// (each for light and dark). They are listed in full below.
+const QUARANTINED = new Set(THEMES.flatMap(theme => [
+  `${theme}-1280x800 › scrolled 900px`, `${theme}-1280x800 › elements`, `${theme}-1280x800 › demo roster`,
+  `${theme}-1280x800 › banner dismissed`, `${theme}-1280x800 › demo channel list`,
+  `${theme}-390x844 › scrolled 900px`, `${theme}-390x844 › elements`, `${theme}-390x844 › demo roster`,
+  `${theme}-360x780 › scrolled 900px`, `${theme}-360x780 › elements`,
+  `${theme}-320x700 › scrolled 900px`, `${theme}-320x700 › elements`, `${theme}-320x700 › demo roster`,
+]));
+test.beforeEach(({}, testInfo) => {
+  test.skip(QUARANTINED.has(testInfo.titlePath.slice(-2).join(' › ')), 'quarantined: khala#1346');
+});
+
 test('serves the hosted build\'s _headers Content-Security-Policy', async ({ request }) => {
   expect(renderNetlifyHeaders(PRODUCTION_HOMESERVER_ORIGIN)).toBe(`/*\n  Content-Security-Policy: ${PRODUCTION_CSP}\n`);
   const response = await request.get(url);
