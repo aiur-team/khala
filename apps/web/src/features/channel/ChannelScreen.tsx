@@ -59,6 +59,8 @@ export interface ChannelScreenProps {
   renameAgent?: RenameAgentHandler;
   /** An agent's reported listening mode; read-only rows show it. */
   modeFor?: (participantId: string) => ListeningMode;
+  /** Whether the viewer locked an agent's mode; without it there is no Lock mode toggle. */
+  lockedFor?: (participantId: string) => boolean;
   /** Sends a listening-mode change for one of the viewer's agents. Without it the control stays locked. */
   onSetMode?: SetModeHandler;
   /** C3 participant details: an agent's harness and owner label. */
@@ -168,7 +170,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 }
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
-  humanParticipants, currentNames, renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+  humanParticipants, currentNames, renameAgent, modeFor, lockedFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
   onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -316,7 +318,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
         onScroll={event => { const list = event.currentTarget; setMore(list.scrollHeight - list.scrollTop - list.clientHeight >= 4); }}>
         <ChannelRoster creatorOwnerId={creatorOwnerId} onRemoveHuman={onRemoveHuman} members={members} phase={view.phase} onOpen={openFromRoster}
           {...(renameAgent ? { onRename: renameFromRoster } : {})}
-          {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})}
+          {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(lockedFor ? { lockedFor } : {})} {...(onSetMode ? { onSetMode } : {})}
           {...(onSetChannelColors && viewerOwnerId ? { renderColors: () => <ChannelColorsPicker save={onSetChannelColors}
             channelColor={channelColors?.(viewerOwnerId)?.color} shownColor={humanColors.get(viewerOwnerId)?.key ?? defaultHumanColor(viewerOwnerId)}
             palette={channelPalette(humanColors.size)} agents={members.agents.flatMap(agent => {

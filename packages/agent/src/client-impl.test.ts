@@ -690,6 +690,22 @@ describe('agent-initiated listening mode', () => {
     await connected();
     await expect(client.setMode('async', { trigger: 'owner_request', reason: 'x' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'archived' } });
   });
+  it('refuses while the owner has locked the mode; the lock survives owner mode changes until unlocked', async () => {
+    await connected();
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'sync', locked: true }), eventId: '$lock', ts: now().getTime() + 1 });
+    await vi.waitFor(async () => expect(await client.status()).toMatchObject({ modeLocked: true, channels: [expect.objectContaining({ modeLocked: true })] }));
+    await expect(client.setMode('async', { trigger: 'self', reason: 'x' })).rejects.toMatchObject({ code: 'mode_refused', extra: { reason: 'locked' } });
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'steer' }), eventId: '$steer', ts: now().getTime() + 2 });
+    await vi.waitFor(async () => expect(await client.status()).toMatchObject({ listeningMode: 'steer', modeLocked: true }));
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'steer', locked: false }), eventId: '$unlock', ts: now().getTime() + 3 });
+    await vi.waitFor(async () => expect(await client.status()).not.toHaveProperty('modeLocked'));
+    await expect(client.setMode('async', { trigger: 'self', reason: 'x' })).resolves.toMatchObject({ mode: 'async' });
+  });
+  it('ignores a lock from anyone but its inviter', async () => {
+    await connected();
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'sync', locked: true }, '@other:s'), eventId: '$lock', ts: now().getTime() + 1 });
+    await expect(client.setMode('async', { trigger: 'self', reason: 'x' })).resolves.toMatchObject({ mode: 'async' });
+  });
   it('fails without changing local state when member publishing fails', async () => {
     vi.mocked(session.publishListeningMode).mockRejectedValue(new Error('publish failed'));
     await connected();

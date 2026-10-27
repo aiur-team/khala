@@ -12,7 +12,7 @@ export interface KhalaAgentClient {
   resume?(): Promise<void>;
   /** Without a link, rejoins this session's saved channels (after a restart, resume or account switch). */
   join(link: string | undefined, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string; autoConfirmed?: true } | { state: 'connected'; channelName: string; channels?: string[] }>;
-  status(channel?: string): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; you?: string; unread: number; idleWake?: import('./wake/status').IdleWakeStatus; watcherArmed?: boolean; watcherHint?: string; listeningMode?: ListeningMode; archived?: true; channels?: ChannelStatus[] }>;
+  status(channel?: string): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; you?: string; unread: number; idleWake?: import('./wake/status').IdleWakeStatus; watcherArmed?: boolean; watcherHint?: string; listeningMode?: ListeningMode; archived?: true; modeLocked?: true; channels?: ChannelStatus[] }>;
   /** `you` is your own current display name in the channel. `members` and `seenBy` (on your own messages) are hosted only. */
   /** Derived coordination state is present only when nonempty. */
   /** Without a channel while in several, `messages` merges every channel (each labelled `channel`) and `channels` holds the per-channel rest. */
@@ -33,7 +33,7 @@ export interface KhalaAgentClient {
 
 export type ImageDownload = { path: string; name: string; mimetype: string; w: number; h: number; caption?: string };
 export type SetModeInput = { trigger: 'owner_request' | 'self'; reason: string; keepBacklog?: boolean };
-export type ChannelStatus = { channel: string; roomId?: string; link?: string; state: string; detail?: string; you?: string; agentUserId?: string; unread: number; listeningMode: ListeningMode; archived?: true; delegated?: true; members?: MemberPresence[] };
+export type ChannelStatus = { channel: string; roomId?: string; link?: string; state: string; detail?: string; you?: string; agentUserId?: string; unread: number; listeningMode: ListeningMode; archived?: true; modeLocked?: true; delegated?: true; members?: MemberPresence[] };
 export type ReadResult = { you?: string; members?: MemberPresence[]; messages: (InboxEntry & { seenBy?: string[]; channel?: string })[]; nextBefore?: string; wakeNotice?: string } & Partial<CoordinationState>;
 
 export type KhalaErrorCode = 'update_required' | 'channel_required' | 'channel_unknown' | 'channel_ambiguous' | 'channel_limit' | 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'secret_detected' | 'mode_refused' | 'invalid_image' | 'internal_error';

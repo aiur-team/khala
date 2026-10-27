@@ -64,6 +64,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     agentNames: api.agentNames,
     profile: api.profile,
     listeningMode: matrix.listeningMode,
+    modeLocked: matrix.modeLocked,
     subscribeListeningModes: matrix.subscribeListeningModes,
     setListeningMode: matrix.setListeningMode,
     isJoined: matrix.isJoined,

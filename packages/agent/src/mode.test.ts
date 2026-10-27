@@ -70,14 +70,14 @@ it('archiving turns the channel mute and unarchiving restores the stored mode', 
   await applyListeningMode(files, 'steer', meta, now);
   await applyArchived(files, true);
   expect(await readListeningMode(files)).toBe('mute');
-  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
+  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true, locked: false });
   await applyArchived(files, false);
   expect(await readListeningMode(files)).toBe('steer');
 });
 it('keeps the archive flag across an owner mode change without skipping backlog', async () => {
   await applyArchived(files, true); await backlog();
   await applyListeningMode(files, 'steer', meta, now);
-  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true });
+  expect(await readModeState(files)).toEqual({ mode: 'steer', archived: true, locked: false });
   expect((await unreadCounts(files)).total).toBe(3);
 });
 it('skips the archived-period backlog on unarchive, like leaving async', async () => {

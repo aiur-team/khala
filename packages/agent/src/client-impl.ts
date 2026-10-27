@@ -472,7 +472,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           if ((previous?.eventId === command.eventId && !previous.pendingPublish) || (previous?.eventTs !== undefined && command.ts < previous.eventTs)) return;
           const mode = asyncOnly && decoded.value.mode !== 'mute' ? 'async' : decoded.value.mode;
           const published = await publishMode(attempt, session, credentials.roomId, mode);
-          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts, ...(published ? {} : { pendingPublish: true }) }, now);
+          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts,
+            ...(decoded.value.locked !== undefined ? { locked: decoded.value.locked } : {}), ...(published ? {} : { pendingPublish: true }) }, now);
         }).catch(async () => {
           if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {});
         });
@@ -766,7 +767,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           state: attempt?.status.state ?? 'disconnected', ...(attempt?.status.detail ? { detail: attempt.status.detail } : {}),
           ...(you !== undefined ? { you } : {}), ...(session ? { agentUserId: session.userId } : {}),
           unread: (await unreadCount(ref.files.dir)).total, listeningMode: modeState.mode,
-          ...(modeState.archived ? { archived: true } : {}), ...(await isDelegated(ref.files) ? { delegated: true } : {}),
+          ...(modeState.archived ? { archived: true } : {}), ...(modeState.locked ? { modeLocked: true } : {}), ...(await isDelegated(ref.files) ? { delegated: true } : {}),
           ...(session?.members ? { members: session.members(ref.roomId) } : {}) };
       }));
       if (channel === undefined) {
@@ -782,7 +783,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         ...(single ? { channelName: single.channel, ...(single.you !== undefined ? { displayName: single.you, you: single.you } : {}),
           ...(single.agentUserId !== undefined ? { agentUserId: single.agentUserId } : {}) } : {}),
         unread: items.reduce((sum, item) => sum + item.unread, 0),
-        ...(single?.archived ? { archived: true } : {}),
+        ...(single?.archived ? { archived: true } : {}), ...(single?.modeLocked ? { modeLocked: true } : {}),
         ...(single ? { listeningMode: single.listeningMode } : items.length === 0 ? { listeningMode: defaultMode } : {}), channels: items };
     },
     async read(limit, before, channel, filter) {
@@ -934,9 +935,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const refuse = (reason: string) => new KhalaClientError('mode_refused', undefined, { reason });
       const run = attempt.appends.then(async (): Promise<{ channel: string; previous: ListeningMode; mode: ListeningMode; changed?: true }> => {
         if (!current(attempt)) throw new KhalaClientError('not_connected');
-        const { mode: previous, archived } = await readModeState(files);
-        // The owner's archive wins; an async-only harness cannot listen more closely than async.
+        const { mode: previous, archived, locked } = await readModeState(files);
+        // The owner's archive and lock win; an async-only harness cannot listen more closely than async.
         if (archived) throw refuse('archived');
+        if (locked) throw refuse('locked');
         if (asyncOnly && mode !== 'async' && mode !== 'mute') throw refuse('async_only');
         if (input.trigger === 'self' && ATTENTION[mode] > ATTENTION[previous]) throw refuse('raise_requires_owner_request');
         const name = attempt.status.channelName ?? credentials.roomId;
