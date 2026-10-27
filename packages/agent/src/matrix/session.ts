@@ -1,15 +1,15 @@
 import { retryUnexpired } from './decryption-retry';
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
-import { memberArchived } from '@khala/contracts/m1/archive';
+import { ARCHIVE_NOTICE_TYPE, decodeArchiveNotice } from '@khala/contracts/m1/archive';
 import { IMAGE_MAX_BYTES } from '@khala/contracts/m1/image';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { randomUUID } from 'node:crypto';
 import { StateError } from '../state';
 import { memberRenameContent } from '../events/member-rename';
-import { createClient, ClientEvent, RoomEvent, RoomStateEvent, MatrixEventEvent, SyncState, SetPresence, Direction, Method, EventType } from 'matrix-js-sdk';
-import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
+import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, SetPresence, Direction, Method, EventType } from 'matrix-js-sdk';
+import type { MatrixEvent, Room, IRoomTimelineData, ReceivedToDeviceMessage } from 'matrix-js-sdk';
 
 export type { SessionMessage, SessionModeCommand } from '../transport';
 export type AgentMatrixSession = ChannelSession;
@@ -37,17 +37,21 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const modeHandlers = new Set<(c: SessionModeCommand) => void>();
   const inviters = new Map<string, string>();
   const archiveHandlers = new Set<(roomId: string, archived: boolean) => void>();
-  // Only the inviter (the agent's owner) can quiet it; Matrix lets a user set only their own member event.
+  // The owner's private archive flag reaches its agents only as a to-device notice; Matrix sets its sender.
+  const archiveNotices = new Map<string, { sender: string; archived: boolean }>();
+  // Only the inviter (the agent's owner) can quiet it. Undefined: no notice from the owner this session.
   const ownerArchived = (roomId: string) => {
-    const inviter = inviters.get(roomId);
-    return !!inviter && memberArchived(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', inviter)?.getContent());
+    const notice = archiveNotices.get(roomId);
+    return notice && notice.sender === inviters.get(roomId) ? notice.archived : undefined;
   };
-  const ownerState = (event: MatrixEvent) => {
-    const roomId = event.getRoomId();
-    if (stopped || !roomId || event.getType() !== EventType.RoomMember || event.getStateKey() !== inviters.get(roomId)) return;
-    const archived = ownerArchived(roomId);
+  const archiveNotice = ({ message: m }: ReceivedToDeviceMessage) => {
+    const notice = m.type === ARCHIVE_NOTICE_TYPE ? decodeArchiveNotice(m.content) : undefined;
+    if (stopped || !notice) return;
+    archiveNotices.set(notice.room_id, { sender: m.sender, archived: notice.archived });
+    const archived = ownerArchived(notice.room_id);
+    if (archived === undefined) return;
     for (const handler of archiveHandlers) {
-      try { handler(roomId, archived); } catch { log('archive_handler_error'); }
+      try { handler(notice.room_id, archived); } catch { log('archive_handler_error'); }
     }
   };
   const emitted = new Set<string>();
@@ -215,7 +219,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     client.removeListener(RoomEvent.Timeline, timeline);
     client.removeListener(MatrixEventEvent.Decrypted, decrypted);
     client.removeListener(ClientEvent.Sync, syncLog);
-    client.removeListener(RoomStateEvent.Events, ownerState);
+    client.removeListener(ClientEvent.ReceivedToDeviceMessage, archiveNotice);
     client.removeListener(RoomEvent.MyMembership, membershipEnded);
     for (const cancel of [...cancellations]) cancel();
     liveEvents.clear();
@@ -267,7 +271,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     client.on(RoomEvent.Timeline, timeline);
     client.on(MatrixEventEvent.Decrypted, decrypted);
     client.on(ClientEvent.Sync, syncLog);
-    client.on(RoomStateEvent.Events, ownerState);
+    client.on(ClientEvent.ReceivedToDeviceMessage, archiveNotice);
     const prepared = wait((check) => {
       client.on(ClientEvent.Sync, check);
       return () => { client.removeListener(ClientEvent.Sync, check); };

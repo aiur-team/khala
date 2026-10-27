@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, readChannelColors, setOwnArchived, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -121,7 +121,7 @@ describe('Matrix browser safety boundaries', () => {
       getMember: () => null,
       getJoinedMembers: () => [],
       getMyMembership: () => membership,
-      hasEncryptionStateEvent: () => encrypted,
+      hasEncryptionStateEvent: () => encrypted, getAccountData: () => undefined,
       getLastLiveEvent: () => event,
       hasUserReadEvent: () => false, getUnreadNotificationCount: () => 0,
       getLiveTimeline: () => ({ getEvents: () => [event, new MatrixEvent({ event_id: '$channel-event', sender: '@agent:test',
@@ -159,7 +159,7 @@ describe('Matrix browser safety boundaries', () => {
       roomId: '!r1:khala.local', name: 'Release 0.9 go / no-go',
       getMember: (userId: string) => { const found = joined.find(member => member.userId === userId); return found ? { ...found, events: {} } : null; },
       getJoinedMembers: () => joined,
-      getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getMyMembership: () => 'join', hasEncryptionStateEvent: () => true, getAccountData: () => undefined,
       getLastLiveEvent: () => null, hasUserReadEvent: () => read, getUnreadNotificationCount: () => 3,
       getLiveTimeline: () => ({ getEvents: () => [message(sender)] }),
     }) as unknown as Room;
@@ -204,7 +204,7 @@ describe('Matrix browser safety boundaries', () => {
     };
     const room = {
       roomId: 'room_1', name: 'Recovered channel',
-      getMember: () => null, getJoinedMembers: () => [], getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getMember: () => null, getJoinedMembers: () => [], getMyMembership: () => 'join', hasEncryptionStateEvent: () => true, getAccountData: () => undefined,
       getLastLiveEvent: () => event, hasUserReadEvent: () => false, getUnreadNotificationCount: () => 1,
       getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
@@ -402,27 +402,48 @@ describe('setOwnChannelName', () => {
 
 describe('setOwnArchived', () => {
   const me = '@me:hs';
-  function client(content: Record<string, unknown> | null) {
+  function client(content: Record<string, unknown> | null, data: Record<string, unknown> = {}) {
+    const room = {
+      currentState: { getStateEvents: (type: string, key: string) => type === EventType.RoomMember && key === me && content ? { getContent: () => content } : null },
+      getAccountData: (type: string) => type === 'com.khala.archived' ? { getContent: () => data } : undefined,
+      getMember: () => (content ? { events: { member: { getContent: () => content } } } : null),
+    };
     return {
-      getUserId: () => me,
-      getRoom: vi.fn(() => ({ currentState: { getStateEvents: (type: string, key: string) => type === EventType.RoomMember && key === me && content
-        ? { getContent: () => content } : null } } as unknown as Room)),
+      getUserId: () => me, room,
+      getRoom: vi.fn(() => room as unknown as Room), getRooms: () => [{ roomId: '!r', ...room }] as unknown as Room[],
       sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
+      setRoomAccountData: vi.fn().mockResolvedValue({}),
+      sendToDevice: vi.fn().mockResolvedValue({}),
     };
   }
-  it('round trips the flag in the viewer\'s own member event, keeping its other content', async () => {
-    const sdk = client({ membership: 'join', displayname: 'alice', 'com.khala.colors': { agents: {} } });
-    expect(await setOwnArchived(sdk as unknown as MatrixClient, '!r', true)).toBe('sent');
-    const archived = sdk.sendStateEvent.mock.calls[0]![2];
-    expect(archived).toEqual({ membership: 'join', displayname: 'alice', 'com.khala.colors': { agents: {} }, 'com.khala.archived': true });
-    const back = client(archived);
-    expect(await setOwnArchived(back as unknown as MatrixClient, '!r', false)).toBe('sent');
-    expect(back.sendStateEvent.mock.calls[0]![2]).toEqual({ membership: 'join', displayname: 'alice', 'com.khala.colors': { agents: {} } });
+  it('keeps the flag in private account data and tells only the given own agents, never the member event', async () => {
+    const sdk = client({ membership: 'join', displayname: 'alice' });
+    expect(await setOwnArchived(sdk as unknown as MatrixClient, '!r', true, ['@agent-a:hs'])).toBe('sent');
+    expect(sdk.setRoomAccountData).toHaveBeenCalledWith('!r', 'com.khala.archived', { archived: true });
+    expect(sdk.sendToDevice).toHaveBeenCalledWith('com.khala.archive.v1', new Map([['@agent-a:hs', new Map([['*', { v: 1, room_id: '!r', archived: true }]])]]));
+    expect(sdk.sendStateEvent).not.toHaveBeenCalled();
+    expect(viewerArchived(client({ membership: 'join' }, { archived: true }).room as unknown as Room, me)).toBe(true);
+    const back = client({ membership: 'join' }, { archived: true });
+    expect(await setOwnArchived(back as unknown as MatrixClient, '!r', false, [])).toBe('sent');
+    expect(back.setRoomAccountData).toHaveBeenCalledWith('!r', 'com.khala.archived', {});
+    expect(back.sendToDevice).not.toHaveBeenCalled();
+  });
+  it('migrates a legacy member flag once: account data, agent notice, then strips it keeping other content', async () => {
+    const legacy = client({ membership: 'join', displayname: 'alice', 'com.khala.colors': { agents: {} }, 'com.khala.archived': true });
+    expect(viewerArchived(legacy.room as unknown as Room, me)).toBe(true);
+    const started = new Set<string>(); const agentsOf = vi.fn().mockResolvedValue(['@agent-a:hs']);
+    migrateLegacyArchives(legacy as unknown as MatrixClient, started, agentsOf);
+    migrateLegacyArchives(legacy as unknown as MatrixClient, started, agentsOf);
+    await vi.waitFor(() => expect(legacy.sendStateEvent).toHaveBeenCalledOnce());
+    expect(agentsOf).toHaveBeenCalledOnce();
+    expect(legacy.setRoomAccountData).toHaveBeenCalledWith('!r', 'com.khala.archived', { archived: true });
+    expect(legacy.sendToDevice).toHaveBeenCalledOnce();
+    expect(legacy.sendStateEvent.mock.calls[0]![2]).toEqual({ membership: 'join', displayname: 'alice', 'com.khala.colors': { agents: {} } });
   });
   it('refuses when not joined', async () => {
     const left = client({ membership: 'leave' });
-    expect(await setOwnArchived(left as unknown as MatrixClient, '!r', true)).toBe('failed');
-    expect(left.sendStateEvent).not.toHaveBeenCalled();
+    expect(await setOwnArchived(left as unknown as MatrixClient, '!r', true, [])).toBe('failed');
+    expect(left.setRoomAccountData).not.toHaveBeenCalled();
   });
 });
 
@@ -553,7 +574,7 @@ describe('browser cross-signing and shared history', () => {
     const limits = decodeContentLimits({ maxBodyBytes: 32768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
     if (!limits.ok) throw new Error('invalid limits');
     const event = new MatrixEvent({ event_id: '$old', type: 'm.room.encrypted', content: {}, origin_server_ts: 900 });
-    const room = { roomId: '!room:test', name: 'Room', getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+    const room = { roomId: '!room:test', name: 'Room', getMyMembership: () => 'join', hasEncryptionStateEvent: () => true, getAccountData: () => undefined,
       getMember: () => ({ membership: 'join', events: { member: { getTs: () => 1000, getContent: () => ({ membership: 'join' }) } } }), getJoinedMembers: () => [],
       getLastLiveEvent: () => event, hasUserReadEvent: () => false, getUnreadNotificationCount: () => 0, getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;

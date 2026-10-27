@@ -9,7 +9,7 @@ vi.mock('./crypto-store', () => ({
 }));
 vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
-  ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' }, RoomStateEvent: { Events: 'RoomState.events' },
+  ClientEvent: { Sync: 'sync', Room: 'room', ReceivedToDeviceMessage: 'receivedToDeviceMessage' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' }, RoomStateEvent: { Events: 'RoomState.events' },
   MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
   Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' }, SetPresence: { Offline: 'offline' },
@@ -216,16 +216,20 @@ it('captures the inviter before joining and preserves own member content when ec
     membership: 'join', displayname: 'Agent', avatar_url: 'mxc://hs/avatar', 'com.khala.listening_mode': 'async',
   }, creds.userId, { localTimeoutMs: 5000 });
 });
-it('reports and follows only its inviter\'s archive flag', async () => {
+it('follows only its inviter\'s private to-device archive notice', async () => {
   const s = await joined(); const seen: [string, boolean][] = [];
   s.onOwnerArchived!((roomId, archived) => seen.push([roomId, archived]));
-  expect(s.ownerArchived!('!r:hs')).toBe(false);
-  memberContent = { membership: 'join', 'com.khala.archived': true };
-  const member = (key: string) => ({ ...event('$m', key, 200, 'm.room.member', memberContent), getStateKey: () => key });
-  client.emit('RoomState.events', member('@other:hs'));
-  expect(seen).toEqual([]);
-  client.emit('RoomState.events', member('@owner:hs'));
+  expect(s.ownerArchived!('!r:hs')).toBeUndefined();
+  const notice = (sender: string, content: unknown, type = 'com.khala.archive.v1') => client.emit('receivedToDeviceMessage', { message: { type, sender, content }, encryptionInfo: null });
+  notice('@other:hs', { v: 1, room_id: '!r:hs', archived: true });
+  notice('@owner:hs', { v: 1, room_id: '!r:hs', archived: 'yes' });
+  notice('@owner:hs', { v: 1, room_id: '!r:hs', archived: true }, 'com.other');
+  expect(seen).toEqual([]); expect(s.ownerArchived!('!r:hs')).toBeUndefined();
+  notice('@owner:hs', { v: 1, room_id: '!r:hs', archived: true });
   expect(seen).toEqual([['!r:hs', true]]); expect(s.ownerArchived!('!r:hs')).toBe(true);
+  memberContent = { membership: 'join', 'com.khala.archived': false };
+  client.emit('RoomState.events', { ...event('$m', '@owner:hs', 200, 'm.room.member', memberContent), getStateKey: () => '@owner:hs' });
+  expect(s.ownerArchived!('!r:hs')).toBe(true);
 });
 it('has no inviter for an already joined membership', async () => {
   membership = 'join'; const s = await joined(); expect(s.inviter('!r:hs')).toBeUndefined();
