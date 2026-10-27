@@ -56,8 +56,8 @@ export function agentJoinRoutes(): LocalRoute[] {
         const roomId = link.roomId;
         const sessionKey = body.sessionId === undefined || body.rejoinSecret === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId, body.rejoinSecret]));
         const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
-        // Names are unique per channel only: a taken default gets the lowest free `-N` here.
-        const checked = checkName(freeAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
+        // Names are unique per channel only: a taken title or default gets the lowest free `-N` here.
+        const checked = checkName(freeAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName), typeof body.label === 'string' ? body.label : undefined), 'agent');
         if (!checked.ok) return fail(503, 'unavailable');
         let userId = previous?.userId ?? newLocalAgentUserId(ctx.random(4));
         for (let attempt = 0; attempt < 5 && !previous && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));

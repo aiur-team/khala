@@ -70,10 +70,11 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
   return [
     tool('join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). New hosted sessions require your human to open a confirmation link; previously approved hosted sessions reconnect with their saved secret, and local links join automatically. Without link, rejoins this session\'s saved channels after a restart, resume or account switch.',
       { link: { type: 'string', description: 'Channel link. Omit to rejoin your saved channels.' }, label: { type: 'string', minLength: 1, maxLength: 40,
-        description: 'Optional and ignored: Khala names you <OwnerUsername>-<Model>, and your owner can rename you.' } }, [],
+        description: 'Optional and ignored: Khala names you after your session title if your user set one, else <OwnerUsername>-<Model>, and your owner can rename you.' } }, [],
       args => (!Object.hasOwn(args, 'link') || typeof args.link === 'string') && (!Object.hasOwn(args, 'label')
         || typeof args.label === 'string' && args.label.trim().length > 0 && [...args.label].length <= 40),
-      (client, args) => client.join(args.link as string | undefined, args.label as string ?? harnessInfo(input.harness).modelName),
+      // label stays ignored: servers name a new agent from its session title, so an agent cannot pick its own name.
+      (client, args) => client.join(args.link as string | undefined, harnessInfo(input.harness).modelName),
       result => {
         const joined = result as Awaited<ReturnType<KhalaAgentClient['join']>> & { watcherHint?: string };
         if (joined.state === 'connected') return `Connected to ${joined.channelName}.` + (input.harness === 'antigravity' ? '\n' + antigravityRegisterHint() : '') + (joined.watcherHint ? '\n' + joined.watcherHint : input.harness === 'muse' ? `\n${museMonitorInstruction(input.museSessionId, museWatchCommand(input.museSessionId, input.museBin))}` : '');

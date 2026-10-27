@@ -1,5 +1,13 @@
 import { expect, it } from 'vitest';
-import { checkName, checkNewUsername, decodeOwnerAgents, ownerAgentsKey, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
+import { agentNameFromTitle, checkName, checkNewUsername, decodeOwnerAgents, ownerAgentsKey, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
+
+it('turns a session title into an agent name or null', () => {
+  expect(agentNameFromTitle('PC - Kevin')).toBe('PC-Kevin');
+  expect(agentNameFromTitle('My Cool Chat!')).toBe('MyCoolChat');
+  expect(agentNameFromTitle('  --Café_Bot.2--  ')).toBe('CafeBot2');
+  expect(agentNameFromTitle('x'.repeat(39) + '-yz')).toBe('x'.repeat(39));
+  for (const title of ['', '!!!', '日本語', 'a', 'Admin - Bot', 'PC - Khala']) expect(agentNameFromTitle(title)).toBeNull();
+});
 
 it('accepts mention-safe usernames and trims the display form', () => {
   for (const name of ['Kevin', 'kw', 'kevin.weaver', 'K-9', 'a'.repeat(24)]) {

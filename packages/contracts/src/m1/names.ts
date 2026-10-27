@@ -44,6 +44,12 @@ export function isDefaultAgentName(name: string, username: string, harness: Harn
   const escaped = escapePattern(`${username}-${harnessInfo(harness).modelName}`);
   return new RegExp(`^${escaped}(?:-\\d+)?$`, 'iu').test(name);
 }
+/** A harness session title as an agent name: letters, digits and single inner hyphens; null when unusable. */
+export function agentNameFromTitle(title: string): string | null {
+  const name = title.normalize('NFKD').replace(/[^A-Za-z0-9-]/gu, '').replace(/-+/gu, '-')
+    .replace(/^-+/u, '').slice(0, AGENT_NAME_MAX).replace(/-+$/u, '');
+  return checkName(name, 'agent').ok ? name : null;
+}
 export function suggestUsername(email: string): string {
   const base = ownerFirstName(email).replace(/[^A-Za-z0-9._-]/gu, '')
     .replace(/^[._-]+|[._-]+$/gu, '').slice(0, USERNAME_MAX).replace(/[._-]+$/gu, '');

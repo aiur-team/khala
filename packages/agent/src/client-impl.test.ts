@@ -729,6 +729,15 @@ it('restores the listening mode from the joined member rather than stale process
   expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'async' });
 });
 
+it('sends the sanitised session title instead of the model name when joining', async () => {
+  await fs.writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id: 'test', thread_name: 'My Chat!' }) + '\n');
+  const titled = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root, CODEX_HOME: root }, now, startSession, joinApi });
+  try {
+    await titled.join(link, 'Codex');
+    expect(joinApi.requestJoin).toHaveBeenLastCalledWith(expect.objectContaining({ label: 'MyChat' }), expect.anything());
+  } finally { await titled.close(); }
+});
+
 it('replaces a rejoin.json that parses but holds an invalid secret instead of failing every start', async () => {
   await ensureStateDir(dir);
   await writeStateFile(dir, 'rejoin.json', { secret: 'not-a-secret' });

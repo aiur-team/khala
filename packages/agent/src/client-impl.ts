@@ -21,6 +21,7 @@ import { toInboxEntry, withReplyContext } from './sender';
 import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageEventContent, readImageEvent, sniffImage, stripImageMetadata } from '@khala/contracts/m1/image';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
+import { sessionTitleName } from './harness/session-title';
 import { TERMINAL_SESSION_DETAILS, stateRoot, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
@@ -721,7 +722,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     throw failure ? safeError(failure) : new KhalaClientError('link_unavailable', 'no_saved_channel');
   }
   const client: KhalaAgentClient & { resume(): Promise<void> } = {
-    join: (link, label) => link === undefined ? rejoin() : join(link, label),
+    // A user-set session title names a new agent; servers keep an existing name on rejoin.
+    join: async (link, label) => link === undefined ? rejoin() : join(link, await sessionTitleName(options.harness, options.sessionId, options.env) ?? label),
     resume() {
       return resuming ??= (async () => {
         await initialize();
