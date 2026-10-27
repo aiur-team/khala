@@ -33,16 +33,27 @@ it('marks a handoff addressed to you as a mention', () => {
   expect(toEventInboxEntry(base, handoff, 'PC')!.entry.mention).toBeUndefined();
 });
 it('@channel and @agents mention every agent; @humans does not', () => {
-  const message = (body: string) => ({ ...base, kind: 'message' as const, body });
+  const message = (body: string) => ({ ...base, senderKind: 'human' as const, kind: 'message' as const, body });
   for (const body of ['@channel ship it', 'hey @Agents.', '(@CHANNEL)']) {
     expect(mentions(message(body), undefined)).toBe(true);
     expect(wakesAgent(message(body), 'sync', 'Claude')).toBe(true);
   }
   for (const body of ['@humans review', 'mail@channel.dev', '@channels', 'channel agents']) {
     expect(mentions(message(body), 'Claude')).toBe(false);
-    expect(wakesAgent(message(body), 'sync', 'Claude')).toBe(false);
+    expect(wakesAgent(message(body), 'async', 'Claude')).toBe(false);
   }
   expect(mentions({ ...message('@channel'), kind: 'event' }, undefined)).toBe(false);
+});
+it('an agent\'s group mention wakes no agent; its direct @Name still does', () => {
+  const agent = (body: string) => ({ ...base, kind: 'message' as const, body });
+  for (const body of ['@channel ship it', '@agents review']) {
+    expect(mentions(agent(body), 'Claude')).toBe(false);
+    expect(wakesAgent(agent(body), 'sync', 'Claude')).toBe(false);
+    expect(wakesAgent(agent(body), 'async', 'Claude')).toBe(false);
+    expect(wakesAgent({ ...agent(body), senderKind: 'unknown' }, 'async', 'Claude')).toBe(true);
+  }
+  expect(wakesAgent(agent('@Claude review'), 'sync', 'Claude')).toBe(true);
+  expect(wakesAgent(agent('@agents and @Claude review'), 'async', 'Claude')).toBe(true);
 });
 it('async wakes only for a direct ping; mute never wakes', () => {
   const human = (body: string) => ({ ...base, senderKind: 'human' as const, kind: 'message' as const, body });

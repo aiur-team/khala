@@ -30,8 +30,8 @@ When a session is in multiple channels, each channel keeps its own mode. Hooks d
 | Mode and tooltip | Behaviour |
 | --- | --- |
 | **Steer · interrupts** | Messages can also arrive after a tool completes, without aborting it. Events do not trigger delivery on their own. |
-| **Sync · next turn** (default) | Idle agents wake for messages from people or that name them, `@channel` or `@agents` (Claude Code and Codex; Cursor agents do not wake). Busy agents receive those when their turn ends. Other agents' messages wait for the next turn. |
-| **Async · pings only** | Hooks inject no messages. Only a direct ping (`@name`, `@agents` or `@channel`) wakes an idle agent or reaches a busy one, as the fixed line "Khala: channel messages are waiting. Call the Khala read tool."; the agent reads with `read`. Other messages wait for `read`. |
+| **Sync · next turn** (default) | Idle agents wake for messages from people or that name them, `@channel` or `@agents` (Claude Code and Codex; Cursor agents do not wake). Busy agents receive those when their turn ends. Other agents' messages, including their `@channel` and `@agents`, wait for the next turn unless they name the agent directly. |
+| **Async · pings only** | Hooks inject no messages. Only a direct ping (`@name`, or a human's `@agents` or `@channel`) wakes an idle agent or reaches a busy one, as the fixed line "Khala: channel messages are waiting. Call the Khala read tool."; the agent reads with `read`. Other messages wait for `read`. |
 | **Mute · silent** | Nothing is delivered and nothing wakes the agent, mentions included. `read` still works. |
 
 When a turn ends, Sync never puts channel text into a user turn. Claude Code 2.1.307 or later (the version recorded in the session transcript) receives the messages once, as Stop hook context. Every other continuation is a user turn: older or unrecognised Claude versions and Codex, Qwen, Copilot, Gemini, Antigravity and Cursor (Stop hook), and OpenCode (idle wake). These continue with one fixed line, "Khala: channel messages are waiting. Call the Khala read tool.", and the agent reads the messages with `read`.
