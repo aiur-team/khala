@@ -66,9 +66,10 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       const status = async () => data(await agent.call('khala_status'));
       // #1300: in sync, the peer agent's message wakes or re-opens a Stop only when it names the agent.
       // The name comes from the status file: khala_status would add terminal probes to the wake-call log.
-      const publish = async (text: string) => {
-        expect(data(await peer.call('khala_send', { text: `@${(await readStatus(files()))?.displayName} ${text}` }))).toHaveProperty('eventId');
-        await eventually(async () => (await inbox(agent)).some(entry => entry.body.endsWith(' ' + text)));
+      const publish = async (text: string, addressed = true) => {
+        const body = addressed ? `@${(await readStatus(files()))?.displayName} ${text}` : text;
+        expect(data(await peer.call('khala_send', { text: body }))).toHaveProperty('eventId');
+        await eventually(async () => (await inbox(agent)).some(entry => entry.body === body));
       };
       const setMode = async (next: 'async' | 'sync' | 'steer') => {
         expect((await admin(world!, 'POST', `/api/local/channels/${encodeURIComponent(channel.roomId)}/mode`,
@@ -164,7 +165,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         for (const event of ['prompt', 'tool', 'stop'] as const) {
           const output = await hook(agent, event);
           if (event === nudgeEvent) expect(output).toEqual({
-            kind: event === 'prompt' ? 'context' : 'continue', frame: driver.syncNudge,
+            kind: event === 'prompt' && harness !== 'opencode' ? 'context' : 'continue', frame: driver.syncNudge,
           });
           else expect(output.kind).toBe('none');
         }
@@ -198,7 +199,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         }
         await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
         const quiet = await wakeCalls(world);
-        await publish('tier-b-async-wake'); await delay(2200);
+        // Direct mentions may wake in async; ordinary traffic must stay quiet.
+        await publish('tier-b-async-wake', false); await delay(2200);
         expect(await wakeCalls(world)).toEqual(quiet); expect(await readWakeState(agent.files.dir)).toEqual({});
         await writeActivity(agent.files, 'busy');
         await setMode('sync'); await hook(agent, 'prompt'); await hook(agent, 'stop');
