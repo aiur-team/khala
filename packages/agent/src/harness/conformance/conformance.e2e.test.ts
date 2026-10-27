@@ -161,7 +161,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const before = await unread(files());
         expect(before.entries.some(entry => entry.body.endsWith(' tier-b-async'))).toBe(true);
         // publish addresses the agent: async emits one constant nudge, never the body.
-        const nudgeEvent = adapter.codec?.promptAcceptsContext ? 'prompt' : 'stop';
+        const nudgeEvent = adapter.codec ? adapter.codec.promptAcceptsContext ? 'prompt' : 'stop' : undefined;
         for (const event of ['prompt', 'tool', 'stop'] as const) {
           const output = await hook(agent, event);
           if (event === nudgeEvent) expect(output).toEqual({
@@ -169,8 +169,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           });
           else expect(output.kind).toBe('none');
         }
-        expect(await readCursor(files())).toEqual({ ...before.cursor,
-          nudgedCount: before.cursor.deliveredCount + before.entries.length });
+        expect(await readCursor(files())).toEqual(nudgeEvent ? { ...before.cursor,
+          nudgedCount: before.cursor.deliveredCount + before.entries.length } : before.cursor);
         expect((await unread(files())).entries).toEqual(before.entries);
         for (const event of ['prompt', 'tool', 'stop'] as const) expect((await hook(agent, event)).kind).toBe('none');
       });
