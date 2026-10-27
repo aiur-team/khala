@@ -13,8 +13,7 @@ const harnessRoot = join(here, 'browser-harness');
 const focused = (page: Page, selector: string) => page.locator(selector).evaluate(element => document.activeElement === element);
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
-// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1336
-test('channel header, roster, popovers and detail pane', { timeout: 120_000, skip: 'quarantined: khala#1346' }, async () => {
+test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
   // Chromium's singleton socket has a strict path-length cap; the workspace's
   // private TMPDIR is too deep, while mkdtemp keeps this shared /tmp path unique.
@@ -93,7 +92,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000, ski
     assert.equal(await page.locator('#chips-closed').textContent(), '1', 'opening the roster closes the chips grid');
     assert.match(await page.locator('.kh-main').evaluate(element => element.style.getPropertyValue('--kh-head-h')), /^\d+px$/);
     const scout = page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..');
-    assert.equal(await scout.locator('[role="radio"]:not([disabled]):not([title])').count(), 3);
+    assert.equal(await scout.locator('[role="radio"]:not([disabled]):not([title])').count(), 4, 'mute, async, steer, sync');
     assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'sync');
     const builderMode = page.locator('.kh-rai[data-kh-agent="agent_builder"]').locator('..').locator('.kh-mode-ro');
     assert.equal(await builderMode.getAttribute('data-tip'), 'Async · pings only', 'another person’s agent shows its actual mode');
@@ -233,7 +232,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000, ski
     await modeButton.click();
     const menu = page.locator('.kh-pop.menu');
     await menu.waitFor();
-    assert.equal(await menu.locator('.kh-mi').count(), 3);
+    assert.equal(await menu.locator('.kh-mi').count(), 4);
     assert.deepEqual(await menu.locator('.kh-mi').allTextContents(), ['Steerinterrupts', 'Syncnext turn', 'Asyncpings only', 'Mutesilent']);
     assert.equal(await menu.locator('.kh-mi.on').getAttribute('data-v'), 'steer');
     await menu.locator('.kh-mi[data-v="async"]').click();
@@ -250,10 +249,14 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000, ski
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitemradio');
     assert.equal(await menu.locator('[role="menuitemradio"][aria-checked="true"]').getAttribute('data-v'), 'async');
     await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer', 'ArrowDown wraps to the first item');
+    // Up wraps to the last item (mute), then walks back to sync.
+    await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'sync');
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer');
@@ -316,8 +319,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000, ski
   }
 });
 
-// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1336
-test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000, skip: 'quarantined: khala#1346' }, async () => {
+test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-roster-overlay-dist-'));
   const chromiumProfileRoot = await mkdtemp('/tmp/khala-roster-overlay-profile-');
   let server: PreviewServer | undefined;
@@ -362,12 +364,12 @@ test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000, sk
         assert.equal(await tip.textContent(), 'Rename', 'rename tooltip uses the same overlay');
         // Exercise the compact mode menu at both widths, as in a narrow main pane.
         if (width === 1280) await row.locator('.kh-mode-btn').evaluate(element => { (element as HTMLElement).style.display = 'grid'; });
-        for (const value of ['steer', 'async', 'sync']) {
+        for (const value of ['steer', 'async', 'mute', 'sync']) {
           await row.locator('.kh-mode-btn').click();
           const items = page.getByRole('menuitemradio');
           await page.locator('.kh-pop.menu').waitFor();
           await page.waitForTimeout(200);
-          assert.equal(await items.count(), 3);
+          assert.equal(await items.count(), 4);
           for (const item of await items.all()) {
             assert.equal(await item.evaluate(element => {
               const rect = element.getBoundingClientRect();

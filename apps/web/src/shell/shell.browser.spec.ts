@@ -114,3 +114,54 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
     await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
 });
+
+// #1327: on touch, swiping a channel row left snaps its Archive action into view; tapping it hides the row.
+test('swiping a channel row left reveals Archive on touch', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-archive-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-archive-profile-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: ['--no-sandbox'],
+      env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce' });
+    await page.goto(`${server.resolvedUrls!.local[0]!}?archive`);
+    const row = page.locator('.kh-cv-row', { has: page.locator('[data-kh-convo="design"]') });
+    const archive = row.getByRole('button', { name: 'Archive Design review' });
+    await row.waitFor();
+    const inView = () => archive.evaluate(node => {
+      const button = node.getBoundingClientRect();
+      const frame = node.parentElement!.getBoundingClientRect();
+      return button.left >= frame.left - 1 && button.right <= frame.right + 1;
+    });
+    assert.equal(await inView(), false, 'Archive starts off-screen');
+
+    const rect = (await row.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    // A finger dragged right to left, as raw touch events (a synthesized scroll gesture does not scroll this row).
+    const y = rect.y + rect.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rect.x + rect.width - 30, y }] });
+    for (let x = rect.x + rect.width - 45; x >= rect.x + 100; x -= 15) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+      await page.waitForTimeout(16);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect.poll(inView).toBe(true);
+    assert.equal(await row.evaluate(node => node.scrollLeft + node.clientWidth), await row.evaluate(node => node.scrollWidth), 'snaps fully open');
+
+    await archive.tap();
+    await page.locator('[data-kh-convo="design"]').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('[data-kh-convo="launch"]').count(), 1, 'other rows stay');
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});

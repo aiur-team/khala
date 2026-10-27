@@ -103,7 +103,9 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     const welcomeRow = page.locator('[data-event-id="recent_1"]');
     assert.equal(await welcomeRow.evaluate(row => row.classList.contains('me')), true);
     assert.equal(await welcomeRow.locator('.kh-av').count(), 0);
-    assert.equal(await welcomeRow.locator('.kh-name b').textContent(), 'Me');
+    // recent_1 continues Alice's run from hist_36..39; recent_3 starts a new run after the agent, so it carries the name line.
+    assert.equal(await welcomeRow.locator('.kh-name').count(), 0);
+    assert.equal(await page.locator('[data-event-id="recent_3"] .kh-name b').textContent(), 'Me');
     const agentRow = page.locator('[data-event-id="recent_2"]');
     await agentRow.locator('.kh-name').waitFor();
     assert.equal(await agentRow.evaluate(row => row.classList.contains('me')), false);

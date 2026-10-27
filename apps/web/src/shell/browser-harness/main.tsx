@@ -22,11 +22,16 @@ function Harness() {
   const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
   const [inThread, setInThread] = useState(params.get('view') === 'thread');
   const [query, setQuery] = useState('');
+  const [archived, setArchived] = useState<readonly string[]>([]);
   return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread}
     // `?probe` adds an interactive avatar, so the browser spec can check that component fonts beat the base rules.
     detail={params.has('probe') ? <Avatar kind="human" label="Maya Chen" hue={330} initials="MC" /> : null}
     brandActions={<button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"><LogOutIcon /></button>}
-    list={<ConversationList conversations={params.has('singleUnread') ? conversations.map(row => row.id === 'design' ? { ...row, unreadCount: 1 } : row) : conversations} selectedId={params.get('selected') ?? (inThread ? 'launch' : null)} query={query} onQueryChange={setQuery}
+    list={<ConversationList conversations={(params.has('singleUnread') ? conversations.map(row => row.id === 'design' ? { ...row, unreadCount: 1 } : row) : conversations)
+      .map(row => archived.includes(row.id) ? { ...row, archived: true } : row)}
+      // `?archive` adds the swipe/hover Archive action, which hides the row.
+      {...(params.has('archive') ? { onArchive: (id: string) => setArchived([...archived, id]) } : {})}
+      selectedId={params.get('selected') ?? (inThread ? 'launch' : null)} query={query} onQueryChange={setQuery}
       status="ready" onSelect={() => setInThread(true)} timeOptions={{ timeZone: 'UTC' }}
       action={<button type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel"><PlusIcon /></button>} />}
     main={<div className="channel-page"><KhalaPageFrame model={{ title: 'Release retro', labelledBy: 'harness-title' }}>
