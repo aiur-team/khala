@@ -122,8 +122,7 @@ const activeOption = (page: Page) => page.locator('#kh-input').getAttribute('ari
 
 // Slack-style @mention autocomplete: filter as you type, pick with keys,
 // mouse or touch, and never send while the suggestions are open.
-// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1314
-test('composer @mention autocomplete filters, picks and never sends while open', { timeout: 90_000, skip: 'quarantined: khala#1346' }, () => withHarness(async (browser, url) => {
+test('composer @mention autocomplete filters, picks and never sends while open', { timeout: 90_000 }, () => withHarness(async (browser, url) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   await page.goto(url);
   await page.locator('.kh-comp').waitFor();
@@ -131,10 +130,10 @@ test('composer @mention autocomplete filters, picks and never sends while open',
   const popup = page.locator('.kh-mpop');
   const sent = page.getByTestId('sent');
 
-  // @c lists the label-prefix hits in chip order, never the viewer.
+  // @c lists the label-prefix hits in chip order, then matching groups, never the viewer.
   await input.pressSequentially('hi @c');
   assert.deepEqual(await suggestions(page), [
-    ['Claude #frontend', 'Your agent'], ['Codex #backend', 'Agent of Maya'], ['Claude #infra', 'Agent of Kai'],
+    ['Claude #frontend', 'Your agent'], ['Codex #backend', 'Agent of Maya'], ['Claude #infra', 'Agent of Kai'], ['channel', 'Everyone'],
   ]);
   assert.equal(await input.getAttribute('aria-expanded'), 'true');
   assert.equal(await input.getAttribute('aria-controls'), 'kh-mention-list');
@@ -208,4 +207,46 @@ test('composer @mention autocomplete filters, picks and never sends while open',
   assert.equal(await phoneInput.inputValue(), '@Codex ');
   assert.equal(await phoneInput.evaluate(node => document.activeElement === node), true, 'the keyboard stays up');
   await phone.close();
+}));
+
+// #1339: the "+" button opens the image picker, picks preview above the draft, and they send with or without a caption.
+test('composer "+" picks images, previews them, removes one and sends', { timeout: 90_000 }, () => withHarness(async (browser, url) => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  await page.goto(`${url}?attach`);
+  await page.locator('.kh-comp').waitFor();
+  const buffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const png = (name: string) => ({ name, mimeType: 'image/png', buffer });
+  const pick = async (...names: string[]) => {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'Add image' }).click()]);
+    assert.equal(await chooser.element().getAttribute('accept'), 'image/*');
+    assert.equal(chooser.isMultiple(), true);
+    await chooser.setFiles(names.map(png));
+  };
+  const items = page.locator('.kh-attach-chip .kh-attach-item');
+  const input = page.locator('#kh-input');
+  const send = page.getByRole('button', { name: 'Send' });
+  assert.equal(await send.isDisabled(), true, 'nothing to send yet');
+
+  // One image: named preview, a caption placeholder, and it can send alone.
+  await pick('one.png');
+  assert.equal(await items.count(), 1);
+  assert.equal(await items.locator('span[dir]').textContent(), 'one.png');
+  assert.equal(await items.locator('img').evaluate(node => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth), 1);
+  assert.equal(await input.getAttribute('placeholder'), 'Add a caption');
+  assert.equal(await send.isDisabled(), false, 'an image alone can send');
+
+  // Two more in one pick, then remove one; the draft becomes the caption.
+  await pick('two.png', 'three.png');
+  assert.equal(await items.count(), 3);
+  await page.getByRole('button', { name: 'Remove two.png' }).click();
+  assert.equal(await items.count(), 2);
+  await input.fill('look');
+  await input.press('Enter');
+  assert.equal(await page.getByTestId('sent').innerText(), '[one.png, three.png] look');
+  assert.equal(await items.count(), 0);
+
+  // The same file again still fires (the picker resets its value).
+  await pick('one.png');
+  assert.equal(await items.count(), 1);
+  await page.close();
 }));

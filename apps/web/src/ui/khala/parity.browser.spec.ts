@@ -125,15 +125,15 @@ const screenCeiling = (c: ScreenCase) => {
  * change still fails.
  */
 const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
-  // The fixture's first agent row is the viewer's own: a greyed (dark) / muted (light) tint of the owner's colour
-  // (no machine tag; agent bubbles tinted by owner). Operator request 2026-10-02: per-human colours: that colour is
-  // the viewer's resolved blue `solid` (#276ecb), not the accent.
+  // The fixture's first agent row is the viewer's own: a greyed (dark) / muted (light) tint of the agent's own
+  // resolved colour (#1317: each agent has its own palette colour, red in the fixture), not the accent.
+  // Operator request 2026-10-02 (per-human colours), reworked by #1317.
   '.kh-row:not(.me):not(.human) .kh-b': {
-    reason: 'operator request 2026-10-02: per-human colours',
+    reason: '#1317: agents wear their own resolved colour',
     values: {
-      '1440-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
-      '1440-light': { 'background-color': 'color(srgb 0.700706 0.741961 0.762196)' },
-      '390-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
+      '1440-dark': { 'background-color': 'color(srgb 0.361961 0.170588 0.189804)' },
+      '1440-light': { 'background-color': 'color(srgb 0.890667 0.665098 0.583216)' },
+      '390-dark': { 'background-color': 'color(srgb 0.361961 0.170588 0.189804)' },
     },
   },
   // Operator request 2026-10-02: per-human colours. The viewer's own bubble is their colour's `solid` (blue #276ecb,
@@ -166,14 +166,12 @@ const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; va
     reason: 'operator request 2026-10-02: per-human colours',
     values: Object.fromEntries(['1440-dark', '1440-light', '390-dark'].map(viewport => [viewport, { 'background-color': fill }])),
   }])),
-  // Operator request 2026-10-04: an agent chip's text takes its owner's colour (the viewer's blue in the fixture), like a human chip.
+  // #1331: an agent chip takes the agent's own resolved hue (red in the fixture) for text, fill and border,
+  // like its roster entry and in-message @mention; the owner badge keeps the owner's colour.
   '.kh-chip-a': {
-    reason: 'operator request 2026-10-04: agents wear their owner\'s colour',
-    values: {
-      '1440-dark': { color: 'rgb(134, 177, 234)' },
-      '1440-light': { color: 'rgb(37, 84, 147)' },
-      '390-dark': { color: 'rgb(134, 177, 234)' },
-    },
+    reason: '#1331: agent chips wear the agent\'s own colour',
+    values: Object.fromEntries(([['1440-dark', 'rgb(234, 134, 134)'], ['1440-light', 'rgb(147, 37, 37)'], ['390-dark', 'rgb(234, 134, 134)']] as const)
+      .map(([viewport, color]) => [viewport, { color, 'background-color': 'rgba(204, 51, 51, 0.08)', border: '1px solid rgba(209, 71, 71, 0.45)' }])),
   },
   // The fixture's first mention sits in that agent row; on a tinted bubble it takes the bubble's text colour.
   '.kh-mention': {
@@ -526,10 +524,6 @@ const COMPUTED_SKIP: Readonly<Record<string, string>> = {
   '.kh-id': 'Executor decision (dec_f83838efca089ad3): #id badges are Aiur ticket numbers and M1 omits them; `.kh-id` renders only for colliding names',
   '.kh-otag': 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
   '.kh-htag': 'operator request 2026-10-04: the Human pill is replaced by a person icon (`.kh-kind`)',
-  // Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1309 (computed: 1440-dark, 1440-light, 390-dark)
-  '.kh-row:not(.me):not(.human) .kh-b': 'quarantined: khala#1346',
-  // Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1331 (computed: 1440-dark, 1440-light, 390-dark)
-  '.kh-chip-a': 'quarantined: khala#1346',
 };
 const SIZE_ONLY = 'position follows text length or thread scroll; size compared';
 /** Boxes that follow dataset text, thread scroll or an omitted neighbour; their styles are still compared. */
@@ -755,16 +749,17 @@ const at1440 = (state: State, theme: Theme = 'dark'): ScreenCase => ({ width: 14
 describe('behaviour', { concurrency: 1 }, () => {
   it('runs: rows group into first / mid / last-of runs, with the name on the first and ghosts on all but the last', { timeout: 60_000 }, async () => {
     const runs = await withFixture(at1440('thread'), async page => {
-      const found: { channel: string; classes: string[]; names: boolean[]; ghosts: boolean[] }[] = [];
+      const found: { channel: string; classes: string[]; names: boolean[]; ghosts: boolean[]; me: boolean }[] = [];
       for (const channel of CHANNELS) {
         await page.locator(`[data-kh-convo="${channel}"]`).click();
         await page.waitForTimeout(150);
         found.push(...await page.evaluate(id => {
-          const out: { channel: string; classes: string[]; names: boolean[]; ghosts: boolean[] }[] = [];
+          const out: { channel: string; classes: string[]; names: boolean[]; ghosts: boolean[]; me: boolean }[] = [];
           let current: Element[] = [];
           const flush = () => {
             if (current.length) out.push({ channel: id, classes: current.map(row => ['first', 'mid', 'last-of'].find(name => row.classList.contains(name)) ?? 'none'),
-              names: current.map(row => row.querySelector('.kh-name') !== null), ghosts: current.map(row => row.querySelector('.kh-av.ghost') !== null) });
+              names: current.map(row => row.querySelector('.kh-name') !== null), ghosts: current.map(row => row.querySelector('.kh-av.ghost') !== null),
+              me: current[0]!.classList.contains('me') });
             current = [];
           };
           for (const item of document.querySelectorAll('.kh-thread > ul > li, .kh-thread li')) {
@@ -781,9 +776,9 @@ describe('behaviour', { concurrency: 1 }, () => {
     for (const run of runs) {
       const expected = run.classes.length === 1 ? ['first'] : ['first', ...Array(run.classes.length - 2).fill('mid'), 'last-of'];
       assert.deepEqual(run.classes, expected, `${run.channel}: run classes`);
-      const me = run.names.every(name => !name) && run.ghosts.every(ghost => !ghost);
-      if (!me) assert.deepEqual(run.names, run.classes.map((_, index) => index === 0), `${run.channel}: the name line is on the first row only`);
-      if (!me) assert.deepEqual(run.ghosts, run.classes.map((_, index) => index < run.classes.length - 1), `${run.channel}: ghosts on all but the last`);
+      // Since #1357 the viewer's own runs carry the `Me` name line too; they have no avatar, so no ghosts.
+      assert.deepEqual(run.names, run.classes.map((_, index) => index === 0), `${run.channel}: the name line is on the first row only`);
+      assert.deepEqual(run.ghosts, run.classes.map((_, index) => !run.me && index < run.classes.length - 1), `${run.channel}: ghosts on all but the last`);
     }
     const longest = Math.max(...runs.map(run => run.classes.length));
     results.push({ check: 'runs', runs: runs.length, longest });

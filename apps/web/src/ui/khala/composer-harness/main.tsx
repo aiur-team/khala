@@ -18,10 +18,21 @@ const params = new URLSearchParams(window.location.search);
 function Harness() {
   const [draft, setDraft] = useState('');
   const [sent, setSent] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<readonly { url: string; name: string }[]>([]);
+  // `?attach` shows the "+" image picker; sent images are recorded as `[name, name] caption`.
+  const attach = params.has('attach') ? {
+    onAttach: (files: readonly File[]) => setAttachments([...attachments, ...files.map(file => ({ url: URL.createObjectURL(file), name: file.name }))]),
+    attachments, onRemoveAttachment: (index: number) => setAttachments(attachments.filter((_, at) => at !== index)),
+  } : {};
+  const send = () => {
+    setSent([...sent, attachments.length ? `[${attachments.map(item => item.name).join(', ')}] ${draft.trim()}`.trim() : draft.trim()]);
+    setDraft('');
+    setAttachments([]);
+  };
   return <KhalaApp theme={params.get('theme') === 'light' ? 'light' : 'dark'} inThread
     main={<div style={{ display: 'flex', flexDirection: 'column' }}>
       <ol data-testid="sent" style={{ flex: 1, margin: 0 }}>{sent.map((body, index) => <li key={index}>{body}</li>)}</ol>
-      <ChatComposer value={draft} onChange={setDraft} onSend={() => { setSent([...sent, draft.trim()]); setDraft(''); }} mentionTargets={targets} />
+      <ChatComposer value={draft} onChange={setDraft} onSend={send} mentionTargets={targets} {...attach} />
     </div>} />;
 }
 
