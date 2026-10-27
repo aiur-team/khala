@@ -77,10 +77,11 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   let stopped = false;
   let presenceTimer: ReturnType<typeof setInterval> | undefined;
   let away: string | undefined;
-  // Away holds while syncing: set_presence=offline stops each sync from marking the user online again.
+  // Away is `unavailable` with a reason, held through syncs by set_presence. Not `offline`: a hard kill then
+  // times out to offline, which must read as not running even though Synapse keeps the old reason.
   const publishPresence = () => {
-    void client.setSyncPresence(away ? SetPresence.Offline : undefined);
-    void client.setPresence(away ? { presence: 'offline', status_msg: away } : { presence: 'online', status_msg: '' }).catch(() => log('presence_failed'));
+    void client.setSyncPresence(away ? SetPresence.Unavailable : undefined);
+    void client.setPresence(away ? { presence: 'unavailable', status_msg: away } : { presence: 'online', status_msg: '' }).catch(() => log('presence_failed'));
   };
   let recovering = persistent?.restored ?? false;
 
@@ -503,9 +504,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
         const user = client.getUser(member.userId);
         const event = user?.events.presence;
         if (!user || !event) return { name: member.name, presence: 'unknown' as const };
-        // Synapse reports `unavailable` for an idle but syncing user: still reachable.
-        if (user.presence !== 'offline') return { name: member.name, presence: 'online' as const };
         const reason = event.getContent().status_msg;
+        // Synapse reports `unavailable` for an idle but syncing user: still reachable, unless it said why it is away.
+        if (user.presence !== 'offline' && !(user.presence === 'unavailable' && reason)) return { name: member.name, presence: 'online' as const };
         return { name: member.name, presence: 'away' as const, since: new Date(user.lastPresenceTs - (user.lastActiveAgo ?? 0)).toISOString(),
           ...(typeof reason === 'string' && reason ? { reason: reason.slice(0, 80) } : {}) };
       });

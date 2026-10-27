@@ -22,11 +22,13 @@ function item(id: string, body = '@Kev hello', participant = sender): TimelineIt
 }
 function harness(baseline = true) {
   let receive: (view: TimelineEntriesView) => void = () => undefined;
+  let indexChanged = () => undefined as void;
+  const channel = { id: roomId, title: 'Channel', archived: false };
   const removeRoom = vi.fn();
   const removeIndex = vi.fn();
   const members = [{ ...viewer, displayName: 'Kev' }, { ...sender, displayName: 'Opus' }];
   const context = { generation: 1, principal: { ownerId: 'owner' }, participant: () => viewer,
-    conversations: { snapshot: () => [{ id: roomId, title: 'Channel' }], subscribe: () => removeIndex },
+    conversations: { snapshot: () => [{ ...channel }], subscribe: (_o: unknown, _g: unknown, listener: () => void) => { indexChanged = listener; return removeIndex; } },
     room: { observeEntries: (_id: RoomId, listener: typeof receive) => { receive = listener; return removeRoom; } },
     roomParticipants: async () => members,
   } as unknown as HumanRouteContext;
@@ -37,7 +39,8 @@ function harness(baseline = true) {
     room: { roomId, title: 'Channel', membership: 'joined' } as TimelineEntriesView['room'],
     entries: entries ?? items.map(item => ({ kind: 'message', item })), historicalEventIds: historicalEventIds as never });
   if (baseline) emit([{ ...item('old'), receivedAt: new Date(Date.now() - 60_000).toISOString() }]);
-  return { context, emit, dispose, open, removeRoom, removeIndex, preference };
+  const setArchived = (archived: boolean) => { channel.archived = archived; indexChanged(); };
+  return { context, emit, dispose, open, removeRoom, removeIndex, preference, setArchived };
 }
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
 beforeEach(() => {
@@ -83,6 +86,18 @@ describe('mention notifications', () => {
     await settle();
     expect(FakeNotification.instances).toHaveLength(0);
     expect(FakeNotification.requestPermission).not.toHaveBeenCalled();
+    h.dispose();
+  });
+  it('never notifies for an archived channel, even after it is unarchived', async () => {
+    const h = harness();
+    h.setArchived(true);
+    h.emit([item('while-archived')]); await settle();
+    expect(FakeNotification.instances).toHaveLength(0);
+    h.setArchived(false);
+    h.emit([item('while-archived')]); await settle();
+    expect(FakeNotification.instances).toHaveLength(0);
+    h.emit([item('while-archived'), item('after')]); await settle();
+    expect(FakeNotification.instances).toHaveLength(1);
     h.dispose();
   });
   it('notifies when visible but unfocused', async () => {

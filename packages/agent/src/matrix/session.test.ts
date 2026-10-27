@@ -12,7 +12,7 @@ vi.mock('matrix-js-sdk', () => ({
   ClientEvent: { Sync: 'sync', Room: 'room', ReceivedToDeviceMessage: 'receivedToDeviceMessage' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' }, RoomStateEvent: { Events: 'RoomState.events' },
   MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
-  Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' }, SetPresence: { Offline: 'offline' },
+  Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' }, SetPresence: { Unavailable: 'unavailable' },
 }));
 import { createAgentMatrixSession } from './session';
 
@@ -640,10 +640,10 @@ describe('presence and read receipts', () => {
     vi.useFakeTimers();
     session = await createAgentMatrixSession(creds);
     session.setAway!('usage limit');
-    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'usage limit' });
-    expect(client.setSyncPresence).toHaveBeenLastCalledWith('offline');
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'unavailable', status_msg: 'usage limit' });
+    expect(client.setSyncPresence).toHaveBeenLastCalledWith('unavailable');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'offline', status_msg: 'usage limit' });
+    expect(client.setPresence).toHaveBeenLastCalledWith({ presence: 'unavailable', status_msg: 'usage limit' });
     const calls = client.setPresence.mock.calls.length;
     session.setAway!('usage limit');
     expect(client.setPresence).toHaveBeenCalledTimes(calls);
@@ -652,10 +652,11 @@ describe('presence and read receipts', () => {
     expect(client.setSyncPresence).toHaveBeenLastCalledWith(undefined);
   });
   it('reports other members as online, away since their last heartbeat, or unknown', async () => {
-    const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@idle:hs', name: 'Idle' }, { userId: '@new:hs', name: 'New' }];
+    const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@idle:hs', name: 'Idle' }, { userId: '@limit:hs', name: 'Limit' }, { userId: '@new:hs', name: 'New' }];
     const users: Record<string, unknown> = {
       '@peer:hs': { presence: 'offline', lastPresenceTs: Date.parse('2026-10-22T12:00:00Z'), lastActiveAgo: 3_600_000, events: { presence: presenceEvent({ status_msg: 'session ended' }) } },
       '@idle:hs': { presence: 'unavailable', events: { presence: presenceEvent({}) } },
+      '@limit:hs': { presence: 'unavailable', lastPresenceTs: Date.parse('2026-10-22T12:00:00Z'), lastActiveAgo: 0, events: { presence: presenceEvent({ status_msg: 'usage limit' }) } },
       '@new:hs': { presence: 'offline', events: { presence: null } },
     };
     Object.assign(client.room, { getJoinedMembers: () => members });
@@ -663,7 +664,8 @@ describe('presence and read receipts', () => {
     session = await createAgentMatrixSession(creds);
     expect(session.members!('!r:hs')).toEqual([
       { name: 'Peer', presence: 'away', since: '2026-10-22T11:00:00.000Z', reason: 'session ended' },
-      { name: 'Idle', presence: 'online' }, { name: 'New', presence: 'unknown' }]);
+      { name: 'Idle', presence: 'online' }, { name: 'Limit', presence: 'away', since: '2026-10-22T12:00:00.000Z', reason: 'usage limit' },
+      { name: 'New', presence: 'unknown' }]);
   });
   it('lists readers of a loaded event and marks delivered events read', async () => {
     const members = [{ userId: creds.userId, name: 'Agent' }, { userId: '@peer:hs', name: 'Peer' }, { userId: '@late:hs', name: 'Late' }];

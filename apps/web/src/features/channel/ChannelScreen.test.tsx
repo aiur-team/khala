@@ -233,7 +233,7 @@ describe('ChannelScreen roster presence', () => {
   };
   it('dots online, away and stopped agents, greys a stopped one, and omits the dot while unknown', () => {
     const { html, row } = rows([{ ...agent('agent_on', mira, 'Claude'), connection: 'connected' },
-      { ...agent('agent_off', theo, 'Codex'), connection: 'offline', awaySince: away, awayReason: 'session ended' },
+      { ...agent('agent_off', theo, 'Codex'), connection: 'offline', awaySince: away },
       { ...agent('agent_away', theo, 'Gemini'), connection: 'offline', awaySince: away, awayReason: 'usage limit' }, agent('agent_new', theo, 'Muse')]);
     expect(row('agent_on')).toContain('class="kh-st on"');
     expect(row('agent_on')).not.toContain('kh-off');
@@ -259,7 +259,6 @@ describe('ChannelScreen roster presence', () => {
     const at = (ms: number, awayReason?: string) => agentLiveness({ ...agent('a', mira), connection: 'offline', awaySince: 0, ...(awayReason ? { awayReason } : {}) }, ms);
     expect([at(5 * 60_000), at(3 * 3_600_000), at(3 * 86_400_000)].map(item => item?.text))
       .toEqual(['Not running — last seen 5m ago', 'Not running — last seen 3h ago', 'Not running — last seen 3d ago']);
-    expect(at(5 * 60_000, 'session ended')).toEqual({ state: 'stopped', text: 'Not running — last seen 5m ago' });
     expect(at(5 * 60_000, 'usage limit')).toEqual({ state: 'away', text: 'Away — usage limit · 5m' });
     expect(agentLiveness({ ...agent('a', mira), connection: 'connected' })).toBeNull();
     expect(stoppedTip({ ...agent('a', mira), connection: 'offline', awaySince: 0, awayReason: 'usage limit' }, 60_000)).toBeUndefined();

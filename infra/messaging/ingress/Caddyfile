@@ -15,6 +15,10 @@
   handle /_synapse/admin/* {
     respond 403
   }
+  # Media upload (/_matrix/media/v3/upload) has no client-path equivalent; download uses /_matrix/client/v1/media.
+  handle /_matrix/media/* {
+    reverse_proxy {$KHALA_SYNAPSE_UPSTREAM}
+  }
   handle /_matrix/client/* {
     reverse_proxy {$KHALA_SYNAPSE_UPSTREAM}
   }

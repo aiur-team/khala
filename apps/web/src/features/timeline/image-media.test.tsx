@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ImageRef } from '@khala/contracts/m1/image';
 import type { MessageContent } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, type ParticipantView } from '@khala/contracts/messaging/index';
 import type { MediaPort } from '../../ui/conversation/ports';
-import { loadedImage, loadImage, prepareImage, saveImage, uploadImage } from './image-media';
+import { IMAGE_CACHE_SIZE, loadedImage, loadImage, prepareImage, rememberImage, saveImage, uploadImage } from './image-media';
 import { renderMessageContent } from './message-renderer';
 import { encodeMessageContent, projectWireEvent } from '../../composition/human/message-wire';
 
@@ -60,6 +61,19 @@ describe('encrypted upload and display', () => {
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(png(4, 3));
     expect(blob.type).toBe('image/png');
     expect(loadedImage(image)).toBe(blob);
+  });
+
+  it('keeps only the most recently used decrypted images', async () => {
+    const ref = (n: number) => ({ name: 'p.png', mimetype: 'image/png', size: 1, w: 1, h: 1, url: `mxc://hs/lru${n}`, key: {}, iv: 'iv', sha256: 's' }) as unknown as ImageRef;
+    const blobs = Array.from({ length: IMAGE_CACHE_SIZE + 1 }, () => new Blob(['x']));
+    for (let n = 0; n < IMAGE_CACHE_SIZE; n++) rememberImage(ref(n), blobs[n]!);
+    const download = vi.fn(async () => new Uint8Array());
+    expect(await loadImage({ upload: vi.fn(), download }, ref(0))).toBe(blobs[0]); // now most recent
+    rememberImage(ref(IMAGE_CACHE_SIZE), blobs[IMAGE_CACHE_SIZE]!);
+    expect(loadedImage(ref(0))).toBe(blobs[0]);
+    expect(loadedImage(ref(1))).toBeUndefined();
+    expect(loadedImage(ref(IMAGE_CACHE_SIZE))).toBe(blobs[IMAGE_CACHE_SIZE]);
+    expect(download).not.toHaveBeenCalled();
   });
 
   it('refuses decrypted bytes that are not the declared image type', async () => {

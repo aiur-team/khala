@@ -375,6 +375,7 @@ describe('setOwnChannelName', () => {
           ? { getContent: () => content, getTs: () => 42 } : null },
         getJoinedMembers: () => members,
       } as unknown as Room)),
+      getStateEvent: vi.fn(async () => { if (!content) throw new Error('M_NOT_FOUND'); return content; }),
       sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
     };
   }
@@ -411,6 +412,7 @@ describe('setOwnArchived', () => {
     return {
       getUserId: () => me, room,
       getRoom: vi.fn(() => room as unknown as Room), getRooms: () => [{ roomId: '!r', ...room }] as unknown as Room[],
+      getStateEvent: vi.fn(async () => { if (!content) throw new Error('M_NOT_FOUND'); return content; }),
       sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
       setRoomAccountData: vi.fn().mockResolvedValue({}),
       sendToDevice: vi.fn().mockResolvedValue({}),
@@ -454,6 +456,7 @@ describe('setOwnChannelColors (#1308)', () => {
       getUserId: () => me,
       getRoom: vi.fn(() => ({ currentState: { getStateEvents: (type: string, key: string) => type === EventType.RoomMember && key === me && content
         ? { getContent: () => content } : null } } as unknown as Room)),
+      getStateEvent: vi.fn(async () => { if (!content) throw new Error('M_NOT_FOUND'); return content; }),
       sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
     };
   }
@@ -472,6 +475,21 @@ describe('setOwnChannelColors (#1308)', () => {
     const left = client({ membership: 'leave' });
     expect(await setOwnChannelColors(left as unknown as MatrixClient, '!r', { agents: {} })).toBe('failed');
     expect(left.sendStateEvent).not.toHaveBeenCalled();
+  });
+  it('merges back-to-back writes to the member event instead of overwriting one with the other', async () => {
+    let server: Record<string, unknown> = { membership: 'join', displayname: 'alice' };
+    const sdk = {
+      getUserId: () => me,
+      getRoom: vi.fn(() => ({ getJoinedMembers: () => [] } as unknown as Room)), // local state never sees the echoes
+      getStateEvent: vi.fn(async () => server),
+      sendStateEvent: vi.fn(async (_r: string, _t: string, content: Record<string, unknown>) => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        server = content;
+        return { event_id: '$e' };
+      }),
+    } as unknown as MatrixClient;
+    await Promise.all([setOwnChannelColors(sdk, '!r', { color: 'teal', agents: {} }), setOwnChannelName(sdk, '!r', 'bob')]);
+    expect(server).toEqual({ membership: 'join', displayname: 'bob', 'com.khala.colors': { color: 'teal', agents: {} } });
   });
 });
 
@@ -638,9 +656,13 @@ describe('member presence and read receipts', () => {
     presence, lastPresenceTs: 10_000_000, lastActiveAgo: 7_200_000, events: { presence: { getContent: () => content } }, ...extra });
   it('maps Matrix presence to roster connection, away since the last heartbeat', () => {
     const users: Record<string, unknown> = { '@off:hs': user('offline', { status_msg: 'session ended' }), '@idle:hs': user('unavailable', {}),
+      '@away:hs': user('unavailable', { status_msg: 'usage limit' }), '@killed:hs': user('offline', { status_msg: 'usage limit' }),
       '@none:hs': { presence: 'offline', events: { presence: null } } };
     const client = { getUser: (id: string) => users[id] ?? null } as unknown as MatrixClient;
-    expect(memberPresence(client, '@off:hs')).toEqual({ connection: 'offline', since: 2_800_000, reason: 'session ended' });
+    expect(memberPresence(client, '@off:hs')).toEqual({ connection: 'offline', since: 2_800_000 });
+    expect(memberPresence(client, '@away:hs')).toEqual({ connection: 'offline', since: 2_800_000, reason: 'usage limit' });
+    // Hard-killed while away: Synapse keeps the old reason, but offline means not running.
+    expect(memberPresence(client, '@killed:hs')).toEqual({ connection: 'offline', since: 2_800_000 });
     expect(memberPresence(client, '@idle:hs')).toEqual({ connection: 'connected' });
     expect(memberPresence(client, '@none:hs')).toBeNull();
     expect(memberPresence(client, '@missing:hs')).toBeNull();

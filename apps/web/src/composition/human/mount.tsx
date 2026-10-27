@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { decodeRoomId, type IdentityPort } from '@khala/contracts/messaging/index';
+import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
@@ -13,7 +13,7 @@ import { HumanScreen, type HumanShellChrome } from './screen';
 import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList, type ConversationSummary } from '../../ui/conversation';
-import { ArchivedChannelsRoute } from './ArchivedChannelsRoute';
+import { archiveChannel, ArchivedChannelsRoute } from './ArchivedChannelsRoute';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { CopyIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
@@ -277,7 +277,8 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
   const createButton = useRef<HTMLButtonElement>(null);
   const closeCreate = useCallback(() => setCreating(false), []);
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
-  useEffect(() => { setCreating(false); }, [chrome.path]);
+  const [archiveFailed, setArchiveFailed] = useState(false);
+  useEffect(() => { setCreating(false); setArchiveFailed(false); }, [chrome.path]);
   const { username, color, initials: viewerInitials } = useProfile();
   const [editingProfile, setEditingProfile] = useState(false);
   const closeProfile = useCallback(() => setEditingProfile(false), []);
@@ -287,7 +288,10 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
   const openArchived = setArchived ? () => navigateRoute(routes.archivedPath()) : undefined;
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread}
-    brandActions={local ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
+    brandActions={<>
+      {archiveFailed ? <span className="kh-brand-status" role="alert">Archive failed. Try again.</span> : null}
+      {local ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
+    </>}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
       mentionNotifications={{ state: notificationState, toggle: () => void notificationPreference.toggle() }}
       username={username} color={color} onEditProfile={() => setEditingProfile(true)} {...(openArchived ? { onOpenArchived: openArchived } : {})}
@@ -295,7 +299,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
     overlay={editingProfile ? <ProfileDialog ownerId={context.principal.ownerId} onClose={closeProfile} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId} viewerInitials={viewerInitials}
-      {...(setArchived && openArchived ? { onArchive: (id: string) => { const roomId = decodeRoomId(id); if (roomId.ok) void setArchived(roomId.value, true); }, onOpenArchived: openArchived } : {})}
+      {...(setArchived && openArchived ? { onArchive: (id: string) => { setArchiveFailed(false); void archiveChannel(setArchived, id, true).then(ok => setArchiveFailed(!ok)); }, onOpenArchived: openArchived } : {})}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
       action={<>
         <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded="false"
