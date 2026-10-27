@@ -40,7 +40,7 @@ import {
 import { attachNameTargets } from './name-targets';
 import { checkName } from '@khala/contracts/m1/names';
 import { CHANNEL_COLORS_MEMBER_KEY, memberChannelColors, type ChannelColors } from '@khala/contracts/m1/colors';
-import { ARCHIVED_MEMBER_KEY, memberArchived } from '@khala/contracts/m1/archive';
+import { ARCHIVED_ACCOUNT_DATA_TYPE, ARCHIVED_MEMBER_KEY, ARCHIVE_NOTICE_TYPE, memberArchived, type ArchiveNotice } from '@khala/contracts/m1/archive';
 import type { ChannelNameResult, ChannelNamesPort, MediaPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
@@ -232,7 +232,7 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         preview: typeof body === 'string' ? body : null,
         timestamp: latest ? new Date(latest.getTs()).toISOString() : null,
         unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
-        ...(viewer && memberArchived(candidate.getMember(viewer)?.events.member?.getContent()) ? { archived: true } : {}),
+        ...(viewer && viewerArchived(candidate, viewer) ? { archived: true } : {}),
         members: candidate.getJoinedMembers()
           .filter(member => member.userId !== viewer)
           .map(member => conversationMember(member.userId, member.name)),
@@ -793,19 +793,46 @@ export async function setOwnChannelColors(client: Pick<MatrixClient, 'getRoom' |
   } catch { return 'failed'; }
 }
 
-/** Archives or unarchives the channel for the viewer only, in their member event, keeping its other content. */
-export async function setOwnArchived(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
-  archived: boolean): Promise<'sent' | 'failed'> {
+/** Whether the viewer archived the room: their private room account data, or a legacy member flag not yet migrated. */
+export function viewerArchived(room: Pick<Room, 'getAccountData' | 'getMember'>, viewer: string): boolean {
+  return room.getAccountData(ARCHIVED_ACCOUNT_DATA_TYPE)?.getContent().archived === true
+    || memberArchived(room.getMember(viewer)?.events.member?.getContent());
+}
+
+/**
+ * Archives or unarchives the channel for the viewer only, in their private room account data, and tells each of
+ * their own agents in the room (`agents`, resolved by the control server) by to-device notice. Strips the legacy public member flag (#1327) if present.
+ */
+export async function setOwnArchived(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent' | 'setRoomAccountData' | 'sendToDevice'>,
+  roomId: string, archived: boolean, agents: readonly string[]): Promise<'sent' | 'failed'> {
   try {
     const userId = client.getUserId();
-    const own = userId ? client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
-    if (!userId || !own || own.getContent().membership !== 'join') return 'failed';
-    const rest: Record<string, unknown> = { ...own.getContent() };
-    delete rest[ARCHIVED_MEMBER_KEY];
-    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
-    await send.call(client, roomId, EventType.RoomMember, { ...rest, membership: 'join', ...(archived ? { [ARCHIVED_MEMBER_KEY]: true } : {}) }, userId);
+    const room = client.getRoom(roomId);
+    const own = userId ? room?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
+    if (!userId || !room || !own || own.getContent().membership !== 'join') return 'failed';
+    const setData = client.setRoomAccountData as unknown as (roomId: string, type: string, content: object) => Promise<unknown>;
+    await setData.call(client, roomId, ARCHIVED_ACCOUNT_DATA_TYPE, archived ? { archived: true } : {});
+    const notice: ArchiveNotice = { v: 1, room_id: roomId, archived };
+    if (agents.length) await client.sendToDevice(ARCHIVE_NOTICE_TYPE, new Map(agents.map(agent => [agent, new Map([['*', notice]])])));
+    if (memberArchived(own.getContent())) {
+      const rest: Record<string, unknown> = { ...own.getContent() };
+      delete rest[ARCHIVED_MEMBER_KEY];
+      const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
+      await send.call(client, roomId, EventType.RoomMember, { ...rest, membership: 'join' }, userId);
+    }
     return 'sent';
   } catch { return 'failed'; }
+}
+
+/** Moves each legacy public member-event archive flag into private account data, once per room per load. */
+export function migrateLegacyArchives(client: Parameters<typeof setOwnArchived>[0] & Pick<MatrixClient, 'getRooms'>, started: Set<string>,
+  agentsOf: (roomId: string) => Promise<readonly string[] | null>): void {
+  const userId = client.getUserId();
+  for (const room of client.getRooms()) {
+    if (!userId || started.has(room.roomId) || !memberArchived(room.getMember(userId)?.events.member?.getContent())) continue;
+    started.add(room.roomId);
+    void agentsOf(room.roomId).then(agents => agents && setOwnArchived(client, room.roomId, true, agents));
+  }
 }
 
 /** When `userId` took its current name in `roomId`: the time of its latest membership event. */
@@ -896,6 +923,17 @@ export function createMatrixBrowserPorts(input: Readonly<{
 }>): MatrixBrowserPorts {
   const runtime = new MatrixRuntime(() => device, input.participants);
   const typingSent = new Map<string, number>();
+  const archiveMigrations = new Set<string>();
+  /** The viewer's own agents joined to `roomId`, by the control server's mapping; null when it is unavailable. */
+  const ownAgents = async (active: ActiveClient, roomId: string): Promise<readonly string[] | null> => {
+    const session = participantSession(active);
+    if (!session) return null;
+    try {
+      const userIds = Object.keys((await active.client.getJoinedRoomMembers(roomId)).joined);
+      const mapping = await input.participants.resolve(userIds, undefined, roomId as RoomId, undefined, session);
+      return mapping && userIds.filter(userId => mapping.get(userId)?.kind === 'agent' && mapping.get(userId)?.ownerId === active.principal.ownerId);
+    } catch { return null; }
+  };
   const credentialSource: CredentialSource = {
     async resolve(principal, signal) {
       runtime.principalByOwner.set(principal.ownerId, principal);
@@ -972,6 +1010,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
       const active = runtime.active;
       const view = device.current();
       if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready' || view.generation !== generation || active.generation !== generation) return null;
+      migrateLegacyArchives(active.client, archiveMigrations, roomId => ownAgents(active, roomId));
       try { return projectJoinedEncryptedRooms(active.client, input.limits); } catch { return null; }
     },
     subscribe(ownerId, generation, listener) {
@@ -1019,7 +1058,11 @@ export function createMatrixBrowserPorts(input: Readonly<{
     memberSince: (roomId, userId) => runtime.active ? memberSince(runtime.active.client, roomId, userId) : null,
     channelColors: (roomId, userId) => runtime.active ? readChannelColors(runtime.active.client, roomId, userId) : null,
     setChannelColors: (roomId, colors) => runtime.active ? setOwnChannelColors(runtime.active.client, roomId, colors) : Promise.resolve('failed'),
-    setArchived: (roomId, archived) => runtime.active ? setOwnArchived(runtime.active.client, roomId, archived) : Promise.resolve('failed'),
+    async setArchived(roomId, archived) {
+      const active = runtime.active;
+      const agents = active ? await ownAgents(active, roomId) : null;
+      return active && agents ? setOwnArchived(active.client, roomId, archived, agents) : 'failed';
+    },
     presence: userId => runtime.active ? memberPresence(runtime.active.client, userId) : null,
     hasRead: (roomId, userId, eventId) => !!runtime.active && hasReadEvent(runtime.active.client, roomId, userId, eventId),
     typing: {

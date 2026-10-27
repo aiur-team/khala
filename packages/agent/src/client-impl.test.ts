@@ -637,6 +637,14 @@ it('goes quiet while its owner archives the channel and listens again on unarchi
   onArchived!(credentials.roomId, true);
   await vi.waitFor(async () => expect((await client.status()).archived).toBe(true));
 });
+it('keeps a saved archive on rejoin when no owner notice arrived this session', async () => {
+  const files = channelFiles(filesForDir(dir), credentials.roomId);
+  await fs.mkdir(path.dirname(files.mode), { recursive: true, mode: 0o700 });
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'sync', archived: true }), { mode: 0o600 });
+  session.ownerArchived = () => undefined; session.listeningMode = () => 'sync';
+  await connected();
+  expect(await client.status()).toMatchObject({ archived: true });
+});
 
 describe('agent-initiated listening mode', () => {
   const notices = () => vi.mocked(session.sendChannelEvent).mock.calls.map(call => (call[1] as { summary: string }).summary);

@@ -503,7 +503,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');
         await writeStateFile(channelDir, 'mode.json', { ...previous, mode: session.listeningMode(credentials.roomId) });
       } else await removeStateFile(channelDir, 'mode.json');
-      if (session.ownerArchived && !asyncOnly) await applyArchived(attempt.files!, session.ownerArchived(credentials.roomId));
+      const archived = session.ownerArchived?.(credentials.roomId);
+      if (archived !== undefined && !asyncOnly) await applyArchived(attempt.files!, archived);
       // Subscribe first and hold live events until older gap messages are queued.
       // The inbox tail (not the delivery cursor) is the durable intake boundary.
       const missed: SessionMessage[][] = [];
