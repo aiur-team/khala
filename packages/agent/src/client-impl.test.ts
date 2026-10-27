@@ -1785,6 +1785,9 @@ describe('images', () => {
     const svg = path.join(root, 'x.png');
     await fs.writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
     await expect(client.sendImage(svg, '')).rejects.toMatchObject({ code: 'invalid_image', extra: { reason: 'unsupported_type' } });
+    const heic = path.join(root, 'IMG_0001.HEIC');
+    await fs.writeFile(heic, Buffer.from([0, 0, 0, 24, ...Buffer.from('ftypheic'), 0, 0, 0, 0, ...Buffer.from('mif1heic')]));
+    await expect(client.sendImage(heic, '')).rejects.toMatchObject({ code: 'invalid_image', extra: { reason: 'heic' } });
     await expect(client.sendImage('shot.png', '')).rejects.toMatchObject({ extra: { reason: 'path_not_absolute' } });
     await expect(client.downloadImage('$text')).rejects.toMatchObject({ extra: { reason: 'not_an_image' } });
     expect(session.uploadMedia).not.toHaveBeenCalled();

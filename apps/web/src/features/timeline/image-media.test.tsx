@@ -37,6 +37,18 @@ describe('prepareImage', () => {
   });
 });
 
+describe('prepareImage metadata and HEIC', () => {
+  it('cuts PNG metadata chunks without a canvas, and names HEIC in its refusal', async () => {
+    const chunk = (type: string, data: string) => bytes([0, 0, 0, data.length], type, data, [0, 0, 0, 0]);
+    const head = bytes([0x89], 'PNG\r\n\x1a\n', [0, 0, 0, 13], 'IHDR', [0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0], [0, 0, 0, 0]);
+    const reencode = vi.fn();
+    const prepared = await prepareImage(file(bytes([...head], [...chunk('eXIf', 'GPS!')], [...chunk('IEND', '')]), 'p.png'), reencode);
+    expect('bytes' in prepared && new TextDecoder().decode(prepared.bytes)).not.toContain('GPS');
+    expect(reencode).not.toHaveBeenCalled();
+    expect(await prepareImage(file(bytes([0, 0, 0, 24], 'ftypheic', [0, 0, 0, 0], 'mif1heic'), 'IMG.HEIC'))).toEqual({ error: 'heic' });
+  });
+});
+
 describe('encrypted upload and display', () => {
   it('uploads only ciphertext and decrypts it back for display', async () => {
     const media = memoryMedia();

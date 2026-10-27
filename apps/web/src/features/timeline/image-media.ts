@@ -1,13 +1,14 @@
 // Image attachments in the browser: prepare (validate, drop metadata), encrypt
 // and upload, decrypt and cache for display, and save through the platform.
-import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageFileName, sniffImage, stripJpegMetadata, type ImageRef, type SniffedImage } from '@khala/contracts/m1/image';
+import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageFileName, sniffImage, stripImageMetadata, type ImageRef, type SniffedImage } from '@khala/contracts/m1/image';
 import type { MediaPort } from '../../ui/conversation/ports';
 
 export type PreparedImage = Readonly<SniffedImage & { bytes: Uint8Array; name: string }>;
-export type ImageError = 'unsupported_type' | 'too_large' | 'empty' | 'unreadable' | 'upload_failed';
+export type ImageError = 'unsupported_type' | 'heic' | 'too_large' | 'empty' | 'unreadable' | 'upload_failed';
 
 export const IMAGE_ERROR_TEXT: Readonly<Record<ImageError, string>> = {
   unsupported_type: 'Only JPEG, PNG, GIF or WebP images can be sent.',
+  heic: "HEIC images can't be sent. Save it as JPEG first.",
   too_large: 'Images can be up to 10 MB.',
   empty: 'That image is empty.',
   unreadable: "That image couldn't be read.",
@@ -36,12 +37,12 @@ export async function prepareImage(file: Blob & { name?: string }, reencode = re
   try { bytes = new Uint8Array(await file.arrayBuffer()); } catch { return { error: 'unreadable' }; }
   let checked = checkImage(bytes);
   if (!checked.ok) return { error: checked.reason };
-  if (checked.image.mimetype === 'image/jpeg') {
-    // Without a canvas, strip the metadata segments instead (orientation may then be lost).
-    bytes = await reencode(bytes).catch(() => stripJpegMetadata(bytes));
-    checked = checkImage(bytes);
-    if (!checked.ok) return { error: checked.reason };
-  }
+  const type = checked.image.mimetype;
+  // JPEG goes through a canvas so its EXIF orientation is applied. Without one, and for PNG and WebP,
+  // the metadata is cut out byte-wise, which keeps PNG/WebP lossless and animated. GIF has none.
+  bytes = type === 'image/jpeg' ? await reencode(bytes).catch(() => stripImageMetadata(bytes, type)) : stripImageMetadata(bytes, type);
+  checked = checkImage(bytes);
+  if (!checked.ok) return { error: checked.reason };
   const name = (file.name || 'image').replace(/[\p{Cc}\p{Cf}/\\]/gu, '_').slice(0, 255);
   return { ...checked.image, bytes, name };
 }

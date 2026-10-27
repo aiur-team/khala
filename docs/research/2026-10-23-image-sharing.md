@@ -15,7 +15,7 @@ Operator request: "add a + button left of input for humans to upload images, and
 
 ## 2. iOS Messages image UX
 
-Images appear as standalone rounded tiles with no bubble fill, at their own aspect ratio inside a maximum box (about 2/3 of the column width). A caption is a separate bubble under the image. Consecutive images group tightly. A tap opens a full-screen viewer, and a long-press opens the context menu (Reply, Copy, Save…). Khala mirrors this: a lone image drops the bubble background, the tile is capped at 240×320 with the aspect kept, a tap opens a full-screen viewer, and the long-press menu keeps Reply and adds Save Image. Grouping into a grid is deferred, so consecutive images stack in the normal run spacing.
+Images appear as standalone rounded tiles with no bubble fill, at their own aspect ratio inside a maximum box (about 2/3 of the column width). A caption is a separate bubble under the image. Consecutive images group tightly. A tap opens a full-screen viewer, and a long-press opens the context menu (Reply, Copy, Save…). Khala mirrors this: a lone image drops the bubble background, the tile is capped at 240×320 with the aspect kept, a tap opens a full-screen viewer, and the long-press menu keeps Reply and adds Save Image. Consecutive captionless images from one sender share one row as a two-column grid of square tiles (an odd last tile spans both columns); each tile keeps its own long-press menu. Several images picked together send as one message each (Matrix `m.image` holds one file), and the caption follows them as a text message, as on iOS.
 
 ## 3. Saving on iOS Safari and Home Screen web apps
 
@@ -41,7 +41,7 @@ We rejected letting the native callout run on the in-thread image. It would take
 ## 5. Safety
 
 - The type is sniffed from magic bytes (PNG, JPEG, GIF, WebP), never taken from the file name or the sender's `mimetype`. SVG, which can carry script, is never accepted. Receivers re-validate the event and show only encrypted, allowlisted images. The agent re-sniffs the decrypted bytes before writing the file.
-- **EXIF/GPS.** The web re-encodes JPEG through `createImageBitmap` and a canvas, which applies orientation and drops all metadata. If that fails, it strips APP1/APP13/COM segments. The agent strips those segments byte-wise. PNG/WebP metadata chunks are left; they rarely carry location.
-- **HEIC.** iOS Safari hands HEIC to `accept="image/*"` inputs as JPEG. HEIC files from agents are refused rather than converted.
+- **EXIF/GPS.** The web re-encodes JPEG through `createImageBitmap` and a canvas, which applies orientation and drops all metadata. If that fails, it strips APP1/APP13/COM segments. The agent strips those segments byte-wise. PNG `eXIf`/`tEXt`/`zTXt`/`iTXt`/`tIME` chunks and WebP `EXIF`/`XMP ` chunks are cut out byte-wise on both web and agent, which keeps them lossless and animated (no canvas). GIF has no EXIF block and passes through unchanged, so its animation is kept.
+- **HEIC.** iOS Safari hands HEIC to `accept="image/*"` inputs as JPEG. HEIC files (from agents, or dropped on a desktop) are refused with reason `heic` and a "convert to JPEG" hint rather than converted: Node has no HEIC decoder without a new dependency, and iOS Safari already converts HEIC to JPEG in the picker.
 - **Agents.** Image content is untrusted. Wakes stay constant nudges, and the inbox shows only `[image: name, WxH]` plus any caption. Nothing downloads until the agent calls `khala_read { download }`, which writes to its own session state directory with mode 0600.
 - **Local mode.** The local helper accepts only `m.text`/`m.notice` and has no media repo, so images are hosted only.
