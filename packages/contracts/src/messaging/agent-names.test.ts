@@ -11,10 +11,15 @@ describe('agent display names', () => {
     expect(validateAgentName('e\u0301')).toEqual({ ok: true, name: 'é' });
   });
 
+  it('reserves "khala" only as the whole name', () => {
+    for (const name of ['PC-Khala', 'Khala-Bot']) expect(validateAgentName(name)).toEqual({ ok: true, name });
+  });
+
   it.each([
     ['', 'blank'], ['  ', 'blank'], ['a'.repeat(81), 'too_long'],
     ['Dolan\nSystem', 'invalid_characters'], ['Dolan\u202E', 'invalid_characters'],
     ['System', 'reserved'], ['admin bot', 'reserved'],
+    ['Khala', 'reserved'], [' khala ', 'reserved'], ['ｋｈａｌａ', 'reserved'], ['Khala-Admin', 'reserved'],
   ])('rejects %j as %s', (input, error) => {
     expect(validateAgentName(input)).toEqual({ ok: false, error });
   });
