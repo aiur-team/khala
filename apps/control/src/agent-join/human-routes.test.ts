@@ -544,6 +544,10 @@ it('Approve joins off: only the member who issued the agent\'s link gets a no-cl
   // Another member opening the page still clicks.
   f.owner('member-b');
   expect(await access()).toBeUndefined();
+  // A rotated or revoked link keeps the click.
+  f.owner('owner');
+  f.admission.inspect.mockResolvedValueOnce('revoked');
+  expect(await access()).toBeUndefined();
   // A non-member is never admitted without clicking, even when they issued the link: admission rules are unchanged.
   f.owner('owner');
   f.deps.inspectMembership.mockResolvedValue({ kind: 'absent' });

@@ -251,9 +251,10 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (denied) return denied;
       const view: AgentJoinView = { ...viewOf(read.record), ...(joining ? { access: 'join' as const } : {}) };
       // Approve joins off: a member opening the confirm page for an agent using their own link needs no click.
-      // Never for a non-member, and an unreadable setting keeps the click.
+      // Never for a non-member or a revoked link, and an unreadable setting keeps the click.
       if (!joining && view.state === 'pending' && read.record.issuerOwnerId === principal.ownerId
-        && await readApproveJoins(deps.store, read.record.roomId as RoomId) === false) view.access = 'auto';
+        && await readApproveJoins(deps.store, read.record.roomId as RoomId) === false
+        && await inviteAccess(request, principal, read.record, false) === null) view.access = 'auto';
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();

@@ -8,7 +8,7 @@ import type { AgentConfirmController, AgentConfirmSnapshot, AgentConfirmError } 
 const view: AgentJoinView = { joinId: 'j1', label: 'Helper', harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' };
 function render(snapshot: AgentConfirmSnapshot, email?: string) {
   const controller: AgentConfirmController = { getSnapshot: () => snapshot, subscribe: () => () => undefined,
-    start: vi.fn(), confirm: vi.fn(), retry: vi.fn(), dispose: vi.fn() };
+    start: vi.fn(), confirm: vi.fn(), cancelAuto: vi.fn(), retry: vi.fn(), dispose: vi.fn() };
   return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()}
     {...(email ? { email } : {})} />);
 }
@@ -99,6 +99,13 @@ describe('AgentConfirm', () => {
     expect(html).toContain('Signed in as ada@example.test');
     expect(render({ state: 'error', code: 'wrong_account' }, 'ada@example.test')).toContain('Signed in as ada@example.test');
     expect(render({ state: 'review', view })).not.toContain('Signed in as');
+  });
+  it('names the agent and offers Cancel while a no-click confirm is pending', () => {
+    const html = render({ state: 'review', view: { ...view, access: 'auto' } }, 'ada@example.test');
+    expect(html).toContain('Adding Helper to Launch now. Approve joins is off.');
+    expect(html).toContain('>Cancel</button>');
+    expect(html).not.toContain('>Confirm</button>');
+    expect(html).toContain('Signed in as ada@example.test');
   });
   it('escapes agent-controlled labels', () => {
     expect(render({ state: 'review', view: { ...view, label: '<script>bad</script>' } })).toContain('&lt;script&gt;');

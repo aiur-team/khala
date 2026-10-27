@@ -8,7 +8,7 @@ export type AgentConfirmSnapshot =
   | Readonly<{ state: 'error'; code: AgentConfirmError; view?: AgentJoinView }>;
 
 export function createAgentConfirmController({
-  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000,
+  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000, autoConfirmMs = 3000,
   now = () => Date.now(),
   setTimer = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay);
@@ -19,6 +19,7 @@ export function createAgentConfirmController({
   port: AgentJoinPort;
   pollMs?: number;
   readyTimeoutMs?: number;
+  autoConfirmMs?: number;
   now?: () => number;
   setTimer?: (callback: () => void, delay: number) => () => void;
 }) {
@@ -97,8 +98,9 @@ export function createAgentConfirmController({
         if (confirmAttempted) poll(view);
         else {
           publish({ state: 'review', view });
-          // Approve joins is off and this member issued the agent's link: confirm without a click.
-          if (view.access === 'auto') void confirm();
+          // Approve joins is off and this member issued the agent's link: confirm without a click,
+          // after a short window in which the page names the agent and offers Cancel.
+          if (view.access === 'auto') cancelPoll = setTimer(() => { void confirm(); }, autoConfirmMs);
         }
         break;
       case 'confirmed': poll(view); break;
@@ -139,6 +141,13 @@ export function createAgentConfirmController({
       void load();
     },
     confirm,
+    /** Stops a pending no-click confirm; the page then waits for Confirm as usual. */
+    cancelAuto() {
+      if (disposed || snapshot.state !== 'review' || snapshot.view.access !== 'auto') return;
+      const { access: _auto, ...view } = snapshot.view;
+      endOperation();
+      publish({ state: 'review', view });
+    },
     retry() {
       if (disposed || snapshot.state !== 'error') return;
       const { code, view } = snapshot;

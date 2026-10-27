@@ -91,12 +91,15 @@ export function useApproveJoins(administration: Administration | undefined, room
     return () => abort.abort();
   }, [administration, roomId]);
   if (!administration?.approveJoins || !administration.setApproveJoins) return undefined;
-  const save = administration.setApproveJoins;
+  const { approveJoins, setApproveJoins } = administration;
   return { ...state, set(on) {
     setState(current => ({ ...current, on }));
     // A refused or failed save shows the stored value again.
-    void save({ roomId, on }).then(result => result.kind === 'ok', () => false)
-      .then(saved => { if (!saved) setState(current => ({ ...current, on: !on })); });
+    void setApproveJoins({ roomId, on }).then(result => result.kind === 'ok', () => false).then(async saved => {
+      if (saved) return;
+      const stored = await approveJoins(roomId).catch(() => null);
+      setState(current => stored?.kind === 'ok' ? stored.value : { ...current, on: null });
+    });
   } };
 }
 
