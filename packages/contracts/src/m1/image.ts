@@ -58,23 +58,37 @@ export function sniffImage(bytes: Uint8Array): SniffedImage | null {
   return found && found.w >= 1 && found.h >= 1 && found.w <= MAX_DIMENSION && found.h <= MAX_DIMENSION ? found : null;
 }
 
-export type ImageCheck = Readonly<{ ok: true; image: SniffedImage }> | Readonly<{ ok: false; reason: 'unsupported_type' | 'too_large' | 'empty' }>;
+export type ImageCheck = Readonly<{ ok: true; image: SniffedImage }> | Readonly<{ ok: false; reason: 'unsupported_type' | 'heic' | 'too_large' | 'empty' }>;
 
-/** The one gate both senders run before encrypting. */
+// ISO-BMFF `ftyp` brands of HEIC/HEIF stills and sequences (iPhone camera files).
+const HEIF_BRANDS = ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'];
+const isHeif = (b: Uint8Array) => b.length >= 12 && ascii(b, 4, 'ftyp') && HEIF_BRANDS.some(brand => ascii(b, 8, brand));
+
+/** The one gate both senders run before encrypting. HEIC is refused by name so the sender knows to convert it. */
 export function checkImage(bytes: Uint8Array): ImageCheck {
   if (bytes.length === 0) return { ok: false, reason: 'empty' };
   if (bytes.length > IMAGE_MAX_BYTES) return { ok: false, reason: 'too_large' };
   const image = sniffImage(bytes);
-  return image ? { ok: true, image } : { ok: false, reason: 'unsupported_type' };
+  return image ? { ok: true, image } : { ok: false, reason: isHeif(bytes) ? 'heic' : 'unsupported_type' };
 }
+
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+
+const u32 = (b: Uint8Array, i: number) => ((u16be(b, i) << 16) | u16be(b, i + 2)) >>> 0;
+const u32le = (b: Uint8Array, i: number) => (u16le(b, i) | (u16le(b, i + 2) << 16)) >>> 0;
+const fourcc = (b: Uint8Array, i: number) => String.fromCharCode(...b.subarray(i, i + 4));
 
 /**
  * Drops JPEG APP1 (EXIF, XMP: camera, time, GPS), APP13 (IPTC) and comment
  * segments before the scan. Orientation lives in EXIF, so a rotated camera
  * photo may then show sideways; the web composer re-encodes instead.
  */
-export function stripJpegMetadata(bytes: Uint8Array): Uint8Array {
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return bytes;
+function stripJpeg(bytes: Uint8Array): Uint8Array {
   const parts: Uint8Array[] = [bytes.subarray(0, 2)];
   let i = 2;
   while (i + 3 < bytes.length && bytes[i] === 0xff) {
@@ -86,10 +100,54 @@ export function stripJpegMetadata(bytes: Uint8Array): Uint8Array {
     i = end;
   }
   parts.push(bytes.subarray(i));
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let at = 0;
-  for (const part of parts) { out.set(part, at); at += part.length; }
+  return concat(parts);
+}
+
+// eXIf carries EXIF (GPS included); the text chunks carry XMP, comments and camera notes; tIME the edit time.
+const PNG_METADATA = new Set(['eXIf', 'tEXt', 'zTXt', 'iTXt', 'tIME']);
+
+/** Drops PNG metadata chunks. Each chunk has its own CRC, so the rest is copied as is (APNG frames included). */
+function stripPng(bytes: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [bytes.subarray(0, 8)];
+  for (let i = 8; i + 12 <= bytes.length;) {
+    const end = i + 12 + u32(bytes, i);
+    if (end > bytes.length) return bytes;
+    const type = fourcc(bytes, i + 4);
+    if (!PNG_METADATA.has(type)) parts.push(bytes.subarray(i, end));
+    i = end;
+    if (type === 'IEND') break;
+  }
+  return concat(parts);
+}
+
+/** Drops WebP EXIF and XMP chunks, clears their VP8X flags and fixes the RIFF size. Animation frames are kept. */
+function stripWebp(bytes: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [bytes.subarray(0, 12)];
+  for (let i = 12; i + 8 <= bytes.length;) {
+    const size = u32le(bytes, i + 4);
+    if (i + 8 + size > bytes.length) return bytes;
+    const end = Math.min(bytes.length, i + 8 + size + (size & 1)); // chunks pad to even length
+    const type = fourcc(bytes, i);
+    if (type !== 'EXIF' && type !== 'XMP ') parts.push(bytes.subarray(i, end));
+    i = end;
+  }
+  const out = concat(parts);
+  const riff = out.length - 8;
+  out.set([riff & 0xff, (riff >> 8) & 0xff, (riff >> 16) & 0xff, riff >>> 24], 4);
+  if (fourcc(out, 12) === 'VP8X') out[20] = out[20]! & ~0x0c; // EXIF (0x08) and XMP (0x04) present flags
   return out;
+}
+
+/**
+ * Removes location and camera metadata from an already-checked image. GIF is
+ * returned unchanged: it has no EXIF or GPS block, and re-encoding would lose
+ * its animation.
+ */
+export function stripImageMetadata(bytes: Uint8Array, mimetype: ImageMimeType): Uint8Array {
+  if (mimetype === 'image/jpeg') return stripJpeg(bytes);
+  if (mimetype === 'image/png') return stripPng(bytes);
+  if (mimetype === 'image/webp') return stripWebp(bytes);
+  return bytes;
 }
 
 function base64(bytes: Uint8Array, url = false): string {

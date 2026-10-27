@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { TimelineController, TimelineData } from './controller';
-import { TimelineScreen, typingLabel } from './TimelineScreen';
+import { draftContents, TimelineScreen, typingLabel } from './TimelineScreen';
 import { HumanColorsProvider, resolveChannelColors } from '../../ui/khala/human-colors';
 import type { PendingSend } from './send';
 
@@ -659,5 +659,34 @@ describe('inline reply threads (#1321)', () => {
     // Every bubble opens the action menu by hold, right-click or keyboard; the focus layer stays closed until then.
     expect(html.match(/<div class="kh-b" tabindex="0" aria-haspopup="menu" aria-keyshortcuts="Shift\+F10">/g)).toHaveLength(5);
     expect(html).not.toContain('kh-focus');
+  });
+
+  const image = (name: string) => ({ name, mimetype: 'image/png' as const, size: 9, w: 4, h: 3, url: `mxc://hs/${name.replace('.', '_')}`,
+    key: 'k'.repeat(43), iv: 'i'.repeat(22), sha256: 's'.repeat(43) });
+  const photo = (eventId: string, author: ReturnType<typeof participant>, name: string, caption = name) => {
+    const base = item(eventId, author, caption);
+    return { ...base, content: { ...base.content, image: image(name) } };
+  };
+
+  it('groups consecutive captionless images from one sender into one grid row; each tile keeps its own menu', () => {
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready', items: [
+      photo('E1', maya, 'a.png'), photo('E2', maya, 'b.png'), photo('E3', maya, 'c.png'),
+      photo('E4', maya, 'd.png', 'with a caption'), photo('E5', viewer, 'e.png'), photo('E6', maya, 'f.png'),
+    ], nextCursor: null, newMessageCount: 0 })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    const rows = html.split('<li data-event-id=').slice(1);
+    expect(rows.map(row => row.slice(1, 3))).toEqual(['E1', 'E4', 'E5', 'E6']);
+    expect(rows[0]).toContain('class="kh-grid"');
+    for (const id of ['E1', 'E2', 'E3']) expect(rows[0]).toContain(`<div class="kh-b" data-event-id="${id}" tabindex="0" aria-haspopup="menu"`);
+    // A captioned image, or one alone, is an ordinary row.
+    expect(rows.slice(1).join('')).not.toContain('kh-grid');
+  });
+
+  it('sends one image with its caption, and several images as one message each with the caption after them', () => {
+    const [a, b] = [image('a.png'), image('b.png')];
+    expect(draftContents('look', [a])).toEqual([{ v: 1, kind: 'text', body: 'look', image: a }]);
+    expect(draftContents('', [a, b], 'E1' as EventId)).toEqual([
+      { v: 1, kind: 'text', body: 'a.png', image: a, inReplyTo: 'E1' }, { v: 1, kind: 'text', body: 'b.png', image: b, inReplyTo: 'E1' }]);
+    expect(draftContents('look', [a, b]).map(content => content.kind === 'text' && content.body)).toEqual(['a.png', 'b.png', 'look']);
+    expect(draftContents('hi', [])).toEqual([{ v: 1, kind: 'text', body: 'hi' }]);
   });
 });

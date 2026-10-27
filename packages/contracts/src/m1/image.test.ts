@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageEventContent, imageLabel, readImageEvent, readImageRef,
-  sniffImage, stripJpegMetadata, type ImageRef } from './image';
+  sniffImage, stripImageMetadata, type ImageRef } from './image';
 import { decodeMessageContent, digestMessageContent } from '../messaging/events';
 import { decodeContentLimits } from '../messaging/decode';
 
@@ -30,6 +30,7 @@ describe('checkImage', () => {
   it('enforces the allowlist and the size cap', () => {
     expect(checkImage(png(2, 2))).toEqual({ ok: true, image: { mimetype: 'image/png', w: 2, h: 2 } });
     expect(checkImage(bytes('<svg/>'))).toEqual({ ok: false, reason: 'unsupported_type' });
+    expect(checkImage(bytes([0, 0, 0, 24], 'ftypheic', [0, 0, 0, 0], 'mif1heic'))).toEqual({ ok: false, reason: 'heic' });
     expect(checkImage(new Uint8Array(0))).toEqual({ ok: false, reason: 'empty' });
     const big = new Uint8Array(IMAGE_MAX_BYTES + 1);
     big.set(png(2, 2));
@@ -37,14 +38,42 @@ describe('checkImage', () => {
   });
 });
 
-describe('stripJpegMetadata', () => {
-  it('drops EXIF/GPS and keeps the frame and scan', () => {
-    const stripped = stripJpegMetadata(jpeg(8, 4));
+describe('stripImageMetadata', () => {
+  it('drops JPEG EXIF/GPS and keeps the frame and scan', () => {
+    const stripped = stripImageMetadata(jpeg(8, 4), 'image/jpeg');
     expect(new TextDecoder().decode(stripped)).not.toContain('GPS');
     expect(stripped.length).toBe(jpeg(8, 4).length - app1.length);
     expect(sniffImage(stripped)).toEqual({ mimetype: 'image/jpeg', w: 8, h: 4 });
   });
-  it('leaves other formats alone', () => expect(stripJpegMetadata(png(1, 1))).toEqual(png(1, 1)));
+
+  it('drops PNG eXIf and text chunks and keeps the image chunks', () => {
+    const chunk = (type: string, data: string) => bytes([0, 0, 0, data.length], type, data, [1, 2, 3, 4]);
+    const ihdr = bytes([0x89], 'PNG\r\n\x1a\n', [0, 0, 0, 13], 'IHDR', [0, 0, 0, 8, 0, 0, 0, 4, 8, 6, 0, 0, 0], [1, 2, 3, 4]);
+    const keep = [ihdr, chunk('IDAT', 'pixels'), chunk('IEND', '')];
+    const full = bytes(...[ihdr, chunk('eXIf', 'GPS!'), chunk('tEXt', 'Comment\0GPS'), chunk('iTXt', 'XML:com.adobe.xmp GPS'), keep[1]!, keep[2]!].map(part => [...part]));
+    const stripped = stripImageMetadata(full, 'image/png');
+    expect(stripped).toEqual(bytes(...keep.map(part => [...part])));
+    expect(sniffImage(stripped)).toEqual({ mimetype: 'image/png', w: 8, h: 4 });
+  });
+
+  it('drops WebP EXIF and XMP chunks, clears their flags and fixes the RIFF size', () => {
+    const chunk = (type: string, data: number[]) => [...bytes(type, [data.length, 0, 0, 0], data, data.length % 2 ? [0] : [])];
+    const vp8x = chunk('VP8X', [0x0c, 0, 0, 0, 99, 0, 0, 49, 0, 0]);
+    const image = chunk('VP8L', [1, 2, 3]);
+    const webp = (...chunks: number[][]) => {
+      const body = chunks.flat();
+      return bytes('RIFF', [(body.length + 4) & 255, 0, 0, 0], 'WEBP', body);
+    };
+    const stripped = stripImageMetadata(webp(vp8x, chunk('EXIF', [...bytes('GPS!')]), image, chunk('XMP ', [...bytes('GPS')])), 'image/webp');
+    expect(stripped).toEqual(webp([...vp8x.slice(0, 8), 0, ...vp8x.slice(9)], image));
+    expect(sniffImage(stripped)).toEqual({ mimetype: 'image/webp', w: 100, h: 50 });
+  });
+
+  it('leaves GIF (no EXIF; animation kept) and truncated files alone', () => {
+    const gif = bytes('GIF89a', [10, 0, 20, 0, 0]);
+    expect(stripImageMetadata(gif, 'image/gif')).toBe(gif);
+    expect(stripImageMetadata(png(1, 1), 'image/png')).toEqual(png(1, 1));
+  });
 });
 
 describe('attachment encryption', () => {

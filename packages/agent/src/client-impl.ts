@@ -18,7 +18,7 @@ import { adapterFor } from './harness';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry, withReplyContext } from './sender';
-import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageEventContent, readImageEvent, sniffImage, stripJpegMetadata } from '@khala/contracts/m1/image';
+import { checkImage, decryptAttachment, encryptAttachment, IMAGE_MAX_BYTES, imageEventContent, readImageEvent, sniffImage, stripImageMetadata } from '@khala/contracts/m1/image';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { TERMINAL_SESSION_DETAILS, stateRoot, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
@@ -840,7 +840,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (!read) throw refuse('unreadable');
       const checked = checkImage(new Uint8Array(read));
       if (!checked.ok) throw refuse(checked.reason);
-      const bytes = checked.image.mimetype === 'image/jpeg' ? stripJpegMetadata(new Uint8Array(read)) : new Uint8Array(read);
+      const bytes = stripImageMetadata(new Uint8Array(read), checked.image.mimetype);
       try {
         const sealed = await encryptAttachment(bytes);
         const url = await session.uploadMedia(sealed.ciphertext);

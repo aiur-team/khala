@@ -73,7 +73,9 @@
 .kh-attach:disabled { opacity: .35; cursor: default; }
 .kh-attach svg { width: 18px; height: 18px; }
 @media (max-width: 760px) { .kh-attach { width: 40px; height: 40px; } }
-.kh-attach-chip { display: flex; align-items: center; gap: .55rem; padding: .5rem .9rem 0; border-top: 1px solid var(--line); background: var(--surface); }
+.kh-attach-chip { display: flex; align-items: center; gap: .55rem; padding: .5rem .9rem 0; border-top: 1px solid var(--line); background: var(--surface); overflow-x: auto; }
+.kh-attach-item { flex: 0 0 auto; display: flex; align-items: center; gap: .3rem; }
+.kh-attach-item:only-child { flex: 1 1 auto; min-width: 0; gap: .55rem; }
 .kh-attach-chip img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; }
-.kh-attach-chip span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--muted); }
+.kh-attach-item span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--muted); }
 .kh-attach-chip + .kh-comp { border-top: 0; }

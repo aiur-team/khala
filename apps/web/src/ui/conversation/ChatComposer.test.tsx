@@ -34,28 +34,43 @@ function keyDown(tree: ReactNode, init: Partial<{ key: string; shiftKey: boolean
 }
 
 describe('ChatComposer', () => {
-  it('shows the "+" image button only with an attach handler, and hands the picked file over', () => {
+  it('shows the "+" image button only with an attach handler, and hands every picked file over', () => {
     expect(render().html).not.toContain('Add image');
     const onAttach = vi.fn();
     const { html, tree } = render({ onAttach });
-    expect(html).toContain('accept="image/*"');
+    expect(html).toContain('accept="image/*" multiple=""');
     expect(html.indexOf('aria-label="Add image"')).toBeLessThan(html.indexOf('<textarea'));
     const picker = hosts(tree).find(element => element.type === 'input')!;
-    const target = { files: [new File(['x'], 'x.png')], value: 'C:\\fakepath\\x.png' };
+    const target = { files: [new File(['x'], 'x.png'), new File(['y'], 'y.png')], value: 'C:\\fakepath\\x.png' };
     (picker.props.onChange as (event: unknown) => void)({ target });
-    expect(onAttach).toHaveBeenCalledWith(target.files[0]);
+    expect(onAttach).toHaveBeenCalledWith(target.files);
     expect(target.value).toBe('');
   });
 
   it('sends an attached image without text, shows its chip and removes it', () => {
     const onRemoveAttachment = vi.fn();
-    const { html, tree } = render({ onAttach: () => {}, attachment: { url: 'blob:preview', name: 'shot.png' }, onRemoveAttachment });
-    expect(html).toContain('<img src="blob:preview" alt=""/>');
+    const { html, tree } = render({ onAttach: () => {}, attachments: [{ url: 'blob:preview', name: 'shot.png' }], onRemoveAttachment });
+    expect(html).toContain('<img src="blob:preview" alt=""/><span dir="auto">shot.png</span>');
     expect(html).toContain('placeholder="Add a caption"');
     expect(html).not.toContain('disabled="" aria-label="Send"');
-    (hosts(tree).find(element => element.props['aria-label'] === 'Remove image')!.props.onClick as () => void)();
-    expect(onRemoveAttachment).toHaveBeenCalled();
+    (hosts(tree).find(element => element.props['aria-label'] === 'Remove shot.png')!.props.onClick as () => void)();
+    expect(onRemoveAttachment).toHaveBeenCalledWith(0);
     expect(render({ onAttach: () => {}, attachError: 'Only JPEG, PNG, GIF or WebP images can be sent.' }).html).toContain('role="alert"');
+  });
+
+  it('shows several attached images as thumbnails, removes one by index, and attaches every pasted image', () => {
+    const onRemoveAttachment = vi.fn();
+    const { html, tree } = render({ onAttach: () => {}, onRemoveAttachment,
+      attachments: [{ url: 'blob:a', name: 'a.png' }, { url: 'blob:b', name: 'b.png' }] });
+    expect(html.match(/class="kh-attach-item"/gu)).toHaveLength(2);
+    expect(html).not.toContain('<span dir="auto">a.png</span>');
+    (hosts(tree).find(element => element.props['aria-label'] === 'Remove b.png')!.props.onClick as () => void)();
+    expect(onRemoveAttachment).toHaveBeenCalledWith(1);
+    const onAttach = vi.fn();
+    const pasted = [new File(['a'], 'a.png', { type: 'image/png' }), new File(['t'], 't.txt', { type: 'text/plain' }), new File(['b'], 'b.gif', { type: 'image/gif' })];
+    const textarea = hosts(render({ onAttach }).tree).find(element => element.type === 'textarea')!;
+    (textarea.props.onPaste as (event: unknown) => void)({ clipboardData: { files: pasted }, preventDefault: () => {} });
+    expect(onAttach).toHaveBeenCalledWith([pasted[0], pasted[2]]);
   });
 
   it('disables send while the draft is empty', () => {

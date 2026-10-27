@@ -9,7 +9,7 @@ import { ChannelEventPill } from './ChannelEventPill';
 
 import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
-import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
+import type { EventRef, MessageContent, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
 import { type EvidenceUnit, isInlineUnit } from '../receipt-evidence/model';
 import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from '../receipt-evidence/ReceiptEvidence';
@@ -227,7 +227,8 @@ type Identity = Readonly<{
 }>;
 
 type ThreadEntry =
-  | Readonly<{ type: 'message'; key: string; run: RunInput; /** `solo` draws the row in the focus layer: no action handlers, review slot or evidence. */ render: (run: RunPosition, solo?: boolean) => ReactNode; receipt?: PendingSend['phase'] | 'reconciled' }>
+  | Readonly<{ type: 'message'; key: string; run: RunInput; /** `solo` draws the row in the focus layer: no action handlers, review slot or evidence. `grid` replaces the bubble with grouped image tiles. */ render: (run: RunPosition, solo?: boolean, grid?: ReactNode) => ReactNode; receipt?: PendingSend['phase'] | 'reconciled';
+    /** A captionless image with nothing under it: its own bubble, so consecutive ones can share one row as a grid. */ tile?: ReactNode; tiles?: readonly ReactNode[] }>
   | Readonly<{ type: 'break'; key: string; node: ReactNode }>;
 
 /** A message drawn alone in the focus layer: its own run, name and avatar shown. */
@@ -292,16 +293,26 @@ export function TimelineScreen({
     heading?.focus();
   }
   const [draft, setDraft] = useState('');
-  // The image waiting to send. Its object URL is the composer preview; it is revoked once replaced or sent.
-  const [attachment, setAttachment] = useState<{ image: PreparedImage; url: string } | null>(null);
+  // The images waiting to send. Their object URLs are the composer previews, revoked once removed or sent.
+  const [attachments, setAttachments] = useState<readonly { image: PreparedImage; url: string }[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  useEffect(() => () => { if (attachment) URL.revokeObjectURL(attachment.url); }, [attachment]);
-  const attach = useCallback(async (file: File) => {
+  const previews = useRef(new Set<string>());
+  useEffect(() => {
+    const kept = new Set(attachments.map(item => item.url));
+    for (const url of previews.current) if (!kept.has(url)) URL.revokeObjectURL(url);
+    previews.current = kept;
+  }, [attachments]);
+  useEffect(() => () => { for (const url of previews.current) URL.revokeObjectURL(url); }, []);
+  const attach = useCallback(async (files: readonly File[]) => {
     setAttachError(null);
-    const prepared = await prepareImage(file);
-    if ('error' in prepared) { setAttachError(IMAGE_ERROR_TEXT[prepared.error]); return; }
-    setAttachment({ image: prepared, url: URL.createObjectURL(new Blob([new Uint8Array(prepared.bytes)], { type: prepared.mimetype })) });
+    // Prepared together so the picked order is kept; one bad file does not drop the others.
+    const prepared = await Promise.all(files.map(file => prepareImage(file)));
+    const failed = prepared.find(item => 'error' in item);
+    if (failed && 'error' in failed) setAttachError(IMAGE_ERROR_TEXT[failed.error]);
+    const added = prepared.flatMap(image => 'error' in image ? []
+      : [{ image, url: URL.createObjectURL(new Blob([new Uint8Array(image.bytes)], { type: image.mimetype })) }]);
+    if (added.length > 0) setAttachments(current => [...current, ...added]);
   }, []);
   const loadImageFor = useCallback((image: ImageRef) => loadImage(media!, image), [media]);
   const [typers, setTypers] = useState<readonly string[]>([]);
@@ -514,29 +525,31 @@ export function TimelineScreen({
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    const pending = attachment;
-    if ((!body && !pending) || uploading || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
+    const pending = attachments;
+    if ((!body && pending.length === 0) || uploading || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
       entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
-    let image: ImageRef | undefined;
-    if (pending && media) {
-      // Upload first: the message then retries like any other, reusing this mxc URL and key.
+    let images: ImageRef[] = [];
+    if (pending.length > 0 && media) {
+      // Upload first: each message then retries like any other, reusing its mxc URL and key.
       setUploading(true);
       setAttachError(null);
-      try { image = await uploadImage(media, pending.image); } catch { setAttachError(IMAGE_ERROR_TEXT.upload_failed); return; } finally { setUploading(false); }
-      rememberImage(image, new Blob([new Uint8Array(pending.image.bytes)], { type: pending.image.mimetype }));
-      setAttachment(null);
+      try { images = await Promise.all(pending.map(item => uploadImage(media, item.image))); } catch { setAttachError(IMAGE_ERROR_TEXT.upload_failed); return; } finally { setUploading(false); }
+      images.forEach((image, index) => rememberImage(image, new Blob([new Uint8Array(pending[index]!.image.bytes)], { type: image.mimetype })));
+      setAttachments([]);
     }
-    const content = { v: 1 as const, kind: 'text' as const, body: body || image?.name || '',
-      ...(focus?.mode === 'reply' ? { inReplyTo: focus.eventId } : {}), ...(image ? { image } : {}) };
+    const contents = draftContents(body, images, focus?.mode === 'reply' ? focus.eventId : undefined);
     setFocus(null);
-    const clientTxnId = newClientTxnId();
-    seenRef.current?.add(clientTxnId);
-    followSendRef.current = clientTxnId;
-    setPopIds(current => new Set(current).add(clientTxnId));
-    updatePending(list => [...list, { clientTxnId, content, phase: 'pending' as const }]);
+    const sends = contents.map(content => ({ clientTxnId: newClientTxnId(), content, phase: 'pending' as const }));
+    for (const { clientTxnId } of sends) seenRef.current?.add(clientTxnId);
+    followSendRef.current = sends.at(-1)!.clientTxnId;
+    setPopIds(current => new Set([...current, ...sends.map(send => send.clientTxnId)]));
+    updatePending(list => [...list, ...sends]);
     setDraft('');
-    const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
-    updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
+    // In order, one at a time, so the channel shows them as picked.
+    for (const { clientTxnId, content } of sends) {
+      const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
+      updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
+    }
   }
 
   function stopFollowing(): void {
@@ -817,15 +830,18 @@ export function TimelineScreen({
     const seen = readers.length === 0 ? [] : [...new Set(segmentMentions((item.content as { body: string }).body, mentionRoster)
       .flatMap(segment => 'mention' in segment && readers.includes(segment.participantId) ? [segment.mention] : []))];
     const replyCount = replies.counts.get(eventId) ?? 0;
+    const tileable = isReadableItem(item) && item.content.image && item.content.body === item.content.image.name && !item.content.inReplyTo
+      && replyCount === 0 && !renderReviewAction && !inlineEvidence && memberOf.length === 0 && seen.length === 0;
     entries.push({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
-      render: (run, solo = false) => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
+      ...(tileable ? { tile: <div key={eventId} className="kh-b" data-event-id={eventId} {...bubbleFor(eventId)}>{renderMessageContent(item.content, renderOptions)}</div> } : {}),
+      render: (run, solo = false, grid) => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
         {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.hue, tint: identity.color?.tint } }
           : { humanColor: identity.color })}
         time={item.receivedAt} timeOptions={timeOptions} name={isViewer ? meName(item.receivedAt) : nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
-        bubble={solo ? undefined : bubbleFor(eventId)}
+        bubble={solo || grid ? undefined : bubbleFor(eventId)}
         quote={isReadableItem(item) && item.content.inReplyTo ? quoteFor(item.content.inReplyTo, eventId) : null}
         after={solo ? null : <>
           {replyCount > 0 ? <button type="button" className="kh-replies" onClick={() => setFocus({ mode: 'reply', eventId })}>
@@ -851,8 +867,8 @@ export function TimelineScreen({
             );
           })}
         </>}>
-        {isReadableItem(item) ? renderMessageContent(item.content, renderOptions)
-          : <p className="message-content__unavailable">Content unavailable.</p>}
+        {grid ?? (isReadableItem(item) ? renderMessageContent(item.content, renderOptions)
+          : <p className="message-content__unavailable">Content unavailable.</p>)}
       </ChatMessage>,
     });
   }
@@ -873,11 +889,20 @@ export function TimelineScreen({
     });
   }
   const renderById = new Map(entries.flatMap(entry => entry.type === 'message' ? [[entry.key, entry.render] as const] : []));
-  const runs = computeRuns(entries.map(entry => entry.type === 'message' ? entry.run : { kind: 'break' as const }));
-  const receiptAt = lastIndexOf(entries, entry => entry.type === 'message' && entry.receipt !== undefined);
+  const thread = groupImageTiles(entries);
+  const runs = computeRuns(thread.map(entry => entry.type === 'message' ? entry.run : { kind: 'break' as const }));
+  const receiptAt = lastIndexOf(thread, entry => entry.type === 'message' && entry.receipt !== undefined);
 
   return (
-    <section className="timeline" aria-label="Conversation" onKeyDown={event => {
+    <section className="timeline" aria-label="Conversation"
+      // Desktop: images dropped anywhere on the conversation, timeline or composer, are attached like picked ones.
+      onDragOver={event => { if (media && canCompose && event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+      onDrop={event => {
+        if (!media || !canCompose || !event.dataTransfer.types.includes('Files')) return;
+        event.preventDefault(); // or the browser opens the file in place of the app
+        if (!uploading) void attach([...event.dataTransfer.files]);
+      }}
+      onKeyDown={event => {
       if (event.key !== 'Escape' || !focus || event.defaultPrevented) return;
       event.preventDefault();
       closeFocus();
@@ -933,10 +958,11 @@ export function TimelineScreen({
             ? <li className="kh-empty">Messages in this channel are unavailable on this device.</li>
             : <li className="kh-empty"><b>No messages yet</b>
               {onInvite ? <button type="button" className="kh-btn pri" onClick={onInvite}>Invite</button> : null}</li>) : null}
-          {entries.map((entry, index) => {
+          {thread.map((entry, index) => {
             const receipt = index === receiptAt && entry.type === 'message' && entry.receipt ? receiptFor(entry.receipt) : null;
             return <Fragment key={entry.key}>
-              {entry.type === 'message' ? entry.render(runs[index]!) : entry.node}
+              {entry.type === 'message' ? entry.render(runs[index]!, false,
+                entry.tiles && entry.tiles.length > 1 ? <div className="kh-grid">{entry.tiles}</div> : undefined) : entry.node}
               {receipt ? <li className={`kh-rcpt${receipt.failed ? ' kh-fail' : ''}`} role="status">{receipt.text}</li> : null}
             </Fragment>;
           })}
@@ -987,12 +1013,34 @@ export function TimelineScreen({
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         // While an image uploads the draft is locked: it is the caption being sent.
         disabled={!canCompose || uploading} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={mentionTargets}
-        {...(media ? { onAttach: (file: File) => void attach(file), attachment: attachment ? { url: attachment.url, name: attachment.image.name } : null,
-          onRemoveAttachment: () => { setAttachment(null); setAttachError(null); }, attachError } : {})}
+        {...(media ? { onAttach: (files: readonly File[]) => void attach(files), attachments: attachments.map(item => ({ url: item.url, name: item.image.name })),
+          onRemoveAttachment: (index: number) => { setAttachments(current => current.filter((_, at) => at !== index)); setAttachError(null); }, attachError } : {})}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
     </section>
   );
+}
+
+/** The messages one send makes. One image carries the caption; several go as one message each, iOS-style, with the caption after them. */
+export function draftContents(body: string, images: readonly ImageRef[], inReplyTo?: EventId): MessageContent[] {
+  const reply = inReplyTo ? { inReplyTo } : {};
+  return [
+    ...images.map(image => ({ v: 1 as const, kind: 'text' as const, body: images.length === 1 && body ? body : image.name, image, ...reply })),
+    ...(body && images.length !== 1 ? [{ v: 1 as const, kind: 'text' as const, body, ...reply }] : []),
+  ];
+}
+
+/** iOS Messages: consecutive captionless images from one sender share one row, laid out as a grid. */
+function groupImageTiles(entries: readonly ThreadEntry[]): ThreadEntry[] {
+  const out: ThreadEntry[] = [];
+  for (const entry of entries) {
+    const previous = out.at(-1);
+    if (entry.type === 'message' && entry.tile && previous?.type === 'message' && previous.tiles
+      && previous.run.kind === 'message' && entry.run.kind === 'message' && previous.run.participantId === entry.run.participantId) {
+      out[out.length - 1] = { ...previous, tiles: [...previous.tiles, entry.tile], ...(entry.receipt ? { receipt: entry.receipt } : {}) };
+    } else out.push(entry.type === 'message' && entry.tile ? { ...entry, tiles: [entry.tile] } : entry);
+  }
+  return out;
 }
 
 /** `Alice is typing…`, `Alice and Bob are typing…`, `Alice, Bob and Cy are typing…`. */

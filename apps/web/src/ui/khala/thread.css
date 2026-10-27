@@ -107,6 +107,13 @@
 .kh-img--loading { animation: pulse 1.4s ease-in-out infinite; }
 .kh-img--error { font-size: .8rem; padding: .5rem; cursor: pointer; }
 .kh-b > .kh-img + .message-content__text { margin-top: .4rem; }
+/* Several images in a row: a two-column grid of square tiles, an odd last one full width. Each tile keeps its own menu. */
+.kh-row .kh-b:has(> .kh-grid) { background: none; padding: 0; }
+.kh-grid { display: grid; grid-template-columns: repeat(2, 119px); gap: 2px; border-radius: 18px; overflow: hidden; }
+.kh-grid > .kh-b { border-radius: 0; }
+.kh-grid .kh-img { width: 100% !important; aspect-ratio: 1 !important; border-radius: 0; }
+.kh-grid > :last-child:nth-child(odd) { grid-column: span 2; }
+.kh-grid > :last-child:nth-child(odd) .kh-img { aspect-ratio: 2 !important; }
 /* Full screen, outside the bubble: the native long-press callout (Save to Photos) stays on here. */
 .kh-viewer { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem;
   padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); background: rgba(0, 0, 0, .92); }
