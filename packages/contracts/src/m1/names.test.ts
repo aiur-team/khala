@@ -3,10 +3,11 @@ import { agentNameFromTitle, checkName, checkNewUsername, decodeOwnerAgents, own
 
 it('turns a session title into an agent name or null', () => {
   expect(agentNameFromTitle('PC - Kevin')).toBe('PC-Kevin');
+  expect(agentNameFromTitle('PC - Khala')).toBe('PC-Khala');
   expect(agentNameFromTitle('My Cool Chat!')).toBe('MyCoolChat');
   expect(agentNameFromTitle('  --Café_Bot.2--  ')).toBe('CafeBot2');
   expect(agentNameFromTitle('x'.repeat(39) + '-yz')).toBe('x'.repeat(39));
-  for (const title of ['', '!!!', '日本語', 'a', 'Admin - Bot', 'PC - Khala']) expect(agentNameFromTitle(title)).toBeNull();
+  for (const title of ['', '!!!', '日本語', 'a', 'Admin - Bot', 'Khala']) expect(agentNameFromTitle(title)).toBeNull();
 });
 
 it('accepts mention-safe usernames and trims the display form', () => {
