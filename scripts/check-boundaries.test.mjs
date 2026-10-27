@@ -133,3 +133,15 @@ test('listener must remain pure and cannot depend on other components', t => {
   assert(errors.some(error => error.includes('listener/src/index.ts: server-only dependency (node:fs)')));
   assert(errors.some(error => error.includes('listener cannot import other components')));
 });
+
+test('listener spec tooling can use Node, but cannot enter the runtime graph', t => {
+  assert.deepEqual(fixture(t, {
+    'packages/listener/scripts/generate-spec.mjs': "import 'node:fs';",
+    'packages/listener/src/index.ts': 'export {};',
+  }), []);
+  const errors = fixture(t, {
+    'packages/listener/scripts/generate-spec.mjs': "import 'node:fs';",
+    'packages/listener/src/index.ts': "import '../scripts/generate-spec.mjs';",
+  });
+  assert(errors.some(error => error.includes('listener/src/index.ts: server-only dependency')));
+});
