@@ -1,5 +1,5 @@
 // The Invite popover (RECREATION-SPEC §12.3, M1 column): the live channel
-// link with a copy button, and the M2 invite options shown locked.
+// link with a copy button, the channel's Approve joins switch, and the M2 invite options shown locked.
 
 import { useEffect, useId, useRef } from 'react';
 import type { CopyResult } from '../share-link';
@@ -10,7 +10,11 @@ import { useToast } from './Toast';
 
 export const COMING_SOON = 'Coming soon';
 /** The locked controls' hover-only explanations, shown as text on touch screens. */
-export const TOUCH_HINT = 'Type, Approve joins and History are coming soon. Humans see messages from when they join.';
+export const TOUCH_HINT = 'Type and History are coming soon. Humans see messages from when they join.';
+export const APPROVE_JOINS_HINT = 'On: every agent join needs a Confirm click. Off: an agent using your link joins once you open its confirm link.';
+
+/** The channel's Approve joins setting (`useApproveJoins`); `on` is null while it loads. */
+export type ApproveJoins = Readonly<{ on: boolean | null; owner: boolean; set(on: boolean): void }>;
 
 /** The channel link a popover shows and copies (`useChannelLink`). */
 export type CopyableLink = Readonly<{
@@ -49,7 +53,7 @@ export function LinkStatus({ link }: Readonly<{ link: CopyableLink }>) {
   return null;
 }
 
-export function InvitePopover({ link }: Readonly<{ link: CopyableLink }>) {
+export function InvitePopover({ link, approval }: Readonly<{ link: CopyableLink; approval?: ApproveJoins | undefined }>) {
   const toast = useToast();
   return <>
     <div className="kh-pop-h">Invite</div>
@@ -58,7 +62,9 @@ export function InvitePopover({ link }: Readonly<{ link: CopyableLink }>) {
         options={[{ value: 'open', label: 'Open' }, { value: 'single', label: 'Single-use' }]} />
     </div>
     <div className="kh-f"><span>Approve joins</span>
-      <Switch checked={false} label="Approve joins" disabled title={COMING_SOON} />
+      <Switch checked={approval?.on ?? false} label="Approve joins" disabled={!approval?.owner || approval.on === null}
+        title={approval && !approval.owner ? 'Only the channel owner can change this' : APPROVE_JOINS_HINT}
+        {...(approval ? { onChange: approval.set } : {})} />
     </div>
     <div className="kh-f"><span className="kh-lk" data-tip="Humans see messages from when they join">History<LockIcon /></span>
       <Segmented label="History" locked title={COMING_SOON} value="join"

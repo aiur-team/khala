@@ -93,7 +93,10 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, email, ...page 
       {snapshot.state === 'review' ? <>
         <p className="kh-fin-p" aria-hidden="true">wants to join <b>{snapshot.view.channelName}</b></p>
         <span className="kh-fin-sr">{snapshot.view.label} ({harnessDisplayName(snapshot.view.harness)}) wants to join {snapshot.view.channelName}.</span>
-        {snapshot.view.access === 'join' ? <>
+        {snapshot.view.access === 'auto' ? <>
+          <p className="kh-fin-p" role="status">Adding {snapshot.view.label} to {snapshot.view.channelName} now. Approve joins is off.</p>
+          <button type="button" className="kh-btn" onClick={() => controller.cancelAuto()}>Cancel</button>
+        </> : snapshot.view.access === 'join' ? <>
           <p className="kh-fin-p">You are not in this channel yet. Confirming adds you and your agent.</p>
           <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>
             Join {snapshot.view.channelName} and add {snapshot.view.label}</button>

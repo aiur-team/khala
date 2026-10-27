@@ -958,9 +958,9 @@ describe('behaviour', { concurrency: 1 }, () => {
       await withFixture(at1440(state), async page => {
         for (const selector of OMIT) if (await page.locator(selector).count()) present.push(`${state}: ${selector}`);
         if (state === 'pop-invite') {
-          const disabled = await page.locator('.kh-pop .kh-seg button, .kh-pop .kh-sw').evaluateAll(list => list.map(control =>
+          const disabled = await page.locator('.kh-pop .kh-seg button').evaluateAll(list => list.map(control =>
             (control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true') && control.getAttribute('title') === 'Coming soon'));
-          assert.ok(disabled.length >= 5 && disabled.every(Boolean), 'invite Type / Approve joins / History are disabled “Coming soon”');
+          assert.ok(disabled.length >= 4 && disabled.every(Boolean), 'invite Type / History are disabled “Coming soon”');
         }
         if (state === 'roster') {
           const modes = await page.locator('.kh-roster .kh-seg.ic button').evaluateAll(list => list.map(control =>

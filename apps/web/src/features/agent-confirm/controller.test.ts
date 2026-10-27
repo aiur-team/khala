@@ -50,6 +50,37 @@ describe('agent confirmation controller', () => {
     controller.dispose();
   });
 
+  it('confirms with no click when Approve joins is off and the viewer issued the link, and waits for a click otherwise', async () => {
+    const auto = fixture({ ...pending, access: 'auto' });
+    auto.controller.start(); await flush();
+    // The page names the agent with a Cancel window first.
+    expect(auto.controller.getSnapshot()).toEqual({ state: 'review', view: { ...pending, access: 'auto' } });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(auto.port.confirm).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(auto.port.confirm).toHaveBeenCalledTimes(1);
+    expect(auto.controller.getSnapshot().state).toBe('connecting');
+    auto.controller.dispose();
+    // Cancel turns it back into an ordinary click-to-confirm page.
+    const cancelled = fixture({ ...pending, access: 'auto' });
+    cancelled.controller.start(); await flush();
+    cancelled.controller.cancelAuto();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(cancelled.port.confirm).not.toHaveBeenCalled();
+    expect(cancelled.controller.getSnapshot()).toEqual({ state: 'review', view: pending });
+    await cancelled.controller.confirm();
+    expect(cancelled.port.confirm).toHaveBeenCalledTimes(1);
+    cancelled.controller.dispose();
+    // Approval on (no hint), and a non-member who must join: the page waits for Confirm.
+    for (const view of [pending, { ...pending, access: 'join' as const }]) {
+      const manual = fixture(view);
+      manual.controller.start(); await flush();
+      expect(manual.port.confirm).not.toHaveBeenCalled();
+      expect(manual.controller.getSnapshot()).toEqual({ state: 'review', view });
+      manual.controller.dispose();
+    }
+  });
+
   it('does not confirm a forbidden request', async () => {
     const { port, controller } = fixture();
     port.view.mockResolvedValue({ kind: 'error', code: 'not_member' });

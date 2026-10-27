@@ -33,8 +33,11 @@ export type AgentCredentials = {
 // GET  /api/human/agent-join?joinId=<joinId>          (human session cookie)
 export type AgentJoinView = { joinId: string; label: string; harness: Harness; channelName: string; roomId: string;
   state: 'pending' | 'confirmed' | 'ready' | 'expired'; agentUserId?: string;
-  /** `join`: the viewer is not in the channel, but the invite the agent used admits them; confirming adds both. */
-  access?: 'join' };
+  /**
+   * `join`: the viewer is not in the channel, but the invite the agent used admits them; confirming adds both.
+   * `auto`: Approve joins is off and the viewer is a member who issued the link the agent used; the page confirms without a click.
+   */
+  access?: 'join' | 'auto' };
 // errors: 401 signed_out ; 403 not_member | wrong_account ; 404 not_found ; 410 invite_unavailable
 
 // POST /api/human/agent-join/confirm?joinId=<joinId>  (human session cookie + CSRF header as other human POSTs)
@@ -171,7 +174,7 @@ export function decodeAgentJoinView(input: unknown): Decoded<AgentJoinView> {
       roomId: readRoomId(r.field('roomId'), r.at('roomId')),
       state: literal(r.field('state'), r.at('state'), ['pending', 'confirmed', 'ready', 'expired']),
       ...(hasAgent ? { agentUserId: readMatrixUserId(r.field('agentUserId'), r.at('agentUserId')) } : {}),
-      ...(hasAccess ? { access: literal(r.field('access'), r.at('access'), ['join']) } : {}),
+      ...(hasAccess ? { access: literal(r.field('access'), r.at('access'), ['join', 'auto']) } : {}),
     };
   });
 }

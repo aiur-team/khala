@@ -16,7 +16,7 @@ import {
 } from './handlers';
 
 const ORIGIN = 'https://khala.aiur.team';
-const FLOW_ROUTE_COUNT = 11;
+const FLOW_ROUTE_COUNT = 12;
 const flowRoutes = () => registerHumanHandlers().slice(0, FLOW_ROUTE_COUNT);
 const principal: AuthPrincipal = {
   v: 1,
@@ -98,6 +98,7 @@ describe('human handler registration', () => {
       [INSPECT_PATH, ['GET']],
       [ADMIT_PATH, ['POST']],
       ['/api/human/channels/creator', ['GET']],
+      ['/api/human/channels/approve-joins', ['GET', 'POST']],
       ['/api/human/channels/remove-human', ['POST']],
       [MATRIX_SESSION_PATH, ['POST']],
       [MATRIX_PARTICIPANTS_PATH, ['POST']],
@@ -404,16 +405,16 @@ describe('admission route handlers', () => {
 });
 
 describe('registerHumanHandlers', () => {
-  it('registers exactly the eleven human flow routes', () => {
+  it('registers exactly the twelve human flow routes', () => {
     const registrations = registerHumanHandlers();
-    expect(registrations).toHaveLength(11);
+    expect(registrations).toHaveLength(12);
     expect(Object.isFrozen(registrations)).toBe(true);
   });
 
   it('appends the supplied channel-link route', () => {
     const r = { path: '/api/human/channel-link/resolve', methods: ['POST'], handle: async () => new Response() };
     const registrations = registerHumanHandlers({ channelLink: () => [r] });
-    expect(registrations.slice(0, 11).map(({ path, methods }) => ({ path, methods })))
+    expect(registrations.slice(0, 12).map(({ path, methods }) => ({ path, methods })))
       .toEqual(registerHumanHandlers().map(({ path, methods }) => ({ path, methods })));
     expect(registrations.at(-1)).toBe(r);
   });
@@ -424,6 +425,8 @@ it('authenticates creator lookup and authorizes human removal, mapping provider 
   const administration: NonNullable<HumanHandlerServices['administration']> = {
     creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
     removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+    approveJoins: vi.fn(async () => ({ kind: 'ok' as const, on: false, owner: true })),
+    setApproveJoins: vi.fn(async () => ({ kind: 'ok' as const })),
   };
   const supplied = { ...services(), administration };
   const registrations = createHumanHandlers(() => supplied);
@@ -440,4 +443,25 @@ it('authenticates creator lookup and authorizes human removal, mapping provider 
   }
   vi.mocked(supplied.auth.requireHumanMutation).mockResolvedValueOnce({ kind: 'rejected', code: 'csrf_mismatch' });
   expect((await post.handle(mutation())).status).toBe(403);
+});
+
+it('reads Approve joins for members and lets only the owner change it', async () => {
+  const administration: NonNullable<HumanHandlerServices['administration']> = {
+    creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
+    removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+    approveJoins: vi.fn(async () => ({ kind: 'ok' as const, on: true, owner: false })),
+    setApproveJoins: vi.fn(async () => ({ kind: 'forbidden' as const })),
+  };
+  const supplied = { ...services(), administration };
+  const handler = route(createHumanHandlers(() => supplied), '/api/human/channels/approve-joins');
+  expect(await body(await handler.handle(request('/api/human/channels/approve-joins?roomId=room_1')))).toEqual({ on: true, owner: false });
+  expect((await handler.handle(request('/api/human/channels/approve-joins?roomId=room_1&x=1'))).status).toBe(400);
+  const set = (value: unknown) => request('/api/human/channels/approve-joins', { method: 'POST', body: JSON.stringify(value) });
+  expect((await handler.handle(set({ roomId: 'room_1', on: false }))).status).toBe(403);
+  expect(administration.setApproveJoins).toHaveBeenCalledWith(principal, 'room_1', false);
+  expect((await handler.handle(set({ roomId: 'room_1', on: 'no' }))).status).toBe(400);
+  vi.mocked(administration.setApproveJoins).mockResolvedValueOnce({ kind: 'ok' });
+  expect(await body(await handler.handle(set({ roomId: 'room_1', on: false })))).toEqual({ on: false });
+  vi.mocked(supplied.auth.requireHumanMutation).mockResolvedValueOnce({ kind: 'rejected', code: 'csrf_mismatch' });
+  expect((await handler.handle(set({ roomId: 'room_1', on: true }))).status).toBe(403);
 });

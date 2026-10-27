@@ -1137,7 +1137,7 @@ All of these are [VERIFIED] (`source:4408-4430`). The M1 column is binding.
 
 **M1:**
 - Type segment: `lock` + disabled with "Open" selected (single-use is [M2]).
-- Approve joins: switch disabled, `aria-checked="false"`, with `title="Coming soon"` (approval is [M2]).
+- Approve joins: the channel's stored setting (`aria-checked` reflects it); enabled only for the channel creator. See `docs/settings.md`.
 - History: `lock` with the `kh-lk` lock icon, tooltip "Humans see messages from when they join", "From join" selected (per-link history is [M2]).
 - The link row is **live**: it shows the real channel link from today's share flow (`features/channel/ChannelSharePanel.tsx`) and copies it, then toasts "Copied".
 - Only admins see this button in M1 (R2: only the admin creates links).

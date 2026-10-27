@@ -680,4 +680,15 @@ describe('channel administration', () => {
     expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(input));
     expect(await api.administration.removeHuman(input)).toMatchObject({kind:'rejected',code:'forbidden'});
   });
+  it('reads Approve joins and sets it with CSRF protection, mapping a non-owner to forbidden', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, {on:true, owner:false}))
+      .mockResolvedValueOnce(json(200, {principal, csrfToken:'csrf'})).mockResolvedValueOnce(json(200, {on:false})).mockResolvedValueOnce(json(403, {}));
+    const api = createHumanBrowserApi({origin, homeserverOrigin, limits, fetch});
+    const roomId = '!room:test' as RoomId;
+    expect(await api.administration.approveJoins!(roomId)).toEqual({kind:'ok', value:{on:true, owner:false}});
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channels/approve-joins?roomId=!room%3Atest`);
+    expect(await api.administration.setApproveJoins!({roomId, on:false})).toEqual({kind:'ok', value:null});
+    expect(fetch.mock.calls[2]?.[1]?.body).toBe(JSON.stringify({roomId, on:false}));
+    expect(await api.administration.setApproveJoins!({roomId, on:true})).toMatchObject({kind:'rejected', code:'forbidden'});
+  });
 });

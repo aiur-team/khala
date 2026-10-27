@@ -1,5 +1,6 @@
 import { rejoinIdentity, rejoinApprovalKey, validRejoinApproval, type RejoinApproval } from './rejoin';
 import { readRoomRemovals } from '../invitations/removals';
+import { readApproveJoins } from '../invitations/approve-joins';
 import { rememberAgentSession, rememberRoomAgent } from './session-status';
 import { createHash } from 'node:crypto';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
@@ -249,6 +250,11 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (mutation) return joining && denied ? denied : await confirm(joinId, principal);
       if (denied) return denied;
       const view: AgentJoinView = { ...viewOf(read.record), ...(joining ? { access: 'join' as const } : {}) };
+      // Approve joins off: a member opening the confirm page for an agent using their own link needs no click.
+      // Never for a non-member or a revoked link, and an unreadable setting keeps the click.
+      if (!joining && view.state === 'pending' && read.record.issuerOwnerId === principal.ownerId
+        && await readApproveJoins(deps.store, read.record.roomId as RoomId) === false
+        && await inviteAccess(request, principal, read.record, false) === null) view.access = 'auto';
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();

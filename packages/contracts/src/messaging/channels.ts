@@ -71,6 +71,10 @@ export type IntroBatch = Readonly<{ roomId: RoomId; batchId: string; messages: r
 export interface ChannelAdministrationPort {
   creator(roomId: RoomId, options?: CallOptions): Promise<OperationResult<OwnerId, ChannelRejection>>;
   removeHuman(input: Readonly<{ roomId: RoomId; ownerId: OwnerId }>, options?: CallOptions): Promise<OperationResult<null, ChannelRejection>>;
+  /** The channel's Approve joins setting, readable by members; `owner` says whether the viewer may change it. */
+  approveJoins?(roomId: RoomId, options?: CallOptions): Promise<OperationResult<Readonly<{ on: boolean; owner: boolean }>, ChannelRejection>>;
+  /** Owner only; others get `forbidden`. */
+  setApproveJoins?(input: Readonly<{ roomId: RoomId; on: boolean }>, options?: CallOptions): Promise<OperationResult<null, ChannelRejection>>;
 }
 
 export interface ChannelPort {

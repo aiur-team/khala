@@ -60,7 +60,7 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const now = deps.clock();
     const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret(pollSecret), roomId: link.roomId, channelName,
       ...(r.rejoinSecret === undefined ? {} : { rejoinSecretHash: hashPollSecret(r.rejoinSecret as string) }), ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness as Harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString(),
-      sealedInvite: sealInvite(deps.secret, joinId, link.inviteRef) };
+      sealedInvite: sealInvite(deps.secret, joinId, link.inviteRef), issuerOwnerId: link.creatorOwnerId };
     if (await deps.joins.create(record) !== 'created') return error('unavailable', 503);
     if (deps.autoConfirm && !await deps.autoConfirm(joinId)) return error('unavailable', 503);
     const current = deps.autoConfirm ? await deps.joins.read(joinId) : undefined;

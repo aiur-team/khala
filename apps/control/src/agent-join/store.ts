@@ -22,6 +22,8 @@ export type JoinRecord = {
   rejoinSecretHash?: string; rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
   /** The invite the agent joined with, sealed; it lets a confirming non-member join by the same rules as `/join`. Never sent to a client. */
   sealedInvite?: string;
+  /** Who issued the link the agent used. With Approve joins off, that member confirms without a click. */
+  issuerOwnerId?: string;
 };
 export const joinKey = (joinId: string): string => `agent-join/${joinId}`;
 export const isJoinId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value);
@@ -44,7 +46,7 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
       || !Number.isSafeInteger(approval.generation) || approval.generation < 0
       || Object.keys(approval).some(key => !['ownerLabel', 'generation'].includes(key))) return null;
   }
-  const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials', 'sealedInvite'];
+  const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials', 'sealedInvite', 'issuerOwnerId'];
   if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin' && key !== 'rejoinApproval')
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;

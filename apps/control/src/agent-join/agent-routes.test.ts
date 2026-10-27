@@ -58,6 +58,7 @@ it('creates normalized pending joins without persisting poll secrets', async () 
   expect(JSON.stringify(read.record)).not.toContain(result.pollSecret);
   // The invite it joined with is bound to the record, sealed, and never returned.
   expect(openInvite(secret, result.joinId, read.record.sealedInvite!)).toBe('inv_abcdefgh');
+  expect(read.record.issuerOwnerId).toBe('owner');
   expect(JSON.stringify(read.record)).not.toContain('inv_abcdefgh'); expect(JSON.stringify(result)).not.toContain('inv_abcdefgh');
   expect(f.deps.roomName).toHaveBeenCalledWith('owner', credentials.roomId);
   expect(response.headers.get('cache-control')).toBe('no-store'); expect(response.headers.get('x-content-type-options')).toBe('nosniff'); expect(response.headers.get('content-type')).toBe('application/json');

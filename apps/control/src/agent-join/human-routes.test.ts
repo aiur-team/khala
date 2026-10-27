@@ -1,4 +1,5 @@
 import { recordRemoval } from '../invitations/removals';
+import { writeApproveJoins } from '../invitations/approve-joins';
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { ownerAgentsKey } from '@khala/contracts/m1/names';
@@ -16,14 +17,14 @@ import { durableStores } from './testing/store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
 
-async function fixture(options: { username?: string; harness?: string; email?: string; invite?: boolean } = {}) {
+async function fixture(options: { username?: string; harness?: string; email?: string; invite?: boolean; issuer?: string } = {}) {
   let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
   const blobs = durableStores();
   const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
   const joins = createJoinStore({ store, clock, random: randomBytes });
   const joinId = randomBytes(16).toString('base64url');
   const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString(),
-    ...(options.invite ? { sealedInvite: sealInvite(secret, joinId, 'inv_abcdefgh') } : {}) };
+    ...(options.invite ? { sealedInvite: sealInvite(secret, joinId, 'inv_abcdefgh') } : {}), ...(options.issuer ? { issuerOwnerId: options.issuer } : {}) };
   expect(await joins.create(record)).toBe('created');
   let ownerId = 'owner' as OwnerId;
   const principal = () => ({ ownerId, verifiedEmail: options.email ?? 'maya99@x' } as AuthPrincipal);
@@ -528,4 +529,33 @@ it('confirms an unregistered Cline agent through the hosted join store', async (
   expect(f.deps.provisioner.provision).toHaveBeenCalledWith(expect.objectContaining({ label: 'kevin-Agent' }));
   const map = await f.store.read(agentOwnerRecordKey(credentials.userId));
   expect(map.kind === 'record' && map.record.value).toMatchObject({ label: 'kevin-Agent', harness: 'cline' });
+});
+
+it('Approve joins off: only the member who issued the agent\'s link gets a no-click confirm', async () => {
+  const f = await fixture({ issuer: 'owner', invite: true });
+  const access = async () => (await (await f.handlers.view(f.request())).json() as { access?: string }).access;
+  // Off by default: the issuing member's page confirms without a click; confirming still binds to them.
+  expect(await access()).toBe('auto');
+  // On: every agent join waits for the explicit Confirm click.
+  expect(await writeApproveJoins(f.store, credentials.roomId as RoomId, true)).toBe(true);
+  expect(await access()).toBeUndefined();
+  expect(await writeApproveJoins(f.store, credentials.roomId as RoomId, false)).toBe(true);
+  expect(await access()).toBe('auto');
+  // Another member opening the page still clicks.
+  f.owner('member-b');
+  expect(await access()).toBeUndefined();
+  // A rotated or revoked link keeps the click.
+  f.owner('owner');
+  f.admission.inspect.mockResolvedValueOnce('revoked');
+  expect(await access()).toBeUndefined();
+  // A non-member is never admitted without clicking, even when they issued the link: admission rules are unchanged.
+  f.owner('owner');
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'absent' });
+  expect(await access()).toBe('join');
+  f.admission.inspect.mockResolvedValue('revoked');
+  expect((await f.handlers.view(f.request())).status).toBe(410);
+  // Once confirmed, the hint is gone.
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'joined', historyReady: true });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  expect(await access()).toBeUndefined();
 });

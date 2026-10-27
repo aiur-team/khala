@@ -496,6 +496,25 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         return owner && owner.ok ? { kind: 'ok', value: owner.value } : unavailable();
       } catch { return unavailable(); }
     },
+    async approveJoins(roomId, callOptions) {
+      try {
+        const response = await request(`${origin}/api/human/channels/approve-joins?roomId=${encodeURIComponent(roomId)}`, {
+          method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(callOptions?.signal),
+        });
+        if (response.status === 403) return rejected('forbidden');
+        if (response.status !== 200) return unavailable();
+        const body = await jsonObject(response);
+        return body && hasExactKeys(body, ['on', 'owner']) && typeof body.on === 'boolean' && typeof body.owner === 'boolean'
+          ? { kind: 'ok', value: { on: body.on, owner: body.owner } } : unavailable();
+      } catch { return unavailable(); }
+    },
+    async setApproveJoins(input, callOptions) {
+      const response = await mutation('/api/human/channels/approve-joins', input, callOptions?.signal);
+      if (response?.status === 403) return rejected('forbidden');
+      if (response?.status !== 200) return unavailable();
+      const body = await jsonObject(response);
+      return body && hasExactKeys(body, ['on']) && body.on === input.on ? { kind: 'ok', value: null } : unavailable();
+    },
     async removeHuman(input, callOptions) {
       const response = await mutation('/api/human/channels/remove-human', input, callOptions?.signal);
       if (response?.status === 403) return rejected('forbidden');

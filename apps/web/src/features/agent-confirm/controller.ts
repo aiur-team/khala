@@ -8,7 +8,7 @@ export type AgentConfirmSnapshot =
   | Readonly<{ state: 'error'; code: AgentConfirmError; view?: AgentJoinView }>;
 
 export function createAgentConfirmController({
-  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000,
+  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000, autoConfirmMs = 3000,
   now = () => Date.now(),
   setTimer = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay);
@@ -19,6 +19,7 @@ export function createAgentConfirmController({
   port: AgentJoinPort;
   pollMs?: number;
   readyTimeoutMs?: number;
+  autoConfirmMs?: number;
   now?: () => number;
   setTimer?: (callback: () => void, delay: number) => () => void;
 }) {
@@ -95,12 +96,29 @@ export function createAgentConfirmController({
       case 'pending':
         // A lost confirmation response may still have reached the server.
         if (confirmAttempted) poll(view);
-        else publish({ state: 'review', view });
+        else {
+          publish({ state: 'review', view });
+          // Approve joins is off and this member issued the agent's link: confirm without a click,
+          // after a short window in which the page names the agent and offers Cancel.
+          if (view.access === 'auto') cancelPoll = setTimer(() => { void confirm(); }, autoConfirmMs);
+        }
         break;
       case 'confirmed': poll(view); break;
       case 'ready': publish({ state: 'done', view }); break;
       case 'expired': error('expired', view); break;
     }
+  }
+
+  async function confirm() {
+    if (disposed || snapshot.state !== 'review' || confirmAttempted) return;
+    confirmAttempted = true;
+    const view = snapshot.view;
+    const token = endOperation();
+    publish({ state: 'connecting', view });
+    const result = await request(signal => port.confirm(joinId, signal));
+    if (!current(token)) return;
+    if (result.kind === 'error') error(result.code, view);
+    else accept(result);
   }
 
   async function load() {
@@ -122,16 +140,13 @@ export function createAgentConfirmController({
       started = true;
       void load();
     },
-    async confirm() {
-      if (disposed || snapshot.state !== 'review' || confirmAttempted) return;
-      confirmAttempted = true;
-      const view = snapshot.view;
-      const token = endOperation();
-      publish({ state: 'connecting', view });
-      const result = await request(signal => port.confirm(joinId, signal));
-      if (!current(token)) return;
-      if (result.kind === 'error') error(result.code, view);
-      else accept(result);
+    confirm,
+    /** Stops a pending no-click confirm; the page then waits for Confirm as usual. */
+    cancelAuto() {
+      if (disposed || snapshot.state !== 'review' || snapshot.view.access !== 'auto') return;
+      const { access: _auto, ...view } = snapshot.view;
+      endOperation();
+      publish({ state: 'review', view });
     },
     retry() {
       if (disposed || snapshot.state !== 'error') return;
