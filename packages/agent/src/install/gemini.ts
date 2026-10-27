@@ -90,7 +90,7 @@ export async function installGemini(input: {
   if (uninstall) stdout(`removed the Khala MCP server and hooks from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`);
   else {
     stdout(`configured ${paths.settingsFile}; restart Gemini CLI to load Khala`);
-    if (input.trustTools) stdout('trust: true auto-approves all Khala tools, including khala_send and khala_join');
+    if (input.trustTools) stdout('trust: true auto-approves all Khala tools, including send and join');
     else stdout('Gemini will ask before each Khala tool call; use --trust-tools to auto-approve');
   }
   return 0;

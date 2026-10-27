@@ -40,7 +40,7 @@ it.each(['sync', 'steer', 'async'] as const)('delivers frames across all OpenCod
     const wakes = ['idle', 'turn-end'].includes(event);
     // An idle wake is a new user message, so channel text stays out of it.
     expect(stdout.includes('<khala-channel-messages')).toBe(delivers && !wakes);
-    if (delivers && wakes) expect(stdout).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)\nKhala: channel messages are waiting\. Call khala_read\.$/);
+    if (delivers && wakes) expect(stdout).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)\nKhala: channel messages are waiting\. Call the Khala read tool\.$/);
     expect((await readCursor(files)).deliveredCount).toBe(delivers ? 1 : 0);
     expect(stderr).toBe('');
   }

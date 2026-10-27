@@ -21,9 +21,9 @@
       "args": {
         "Arguments": {},
         "ServerName": "khalaenv",
-        "ToolName": "khala_status",
+        "ToolName": "status",
         "toolAction": "Checking khala status",
-        "toolSummary": "Call khala_status"
+        "toolSummary": "Call status"
       },
       "name": "call_mcp_tool"
     },

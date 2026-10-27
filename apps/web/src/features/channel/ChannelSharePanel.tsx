@@ -83,7 +83,7 @@ export function ChannelInvite({ admission, channelLinks, roomId, onCopy }: Chann
   return <InvitePopover link={useChannelLink(admission, channelLinks, roomId, { onCopy, eager: true })} />;
 }
 
-/** The Add agent popover body: the same link is the agent's `khala_join` input (C7). */
+/** The Add agent popover body: the same link is the agent's `join` input (C7). */
 export function ChannelAddAgent({ admission, channelLinks, roomId, onCopy }: ChannelLinkSource & Readonly<{ onCopy?: (url: string) => Promise<CopyResult> }>) {
   return <AddAgentPopover link={useChannelLink(admission, channelLinks, roomId, { onCopy })} />;
 }

@@ -63,12 +63,12 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       let channel!: LocalChannelCreated;
       let userId!: string;
       let transaction = 0;
-      const status = async () => data(await agent.call('khala_status'));
+      const status = async () => data(await agent.call('status'));
       // #1300: in sync, the peer agent's message wakes or re-opens a Stop only when it names the agent.
-      // The name comes from the status file: khala_status would add terminal probes to the wake-call log.
+      // The name comes from the status file: status would add terminal probes to the wake-call log.
       const publish = async (text: string, addressed = true) => {
         const body = addressed ? `@${(await readStatus(files()))?.displayName} ${text}` : text;
-        expect(data(await peer.call('khala_send', { text: body }))).toHaveProperty('eventId');
+        expect(data(await peer.call('send', { text: body }))).toHaveProperty('eventId');
         await eventually(async () => (await inbox(agent)).some(entry => entry.body === body));
       };
       const setMode = async (next: 'async' | 'sync' | 'steer') => {
@@ -81,8 +81,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       await row('join (local)', async () => {
         const created = await cli(world!, 'create', 'conformance');
         expect(created.code).toBe(0); channel = created.data as LocalChannelCreated;
-        expect(data(await peer.call('khala_join', { link: channel.selfLink }))).toMatchObject({ state: 'connected' });
-        expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+        expect(data(await peer.call('join', { link: channel.selfLink }))).toMatchObject({ state: 'connected' });
+        expect(data(await agent.call('join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         const joined = await status(); userId = joined.agentUserId as string;
         // The peer is also Claude, so the local name allocator gives this
         // second Claude the documented collision suffix.
@@ -96,25 +96,25 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           fileURLToPath(new URL('./hosted-mcp.mjs', import.meta.url)));
         try {
           if (harness === 'copilot') await hook(hosted, 'prompt');
-          expect(data(await hosted.call('khala_join', { link: 'https://khala.example/join/abcdefgh' }))).toMatchObject({ state: 'awaiting_confirmation' });
-          await eventually(async () => data(await hosted.call('khala_status')).state === 'connected');
-          expect(data(await hosted.call('khala_status'))).toMatchObject({ displayName: defaultAgentName('kevin', harness), you: defaultAgentName('kevin', harness) });
+          expect(data(await hosted.call('join', { link: 'https://khala.example/join/abcdefgh' }))).toMatchObject({ state: 'awaiting_confirmation' });
+          await eventually(async () => data(await hosted.call('status')).state === 'connected');
+          expect(data(await hosted.call('status'))).toMatchObject({ displayName: defaultAgentName('kevin', harness), you: defaultAgentName('kevin', harness) });
         } finally { await hosted.close(); }
       });
       await row('read', async () => {
         await publish('tier-b-read'); const before = await readCursor(files());
-        const read = data(await agent.call('khala_read', { limit: 100 }));
+        const read = data(await agent.call('read', { limit: 100 }));
         expect(read.messages).toEqual(expect.arrayContaining([expect.objectContaining({ body: expect.stringMatching(/ tier-b-read$/), senderLabel: 'kevin-Claude' })]));
         expect(await readCursor(files())).toEqual(before);
       });
       await row('send', async () => {
-        expect(data(await agent.call('khala_send', { text: 'tier-b-own' }))).toHaveProperty('eventId');
+        expect(data(await agent.call('send', { text: 'tier-b-own' }))).toHaveProperty('eventId');
         await eventually(async () => (await inbox(peer)).some(entry => entry.body === 'tier-b-own'));
         expect((await inbox(agent)).some(entry => entry.body === 'tier-b-own')).toBe(false);
       });
       await row('you=', async () => {
         const you = (await status()).you;
-        expect(data(await agent.call('khala_read')).you).toBe(you);
+        expect(data(await agent.call('read')).you).toBe(you);
         await setMode('sync');
         const output = await hook(agent, 'stop');
         if (capabilities.sync) expect(output.frame).toContain(driver.syncNudge ?? ` you="${you}" `);
@@ -124,14 +124,14 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         expect((await admin(world!, 'POST', `/api/local/agents/${encodeURIComponent(userId)}/name`, { name: 'Reviewer' })).status).toBe(200);
         await eventually(async () => (await status()).you === 'Reviewer');
         await publish('tier-b-renamed');
-        expect(data(await agent.call('khala_read')).you).toBe('Reviewer');
+        expect(data(await agent.call('read')).you).toBe('Reviewer');
         const output = await hook(agent, 'stop');
         if (capabilities.sync) for (const text of driver.syncNudge ? [driver.syncNudge] : [' you="Reviewer" ', ' is now Reviewer']) expect(output.frame).toContain(text);
         else expect(output.kind).toBe('none');
       });
       await row('rejoin', async () => {
         await agent.close(); agent = await McpProcess.start(world!, adapter, driver);
-        expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+        expect(data(await agent.call('join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         expect((await status()).agentUserId).toBe(userId); expect((await status()).you).toBe('Reviewer');
       });
       await row('steer', async () => {
@@ -188,8 +188,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         if (harness === 'copilot') await hook(agent, 'prompt');
         peer = world.claude;
         channel = (await cli(world, 'create', 'wake-conformance')).data as LocalChannelCreated;
-        expect(data(await peer.call('khala_join', { link: channel.selfLink }))).toMatchObject({ state: 'connected' });
-        expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+        expect(data(await peer.call('join', { link: channel.selfLink }))).toMatchObject({ state: 'connected' });
+        expect(data(await agent.call('join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         userId = (await status()).agentUserId as string;
         // Start with async suppression on a clean wake budget.
         await setMode('async'); await hook(agent, 'prompt'); await hook(agent, 'stop');
@@ -213,7 +213,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           // A fresh MCP clears the ladder's in-memory pending batch. Drain the
           // busy backlog while consent exists, then restore an eligible prompt.
           await agent.close(); agent = await McpProcess.start(world!, adapter, wakeDriver);
-          expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+          expect(data(await agent.call('join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
           await hook(agent, 'prompt'); await hook(agent, 'stop');
           await prepareTmux(agent);
           await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
@@ -227,7 +227,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           await writeWakeSettings(stateRoot(world!.env), { consent: { [`${harness}/terminal`]: { at: new Date().toISOString() } }, off: {} });
           await eventually(async () => (await wakeCalls(world!)).slice(noConsentCalls.length).some(call => call.command === 'tmux' && call.argv.at(-1) === 'Enter'));
           await agent.close(); agent = await McpProcess.start(world!, adapter, wakeDriver);
-          expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+          expect(data(await agent.call('join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         }
         await hook(agent, 'prompt'); await hook(agent, 'stop');
         if (terminalWake) {
@@ -237,7 +237,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         // Exercise the 30s safety boundary without spending 30s per harness.
         await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
         const before = await wakeCalls(world!);
-        expect(data(await agent.call('khala_send', { text: 'tier-b-self-idle' }))).toHaveProperty('eventId');
+        expect(data(await agent.call('send', { text: 'tier-b-self-idle' }))).toHaveProperty('eventId');
         await eventually(async () => (await inbox(peer)).some(entry => entry.body === 'tier-b-self-idle'));
         await delay(2200); expect(await wakeCalls(world!)).toEqual(before);
         await publish('tier-b-idle');

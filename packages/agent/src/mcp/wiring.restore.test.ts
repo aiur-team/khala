@@ -193,7 +193,7 @@ it.each(['session-start', 'idle'])('restores both OpenCode channels from a late 
     await vi.waitFor(async () => {
       for (const roomId of rooms) expect(await readStatus(channelFiles(files, roomId))).toMatchObject({ state: 'connected' });
     }, { timeout: 4_000 });
-    // #1303: an idle wake is a user turn, so it carries only the constant nudge (the agent reads the gap with khala_read).
+    // #1303: an idle wake is a user turn, so it carries only the constant nudge (the agent reads the gap with read).
     await deliver(JSON.stringify({ session_id: 'ses_resumed', event: 'idle' }), ['--harness', 'opencode'], io);
     expect(frame).toMatch(/^Khala: channel messages are waiting/);
     expect(frame).toContain(STOP_NUDGE);

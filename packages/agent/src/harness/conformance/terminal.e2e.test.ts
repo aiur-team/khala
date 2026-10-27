@@ -18,15 +18,15 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B terminal transport 
     try {
       const agent = world.claude, peer = world.codex;
       const channel = (await cli(world, 'create', `terminal-${kind}`)).data as LocalChannelCreated;
-      expect((await peer.call('khala_join', { link: channel.selfLink })).structuredContent.state).toBe('connected');
-      expect((await agent.call('khala_join', { link: channel.shareLink })).structuredContent.state).toBe('connected');
+      expect((await peer.call('join', { link: channel.selfLink })).structuredContent.state).toBe('connected');
+      expect((await agent.call('join', { link: channel.shareLink })).structuredContent.state).toBe('connected');
       await hook(agent, 'prompt'); await hook(agent, 'stop');
       await writeWakeSettings(stateRoot(world.env), { consent: { 'claude/terminal': { at: new Date().toISOString() } }, off: {} });
       await prepareTerminal(agent, kind);
       await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
       // #1300: in sync, another agent's message wakes only when it names the recipient.
       const text = `@kevin-Claude terminal-${kind}-message`;
-      expect((await peer.call('khala_send', { text })).structuredContent).toHaveProperty('eventId');
+      expect((await peer.call('send', { text })).structuredContent).toHaveProperty('eventId');
       await eventually(async () => (await inbox(agent)).some(entry => entry.body === text));
       await eventually(async () => !!JSON.parse(await readFile(path.join(world.root, 'bin/terminal.json'), 'utf8')).submitted);
       const calls = (await wakeCalls(world)).filter(call => call.command === (kind === 'kitty' ? 'kitten' : 'wezterm'));

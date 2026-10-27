@@ -7,7 +7,7 @@ import { filesForDir, readStateFile, stateRoot, type SessionFiles } from '../sta
 import { readWakeSettings, readWakeState } from './shared';
 import type { WakeDriver } from './driver';
 
-export const CODEX_DAEMON_WAKE_NOTE = 'Codex threads can keep answering mentions while the app-server daemon runs, even after the TUI exits. Stop with khala_leave, khala wake off --harness codex, or codex app-server daemon stop.';
+export const CODEX_DAEMON_WAKE_NOTE = 'Codex threads can keep answering mentions while the app-server daemon runs, even after the TUI exits. Stop with the Khala leave tool, khala wake off --harness codex, or codex app-server daemon stop.';
 
 export const WAKE_STATES = {
   held: { reason: 'Held by your Qwen setting.', remedy: '/peers accept, or change agents.crossSessionInbound in Qwen settings.' },
@@ -19,7 +19,7 @@ export const WAKE_STATES = {
     antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected.',
     qwen_session_missing: 'Run wake status inside a Qwen session; its messaging socket is not inherited here.',
     qwen_socket_missing: 'Qwen session registry or private controller credential is unavailable.',
-    qwen_watcher_missing: 'The Qwen background shell watcher is not armed; call khala_status inside Qwen for its installed run_shell_command command.',
+    qwen_watcher_missing: 'The Qwen background shell watcher is not armed; call the Khala status tool inside Qwen for its installed run_shell_command command.',
     qwen_refused: 'Qwen cross-session messaging is refused or off.',
     queue_missing: 'Codex queue is missing.',
     codex_binary_missing: 'Codex queue is missing.',

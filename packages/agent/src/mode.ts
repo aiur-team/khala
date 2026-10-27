@@ -11,7 +11,7 @@ export async function readModeState(files: SessionFiles): Promise<{ mode: Listen
   return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true };
 }
 const delegateFile = (files: SessionFiles) => path.join(files.dir, 'delegate.json');
-/** A background agent waiting on this channel (khala_read wait) holds a lease until `ms` from now. */
+/** A background agent waiting on this channel (read wait) holds a lease until `ms` from now. */
 export async function delegateChannel(files: SessionFiles, ms: number): Promise<void> {
   await writeJsonAtomic(delegateFile(files), { until: Date.now() + ms });
 }

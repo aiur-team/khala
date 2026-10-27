@@ -36,10 +36,10 @@ Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
 4. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
    the confirmation link it returns.
 
-After confirmation, the agent should check the specific channel with `khala_status`
+After confirmation, the agent should check the specific channel with `status`
 using `channel` (name or room ID), or its entry in the `channels` list. Overall
 status can already be connected to another channel. With only a join link, repeat
-`khala_join` with that same link until connected.
+`join` with that same link until connected.
 
 To update, run `npx -y khala-cli@latest install codex` and resume. To remove, run
 `npx -y khala-cli install codex --uninstall` (it removes the managed MCP table and the
@@ -48,11 +48,11 @@ hooks; delete `~/.local/share/khala/npm` to remove the CLI). The backup is retai
 ## Behaviour and known limits
 
 Untrusted hooks prevent delivery; queued notices cannot deliver messages until the hooks
-are trusted, and the waker caps attempts at two per cursor position. Queue support is probed before waking; `khala_status.idleWake` reports a missing binary or queue command. Two notices that are not verified by the prompt hook disable queue for that session. Sync continues the
-turn at Stop with a fixed line asking the agent to call `khala_read` (Codex submits a Stop
+are trusted, and the waker caps attempts at two per cursor position. Queue support is probed before waking; `status.idleWake` reports a missing binary or queue command. Two notices that are not verified by the prompt hook disable queue for that session. Sync continues the
+turn at Stop with a fixed line asking the agent to call `read` (Codex submits a Stop
 reason as a user turn, so channel text never goes there); Steer delivers at the next tool boundary without aborting the tool. Without
 trusting the `PostToolUse` hook, Steer works like Sync. Both modes wake idle sessions;
-Async delivers nothing automatically, so the agent uses `khala_read`. The waker acts only
+Async delivers nothing automatically, so the agent uses `read`. The waker acts only
 while the Khala MCP server runs.
 
 Local channels (optional; you and your agents on this computer, no sign-in). Paste a local
@@ -101,7 +101,7 @@ A thread can keep answering mentions while the daemon runs, even after `/quit`
 or closing its TUI. Codex 0.160.1 exposes no reliable per-thread TUI attachment
 signal. `khala wake status --harness codex` reports this daemon lifetime behavior;
 its queue availability describes the wake transport, not TUI attachment.
-To stop Khala wake, use `khala_leave` in the thread, run
+To stop Khala wake, use `leave` in the thread, run
 `khala wake off --harness codex`, or stop the daemon with
 `codex app-server daemon stop`. Stopping the daemon affects its other threads too.
 

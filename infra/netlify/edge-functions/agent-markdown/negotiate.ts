@@ -55,6 +55,6 @@ export function agentMarkdownBody(requestUrl: string, agentsMd: string): string 
   if (!pathname.startsWith('/join/')) return agentsMd;
   const header =
     `You were given this Khala channel link: \`${requestUrl}\`. ` +
-    "Follow 'Given a khala.aiur.team/join/… link' below, then call khala_join with that exact link.";
+    "Follow 'Given a khala.aiur.team/join/… link' below, then call join with that exact link.";
   return `${header}\n\n---\n\n${agentsMd}`;
 }

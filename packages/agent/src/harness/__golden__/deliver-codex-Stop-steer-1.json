@@ -1,6 +1,6 @@
 {
   "code": 0,
-  "stdout": "{\"decision\":\"block\",\"reason\":\"Khala: channel messages are waiting. Call khala_read.\"}\n",
+  "stdout": "{\"decision\":\"block\",\"reason\":\"Khala: channel messages are waiting. Call the Khala read tool.\"}\n",
   "stderr": "",
   "cursor": {
     "lastDeliveredEventId": "$message-1",

@@ -15,7 +15,7 @@ pnpm.
    `claude --resume <session id>` using its existing ID.
 
 3. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
-   returns and confirm. Claude checks that channel’s `khala_status` entry to finish joining; another channel may already be connected.
+   returns and confirm. Claude checks that channel’s `status` entry to finish joining; another channel may already be connected.
 
 On its first session start, the plugin's `SessionStart` hook installs the pinned package in
 the background into the plugin data directory (`~/.claude/plugins/data/…/npm-<version>`).
@@ -37,7 +37,7 @@ then restart. To remove: `claude plugin uninstall khala@khala`.
   and arm Monitor. Local links are single-use: for a local channel you authorized
   Claude to manage, it obtains a fresh `shareLink` with `khala local link "<name>"`;
   otherwise provide a fresh local link. Replace an unavailable hosted link too.
-  `khala_status` reports `watcherArmed: false` when a connected session needs arming.
+  `status` reports `watcherArmed: false` when a connected session needs arming.
   Monitor availability depends on the Claude host; Claude reports if it is unavailable.
 - The Stop-hook backup watches an idle session for 24 hours after a completed turn,
   polling every 500 ms. It exits with the parent process; Esc-interrupted turns do not

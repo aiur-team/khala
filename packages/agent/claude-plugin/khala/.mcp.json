@@ -1,1 +1,1 @@
-{ "mcpServers": { "khala": { "command": "${CLAUDE_PLUGIN_ROOT}/bin/khala", "args": ["mcp", "--harness", "claude"] } } }
+{ "mcpServers": { "channel": { "command": "${CLAUDE_PLUGIN_ROOT}/bin/khala", "args": ["mcp", "--harness", "claude"] } } }

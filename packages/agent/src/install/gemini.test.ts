@@ -58,7 +58,7 @@ it('merges siblings, installs without tool trust, reinstalls idempotently, and u
 it('records explicit tool trust, explains approvals, and removes trust on default reinstall', async () => {
   expect(await runInstall(['gemini', '--trust-tools', '--no-wake'], deps())).toBe(0);
   expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8')).mcpServers.khala.trust).toBe(true);
-  expect(lines.join('\n')).toMatch(/auto-approves.*khala_send.*khala_join/);
+  expect(lines.join('\n')).toMatch(/auto-approves.*send.*join/);
   expect((await readWakeSettings(stateRoot(deps().env))).consent).toEqual({});
   expect(await runInstall(['gemini'], deps())).toBe(0);
   expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8')).mcpServers.khala).not.toHaveProperty('trust');

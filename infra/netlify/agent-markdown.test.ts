@@ -45,7 +45,7 @@ test('a /join/ link is prefixed with a header naming the exact requested URL', (
   const [firstLine] = body.split('\n');
   assert.equal(
     firstLine,
-    "You were given this Khala channel link: `https://khala.aiur.team/join/inv_EXAMPLE?x=1`. Follow 'Given a khala.aiur.team/join/… link' below, then call khala_join with that exact link.",
+    "You were given this Khala channel link: `https://khala.aiur.team/join/inv_EXAMPLE?x=1`. Follow 'Given a khala.aiur.team/join/… link' below, then call join with that exact link.",
   );
   assert.ok(body.endsWith('# Khala agent instructions\n'));
 });

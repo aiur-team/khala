@@ -86,10 +86,10 @@ it('never sends credential values to the channel or MCP status/join output', asy
     status: async () => ({ state: 'connected', unread: 0, idleWake: (await wakeStatus('antigravity', { env, files, sessionId: 'session' }))[0] }),
     send, sendChannelEvent: vi.fn() } as unknown as KhalaAgentClient;
   const tools = createKhalaTools({ harness: 'antigravity', clientFor: async () => client });
-  for (const [name, args] of [['khala_join', { link: 'https://example.com' }], ['khala_status', {}]] as const) {
+  for (const [name, args] of [['join', { link: 'https://example.com' }], ['status', {}]] as const) {
     const result = await tools.find(tool => tool.name === name)!.call(args, { id: 1, notification: false, meta: undefined });
     const text = JSON.stringify(result);
-    if (name === 'khala_join') expect(text).toContain('wake register --harness antigravity');
+    if (name === 'join') expect(text).toContain('wake register --harness antigravity');
     else expect(text).not.toContain('wake register --harness antigravity');
     expect(text).not.toContain(env.ANTIGRAVITY_CSRF_TOKEN); expect(text).not.toContain(env.ANTIGRAVITY_LS_ADDRESS);
   }

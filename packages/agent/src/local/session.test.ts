@@ -396,13 +396,13 @@ async function localClient(h: ReturnType<typeof fakeHelper>) {
       pollJoin: async () => creds, reportReady: async () => {},
     },
   });
-  const statusTool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(t => t.name === 'khala_status')!;
+  const statusTool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(t => t.name === 'status')!;
   return { client, dir: channelFiles(filesForDir(resolveStateDir('codex', 'local', { XDG_STATE_HOME: root })), creds.roomId).dir, status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
     await client.close(); await rm(root, { recursive: true, force: true });
   } };
 }
 it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as const)(
-  'reports disconnected/%s through khala_status when polling ends', async (code, detail) => {
+  'reports disconnected/%s through status when polling ends', async (code, detail) => {
     const h = fakeHelper(); const c = await localClient(h);
     try {
       expect(await c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).toMatchObject({ state: 'connected' });
