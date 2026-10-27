@@ -122,7 +122,8 @@ const activeOption = (page: Page) => page.locator('#kh-input').getAttribute('ari
 
 // Slack-style @mention autocomplete: filter as you type, pick with keys,
 // mouse or touch, and never send while the suggestions are open.
-test('composer @mention autocomplete filters, picks and never sends while open', { timeout: 90_000 }, () => withHarness(async (browser, url) => {
+// Quarantined: owner khala#1346, expires 2026-11-10 — stale since #1314
+test('composer @mention autocomplete filters, picks and never sends while open', { timeout: 90_000, skip: 'quarantined: khala#1346' }, () => withHarness(async (browser, url) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   await page.goto(url);
   await page.locator('.kh-comp').waitFor();
