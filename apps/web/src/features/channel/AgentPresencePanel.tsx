@@ -132,18 +132,16 @@ export function stoppedTip(agent: AgentMember['agent'], now = Date.now()): strin
   return liveness?.state === 'stopped' ? liveness.text : undefined;
 }
 
-// A clean exit says `session ended`; a hard kill reaches us as Synapse's sync timeout with no reason.
-const STOPPED_REASON = 'session ended';
-
 /**
- * An offline agent is `away` when it said why (a usage limit: still running) and `stopped` otherwise,
+ * An offline agent is `away` when it said why (a usage limit: still running) and `stopped` otherwise
+ * (a clean exit or a hard kill, even one that happened while away),
  * with how long ago it was last alive. `null` while connected or unknown.
  */
 export function agentLiveness(agent: AgentMember['agent'], now = Date.now()): { state: 'away' | 'stopped'; text: string } | null {
   if (agent.connection !== 'offline') return null;
   const minutes = agent.awaySince === undefined ? null : Math.max(0, Math.floor((now - agent.awaySince) / 60_000));
   const span = minutes === null ? null : minutes < 60 ? `${minutes}m` : minutes < 48 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
-  if (agent.awayReason && agent.awayReason !== STOPPED_REASON) return { state: 'away', text: `Away — ${agent.awayReason}${span ? ` · ${span}` : ''}` };
+  if (agent.awayReason) return { state: 'away', text: `Away — ${agent.awayReason}${span ? ` · ${span}` : ''}` };
   return { state: 'stopped', text: `Not running${span ? ` — last seen ${span} ago` : ''}` };
 }
 

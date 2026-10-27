@@ -10,16 +10,19 @@ import type { HumanRouteContext } from './application';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 
+/** Archives or unarchives a channel by its index id; false when that failed. */
+export async function archiveChannel(setArchived: HumanRouteContext['setArchived'], id: string, archived: boolean): Promise<boolean> {
+  const roomId = decodeRoomId(id);
+  return roomId.ok && (await setArchived?.(roomId.value, archived)) === 'sent';
+}
+
 export function ArchivedChannelsRoute({ context, routes, navigateRoute }: Readonly<{
   context: HumanRouteContext; routes: HumanRouteCodec; navigateRoute(path: string): void;
 }>) {
   const index = useConversationIndex(context);
   const archived = (index ?? []).filter(item => item.archived);
   const [failed, setFailed] = useState(false);
-  const unarchive = async (id: string) => {
-    const roomId = decodeRoomId(id);
-    setFailed(!roomId.ok || (await context.setArchived?.(roomId.value, false)) !== 'sent');
-  };
+  const unarchive = async (id: string) => setFailed(!await archiveChannel(context.setArchived, id, false));
   return <KhalaPageFrame model={{ title: 'Archived channels', labelledBy: 'khala-archived',
     description: 'Archived channels stay joined but leave your channel list, and your agents stop listening in them.' }}
     banner={failed ? 'Unarchive failed. Try again.' : undefined}>

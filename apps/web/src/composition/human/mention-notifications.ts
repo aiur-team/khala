@@ -59,6 +59,8 @@ const label = (p: Pick<ParticipantView, 'kind' | 'displayName'>) => p.kind === '
 export function observeMentionNotifications(context: HumanRouteContext, preference: MentionNotificationPreference,
   openMessage: (roomId: RoomId, eventId: string) => void): Disposer {
   const subscriptions = new Map<string, Disposer>();
+  // Archived channels stay subscribed, so their messages count as seen and never notify after an unarchive.
+  const archived = new Set<string>();
   const notifications = new Set<Notification>();
   const startedAt = Date.now();
   let disposed = false;
@@ -68,6 +70,8 @@ export function observeMentionNotifications(context: HumanRouteContext, preferen
   const update = () => {
     const channels = context.conversations!.snapshot(context.principal.ownerId, context.generation) ?? [];
     const joined = new Set(channels.map(channel => channel.id));
+    archived.clear();
+    for (const channel of channels) if (channel.archived) archived.add(channel.id);
     for (const [id, remove] of subscriptions) if (!joined.has(id)) { remove(); subscriptions.delete(id); }
     for (const channel of channels) {
       if (subscriptions.has(channel.id)) continue;
@@ -138,7 +142,7 @@ export function observeMentionNotifications(context: HumanRouteContext, preferen
           seen.add(id);
           if (!historical.has(id) && entry.kind === 'message' && entry.item.content.kind === 'text'
             && entry.item.participant.participantId !== viewer.participantId
-            && Date.parse(entry.item.receivedAt) >= startedAt && preference.state() === 'on'
+            && Date.parse(entry.item.receivedAt) >= startedAt && preference.state() === 'on' && !archived.has(channel.id)
             && (document.hidden || !document.hasFocus())) pending.set(id, entry.item);
         }
         if (pending.size) processPending();

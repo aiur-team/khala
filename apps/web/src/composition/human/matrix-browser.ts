@@ -746,28 +746,53 @@ export function readListeningMode(client: Pick<MatrixClient, 'getRoom'>, roomId:
   return memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
 }
 
+type OwnMemberClient = Pick<MatrixClient, 'getRoom' | 'getUserId' | 'getStateEvent' | 'sendStateEvent'>;
+const ownMemberWrites = new Map<string, Promise<unknown>>();
+
+/**
+ * The one writer of the viewer's own `m.room.member` content (name, colours, archive).
+ * Writes run one at a time per room, and each reads the server's latest content
+ * first, so back-to-back edits merge instead of overwriting each other. `change`
+ * gets the current content and returns the keys to set, or null to send nothing.
+ */
+export function updateOwnMember(client: OwnMemberClient, roomId: string,
+  change: (content: Record<string, unknown>) => Record<string, unknown> | null): Promise<'sent' | 'failed'> {
+  const userId = client.getUserId();
+  if (!userId) return Promise.resolve('failed');
+  const key = `${userId}\n${roomId}`;
+  const write = async (): Promise<'sent' | 'failed'> => {
+    try {
+      const latest = await client.getStateEvent(roomId, EventType.RoomMember, userId);
+      if (latest.membership !== 'join') return 'failed';
+      const next = change(latest);
+      if (!next) return 'failed';
+      const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
+      await send.call(client, roomId, EventType.RoomMember, { ...next, membership: 'join' }, userId);
+      return 'sent';
+    } catch { return 'failed'; }
+  };
+  const result = (ownMemberWrites.get(key) ?? Promise.resolve()).then(write);
+  ownMemberWrites.set(key, result);
+  return result;
+}
+
 /**
  * Sets the viewer's own name in one channel: their room-scoped `m.room.member`
  * displayname, which every client already reads as the member's name there. The
  * homeserver accepts a member event only from that member, so no one else can set it.
  */
-export async function setOwnChannelName(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
-  name: string): Promise<ChannelNameResult> {
-  try {
-    const checked = checkName(name, 'username');
-    if (!checked.ok) return { kind: 'error', code: 'invalid_name', reason: checked.error };
-    const userId = client.getUserId();
-    const room = client.getRoom(roomId);
-    const own = userId ? room?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
-    if (!userId || !room || !own || own.getContent().membership !== 'join') return { kind: 'error', code: 'unavailable' };
-    const wanted = checked.name.toLowerCase();
-    if (room.getJoinedMembers().some(member => member.userId !== userId && member.rawDisplayName.toLowerCase() === wanted)) {
-      return { kind: 'error', code: 'name_taken' };
-    }
-    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
-    await send.call(client, roomId, EventType.RoomMember, { ...own.getContent(), membership: 'join', displayname: checked.name }, userId);
-    return { kind: 'ok', name: checked.name };
-  } catch { return { kind: 'error', code: 'unavailable' }; }
+export async function setOwnChannelName(client: OwnMemberClient, roomId: string, name: string): Promise<ChannelNameResult> {
+  const checked = checkName(name, 'username');
+  if (!checked.ok) return { kind: 'error', code: 'invalid_name', reason: checked.error };
+  const userId = client.getUserId();
+  const room = client.getRoom(roomId);
+  if (!userId || !room) return { kind: 'error', code: 'unavailable' };
+  const wanted = checked.name.toLowerCase();
+  if (room.getJoinedMembers().some(member => member.userId !== userId && member.rawDisplayName.toLowerCase() === wanted)) {
+    return { kind: 'error', code: 'name_taken' };
+  }
+  return await updateOwnMember(client, roomId, content => ({ ...content, displayname: checked.name })) === 'sent'
+    ? { kind: 'ok', name: checked.name } : { kind: 'error', code: 'unavailable' };
 }
 
 /** A member's colours in `roomId` (#1308), from their own member event. */
@@ -780,17 +805,10 @@ export function readChannelColors(client: Pick<MatrixClient, 'getRoom'>, roomId:
  * its other content. Only the member can send it; others' clients honour agent
  * entries only for agents this member owns.
  */
-export async function setOwnChannelColors(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
-  colors: ChannelColors): Promise<'sent' | 'failed'> {
-  try {
-    const userId = client.getUserId();
-    const own = userId ? client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
-    const checked = memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: colors });
-    if (!userId || !own || own.getContent().membership !== 'join' || !checked) return 'failed';
-    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
-    await send.call(client, roomId, EventType.RoomMember, { ...own.getContent(), membership: 'join', [CHANNEL_COLORS_MEMBER_KEY]: checked }, userId);
-    return 'sent';
-  } catch { return 'failed'; }
+export function setOwnChannelColors(client: OwnMemberClient, roomId: string, colors: ChannelColors): Promise<'sent' | 'failed'> {
+  const checked = memberChannelColors({ [CHANNEL_COLORS_MEMBER_KEY]: colors });
+  if (!checked) return Promise.resolve('failed');
+  return updateOwnMember(client, roomId, content => ({ ...content, [CHANNEL_COLORS_MEMBER_KEY]: checked }));
 }
 
 /** Whether the viewer archived the room: their private room account data, or a legacy member flag not yet migrated. */
@@ -803,7 +821,7 @@ export function viewerArchived(room: Pick<Room, 'getAccountData' | 'getMember'>,
  * Archives or unarchives the channel for the viewer only, in their private room account data, and tells each of
  * their own agents in the room (`agents`, resolved by the control server) by to-device notice. Strips the legacy public member flag (#1327) if present.
  */
-export async function setOwnArchived(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent' | 'setRoomAccountData' | 'sendToDevice'>,
+export async function setOwnArchived(client: OwnMemberClient & Pick<MatrixClient, 'setRoomAccountData' | 'sendToDevice'>,
   roomId: string, archived: boolean, agents: readonly string[]): Promise<'sent' | 'failed'> {
   try {
     const userId = client.getUserId();
@@ -814,13 +832,12 @@ export async function setOwnArchived(client: Pick<MatrixClient, 'getRoom' | 'get
     await setData.call(client, roomId, ARCHIVED_ACCOUNT_DATA_TYPE, archived ? { archived: true } : {});
     const notice: ArchiveNotice = { v: 1, room_id: roomId, archived };
     if (agents.length) await client.sendToDevice(ARCHIVE_NOTICE_TYPE, new Map(agents.map(agent => [agent, new Map([['*', notice]])])));
-    if (memberArchived(own.getContent())) {
-      const rest: Record<string, unknown> = { ...own.getContent() };
+    if (!memberArchived(own.getContent())) return 'sent';
+    return await updateOwnMember(client, roomId, content => {
+      const rest = { ...content };
       delete rest[ARCHIVED_MEMBER_KEY];
-      const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
-      await send.call(client, roomId, EventType.RoomMember, { ...rest, membership: 'join' }, userId);
-    }
-    return 'sent';
+      return rest;
+    });
   } catch { return 'failed'; }
 }
 
@@ -840,15 +857,19 @@ export function memberSince(client: Pick<MatrixClient, 'getRoom'>, roomId: strin
   return client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getTs() ?? null;
 }
 
-/** Matrix presence as the roster shows it; `null` until the server has sent any. Idle (`unavailable`) still counts as connected. */
+/**
+ * Matrix presence as the roster shows it; `null` until the server has sent any. Idle (`unavailable`)
+ * still counts as connected, unless it carries a reason: an agent away on a usage limit. `offline`
+ * never carries one, because Synapse keeps a hard-killed agent's last reason after its sync times out.
+ */
 export function memberPresence(client: Pick<MatrixClient, 'getUser'>, userId: string): MemberPresence | null {
   const user = client.getUser(userId);
   const event = user?.events.presence;
   if (!user || !event) return null;
-  if (user.presence !== 'offline') return { connection: 'connected' };
   const reason = event.getContent().status_msg;
-  return { connection: 'offline', since: user.lastPresenceTs - (user.lastActiveAgo ?? 0),
-    ...(typeof reason === 'string' && reason ? { reason: reason.slice(0, 80) } : {}) };
+  const away = user.presence === 'unavailable' && typeof reason === 'string' && reason !== '';
+  if (user.presence !== 'offline' && !away) return { connection: 'connected' };
+  return { connection: 'offline', since: user.lastPresenceTs - (user.lastActiveAgo ?? 0), ...(away ? { reason: reason.slice(0, 80) } : {}) };
 }
 
 /** Whether `userId`'s read receipt (or a later message of theirs) covers a loaded event. */

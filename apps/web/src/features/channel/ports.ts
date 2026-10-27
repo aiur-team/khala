@@ -9,7 +9,7 @@ export type AgentPresenceReceipt = Readonly<{
   observedAt: string;
 }>;
 
-/** An offline member's `since` is its last heartbeat (ms); `reason` is what it said on a clean exit. */
+/** An offline member's `since` is its last heartbeat (ms); `reason` marks one away but still running (a usage limit). */
 export type MemberPresence = Readonly<{ connection: 'connected' } | { connection: 'offline'; since: number; reason?: string }>;
 
 export type { TypingPort, MediaPort } from '../../ui/conversation/ports';

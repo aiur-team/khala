@@ -53,11 +53,20 @@ export async function uploadImage(media: MediaPort, image: PreparedImage): Promi
   return { name: image.name, mimetype: image.mimetype, size: image.bytes.length, w: image.w, h: image.h, url, key: sealed.key, iv: sealed.iv, sha256: sealed.sha256 };
 }
 
-// ponytail: decrypted images stay in memory for the page's life; add eviction if channels hold hundreds of images.
-const loading = new Map<string, Promise<Blob>>();
-const loaded = new Map<string, Blob>();
+// The most recently used decrypted images, oldest first. Object URLs belong to the
+// <ChatImage> that made them and are revoked on unmount, so eviction drops only the Blob.
+// ponytail: capped by count, not bytes (up to 10 MB each); cap bytes if memory shows up on phones.
+export const IMAGE_CACHE_SIZE = 24;
+type CacheEntry = { pending: Promise<Blob>; blob?: Blob };
+const cache = new Map<string, CacheEntry>();
 // Keyed on the whole reference: another event may reuse a media URL with a different key.
 const cacheKey = (image: ImageRef) => JSON.stringify([image.url, image.key, image.iv, image.sha256, image.mimetype]);
+function use(key: string, entry: CacheEntry): CacheEntry {
+  cache.delete(key);
+  cache.set(key, entry);
+  for (const oldest of cache.keys()) { if (cache.size <= IMAGE_CACHE_SIZE) break; cache.delete(oldest); }
+  return entry;
+}
 
 /**
  * Downloads, verifies and decrypts once per reference. The decrypted bytes must sniff as the
@@ -66,29 +75,24 @@ const cacheKey = (image: ImageRef) => JSON.stringify([image.url, image.key, imag
  */
 export function loadImage(media: MediaPort, image: ImageRef): Promise<Blob> {
   const key = cacheKey(image);
-  let pending = loading.get(key);
-  if (!pending) {
-    pending = media.download(image.url).then(ciphertext => decryptAttachment(ciphertext, image)).then(bytes => {
-      if (sniffImage(bytes)?.mimetype !== image.mimetype) throw new Error('not_an_image');
-      const blob = new Blob([new Uint8Array(bytes)], { type: image.mimetype });
-      loaded.set(key, blob);
-      return blob;
-    });
-    pending.catch(() => loading.delete(key));
-    loading.set(key, pending);
-  }
-  return pending;
+  const cached = cache.get(key);
+  if (cached) return use(key, cached).pending;
+  const entry: CacheEntry = { pending: media.download(image.url).then(ciphertext => decryptAttachment(ciphertext, image)).then(bytes => {
+    if (sniffImage(bytes)?.mimetype !== image.mimetype) throw new Error('not_an_image');
+    return entry.blob = new Blob([new Uint8Array(bytes)], { type: image.mimetype });
+  }) };
+  entry.pending.catch(() => { if (cache.get(key) === entry) cache.delete(key); });
+  return use(key, entry).pending;
 }
 
 /** Seeds the cache with an image this tab just sent, so its own echo never downloads it again. */
 export function rememberImage(image: ImageRef, blob: Blob): void {
-  loaded.set(cacheKey(image), blob);
-  loading.set(cacheKey(image), Promise.resolve(blob));
+  use(cacheKey(image), { pending: Promise.resolve(blob), blob });
 }
 
 /** The decrypted image if it is already in memory; Save must not await, or iOS drops the tap's user activation. */
 export function loadedImage(image: ImageRef): Blob | undefined {
-  return loaded.get(cacheKey(image));
+  return cache.get(cacheKey(image))?.blob;
 }
 
 /**
