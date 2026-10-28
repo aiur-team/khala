@@ -376,6 +376,8 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   };
   async function agentJoinRequest(path: string, post: boolean, signal?: AbortSignal): Promise<AgentJoinResult> {
     try {
+      // mutation() reports signed out as null, the same as an outage.
+      if (post && csrfToken === null && (await readCurrent(signal)).kind === 'signed_out') return { kind: 'error', code: 'signed_out' };
       const response = post ? await mutation(path, {}, signal) : await request(`${origin}${path}`, {
         method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(signal),
       });

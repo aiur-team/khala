@@ -19,11 +19,18 @@ const errors: Record<AgentConfirmError, string> = {
   not_found: 'This confirmation link is not valid.',
   expired: 'This request expired. Ask your agent to run join again.',
   already_confirmed_by_other: 'Another member already confirmed this agent.',
-  ready_timeout: 'The agent did not finish connecting.',
+  not_picked_up: 'Your agent did not pick up the confirmation. Check that it is still running, then ask it to run join again.',
+  not_finished: 'Your agent started connecting but did not finish. Ask it to run join again.',
   unavailable: 'Khala is unavailable right now. Try again.',
-  signed_out: 'Khala is unavailable right now. Try again.',
+  signed_out: 'You are signed out. Sign in to continue.',
 };
-const retryable: readonly AgentConfirmError[] = ['ready_timeout', 'unavailable', 'signed_out'];
+
+/** What the join is waiting on while the page polls. */
+function stage(view: AgentJoinView): string {
+  if (view.state === 'pending') return 'Confirming…';
+  if (view.state === 'confirmed') return `Waiting for ${view.label} to pick up the confirmation…`;
+  return `${view.label} is connecting…`;
+}
 
 function initialTheme(): ThemeChoice {
   return resolveInitialTheme(typeof localStorage === 'undefined' ? {} : { storage: localStorage });
@@ -104,10 +111,12 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, email, ...page 
       </> : null}
       {snapshot.state === 'connecting' ? <>
         <span className="kh-spin" aria-hidden="true" />
-        <p className="kh-fin-p" role="status">Connecting {snapshot.view.label}…</p>
+        <p className="kh-fin-p" role="status">{stage(snapshot.view)}</p>
+        {snapshot.slow ? <p className="kh-fin-p">This is taking longer than usual. Check that your agent is still running.</p> : null}
       </> : null}
       {snapshot.state === 'done' ? <>
-        <span className="kh-fin-ok"><CheckIcon />{snapshot.view.label} joined {snapshot.view.channelName}.</span>
+        {/* `ready` means the server invited the agent; it joins once it accepts. */}
+        <span className="kh-fin-ok"><CheckIcon />{snapshot.view.label} was invited to {snapshot.view.channelName}.</span>
         <a className="kh-btn pri" href={roomHref(snapshot.view.roomId)} onClick={event => {
           if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
@@ -116,7 +125,10 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, email, ...page 
       </> : null}
       {snapshot.state === 'error' ? <>
         <p className="kh-fin-p kh-fin-err" role="alert">{errors[snapshot.code]}</p>
-        {retryable.includes(snapshot.code)
+        {/* A reload signs in through the page's own redirect and returns here. */}
+        {snapshot.code === 'signed_out'
+          ? <button type="button" className="kh-btn pri" onClick={() => globalThis.location?.reload()}>Sign in</button> : null}
+        {snapshot.code === 'unavailable'
           ? <button type="button" className="kh-btn" onClick={() => controller.retry()}>Retry</button> : null}
       </> : null}
       {email && (snapshot.state === 'review' || snapshot.state === 'error') ? <p className="kh-fin-p">Signed in as {email}</p> : null}

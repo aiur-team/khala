@@ -32,7 +32,7 @@ export type AgentCredentials = {
 
 // GET  /api/human/agent-join?joinId=<joinId>          (human session cookie)
 export type AgentJoinView = { joinId: string; label: string; harness: Harness; channelName: string; roomId: string;
-  state: 'pending' | 'confirmed' | 'ready' | 'expired'; agentUserId?: string;
+  state: 'pending' | 'confirmed' | 'claimed' | 'ready' | 'expired'; agentUserId?: string;
   /**
    * `join`: the viewer is not in the channel, but the invite the agent used admits them; confirming adds both.
    * `auto`: Approve joins is off and the viewer is a member who issued the link the agent used; the page confirms without a click.
@@ -41,9 +41,9 @@ export type AgentJoinView = { joinId: string; label: string; harness: Harness; c
 // errors: 401 signed_out ; 403 not_member | wrong_account ; 404 not_found ; 410 invite_unavailable
 
 // POST /api/human/agent-join/confirm?joinId=<joinId>  (human session cookie + CSRF header as other human POSTs)
-// body: {} → 200 AgentJoinView (state 'confirmed', agentUserId set). Idempotent for the same owner; 409 already_confirmed_by_other.
+// body: {} → 200 AgentJoinView (state 'confirmed', agentUserId set; 'expired' once the request expired). Idempotent for the same owner; 409 already_confirmed_by_other.
 
-// GET  /api/human/agent-join/status?joinId=<joinId>   → 200 AgentJoinView   (browser polls every 1s until state === 'ready')
+// GET  /api/human/agent-join/status?joinId=<joinId>   → 200 AgentJoinView   (browser polls every 1s until state === 'ready'; 'claimed': the agent took its credentials; 'ready': the server invited it)
 
 /**
  * - **Exact paths only.** The control gateway matches exact paths (`apps/control/src/runtime/handler.ts:9-14`), so `joinId` always travels as a query parameter, never as a path segment.
@@ -172,7 +172,7 @@ export function decodeAgentJoinView(input: unknown): Decoded<AgentJoinView> {
       harness: readHarness(r.field('harness'), r.at('harness')),
       channelName: label(r.field('channelName'), r.at('channelName'), M1_LABEL_MAX_BYTES),
       roomId: readRoomId(r.field('roomId'), r.at('roomId')),
-      state: literal(r.field('state'), r.at('state'), ['pending', 'confirmed', 'ready', 'expired']),
+      state: literal(r.field('state'), r.at('state'), ['pending', 'confirmed', 'claimed', 'ready', 'expired']),
       ...(hasAgent ? { agentUserId: readMatrixUserId(r.field('agentUserId'), r.at('agentUserId')) } : {}),
       ...(hasAccess ? { access: literal(r.field('access'), r.at('access'), ['join', 'auto']) } : {}),
     };

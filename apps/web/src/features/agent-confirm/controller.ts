@@ -1,14 +1,18 @@
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
 import type { AgentJoinError, AgentJoinPort, AgentJoinResult } from './ports';
 
-export type AgentConfirmError = AgentJoinError | 'expired' | 'ready_timeout';
+/** `not_picked_up`: the agent never took its credentials; `not_finished`: it took them but never became ready. */
+export type AgentConfirmError = AgentJoinError | 'expired' | 'not_picked_up' | 'not_finished';
 export type AgentConfirmSnapshot =
   | Readonly<{ state: 'loading' }>
-  | Readonly<{ state: 'review' | 'connecting' | 'done'; view: AgentJoinView }>
+  | Readonly<{ state: 'review' | 'done'; view: AgentJoinView }>
+  /** `slow`: still waiting after `slowMs`; the page keeps polling. */
+  | Readonly<{ state: 'connecting'; view: AgentJoinView; slow?: true }>
   | Readonly<{ state: 'error'; code: AgentConfirmError; view?: AgentJoinView }>;
 
+// The agent keeps trying to become ready for about 150 s, so the page waits longer than that.
 export function createAgentConfirmController({
-  joinId, port, pollMs = 1000, readyTimeoutMs = 60_000, autoConfirmMs = 3000,
+  joinId, port, pollMs = 1000, slowMs = 60_000, readyTimeoutMs = 180_000, autoConfirmMs = 3000,
   now = () => Date.now(),
   setTimer = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay);
@@ -18,6 +22,7 @@ export function createAgentConfirmController({
   joinId: string;
   port: AgentJoinPort;
   pollMs?: number;
+  slowMs?: number;
   readyTimeoutMs?: number;
   autoConfirmMs?: number;
   now?: () => number;
@@ -64,18 +69,21 @@ export function createAgentConfirmController({
   function poll(view: AgentJoinView) {
     const token = endOperation();
     let latest = view;
-    const deadline = now() + readyTimeoutMs;
-    publish({ state: 'connecting', view });
+    const started = now();
+    const deadline = started + readyTimeoutMs;
+    const connecting = () => publish({ state: 'connecting', view: latest, ...(now() - started >= slowMs ? { slow: true as const } : {}) });
+    const timeout = () => error(latest.state === 'claimed' || latest.state === 'ready' ? 'not_finished' : 'not_picked_up', latest);
+    connecting();
     // A separate deadline also bounds an unresolved status request.
     cancelDeadline = setTimer(() => {
-      if (current(token)) error('ready_timeout', latest);
+      if (current(token)) timeout();
     }, readyTimeoutMs);
     function schedule() {
       cancelPoll = setTimer(() => { void tick(); }, Math.min(pollMs, Math.max(0, deadline - now())));
     }
     async function tick() {
       if (!current(token)) return;
-      if (now() >= deadline) { error('ready_timeout', latest); return; }
+      if (now() >= deadline) { timeout(); return; }
       const result = await request(signal => port.status(joinId, signal));
       if (!current(token)) return;
       if (result.kind === 'error') { error(result.code, latest); return; }
@@ -83,7 +91,7 @@ export function createAgentConfirmController({
       if (latest.state === 'expired') { error('expired', latest); return; }
       // The server invites the agent before it reports ready.
       if (latest.state === 'ready') { endOperation(); publish({ state: 'done', view: latest }); return; }
-      publish({ state: 'connecting', view: latest });
+      connecting();
       schedule();
     }
     schedule();
@@ -103,7 +111,7 @@ export function createAgentConfirmController({
           if (view.access === 'auto') cancelPoll = setTimer(() => { void confirm(); }, autoConfirmMs);
         }
         break;
-      case 'confirmed': poll(view); break;
+      case 'confirmed': case 'claimed': poll(view); break;
       case 'ready': publish({ state: 'done', view }); break;
       case 'expired': error('expired', view); break;
     }
@@ -149,14 +157,12 @@ export function createAgentConfirmController({
       endOperation();
       publish({ state: 'review', view });
     },
+    /** Rereads the join after an outage: a confirmed join resumes polling, a pending one waits for Confirm. */
     retry() {
-      if (disposed || snapshot.state !== 'error') return;
-      const { code, view } = snapshot;
-      if (code === 'ready_timeout' && view) poll(view);
-      else if (code === 'unavailable' || code === 'signed_out') {
-        if (confirmAttempted && view) poll(view);
-        else void load();
-      }
+      if (disposed || snapshot.state !== 'error' || snapshot.code !== 'unavailable') return;
+      // Confirm is idempotent, so a join still pending after a failed confirm may be confirmed again.
+      confirmAttempted = false;
+      void load();
     },
     dispose() {
       if (disposed) return;

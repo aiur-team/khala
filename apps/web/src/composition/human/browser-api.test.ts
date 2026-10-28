@@ -447,6 +447,12 @@ describe('agent join browser API', () => {
     expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'POST', credentials: 'same-origin', body: '{}' });
     expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('current-proof');
   });
+  it('reports a signed-out confirmation as signed out, not as an outage', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(401, { code: 'authentication_required' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.confirm('j1')).toEqual({ kind: 'error', code: 'signed_out' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('returns unavailable on network failures and encodes query identifiers', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error('offline'));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
