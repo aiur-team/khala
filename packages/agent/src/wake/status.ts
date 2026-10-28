@@ -29,6 +29,7 @@ export const WAKE_STATES = {
     driver_missing: 'No wake driver is installed for this transport.',
     monitor_missing: 'The Muse monitor is not armed; start monitor on khala watch with persistent: true, wake_delay_ms: 0, show_lines: true.',
     watcher_missing: 'The Claude watcher is not armed.',
+    watcher_failing: 'The Claude watcher hit a storage error and cannot wake you until it recovers.',
     terminal_aborted: 'The terminal wake check was cancelled.',
     terminal_unavailable_on_platform: 'This platform has no supported terminal remote-control API.',
     terminal_empty_prompt_unavailable: 'This harness has no verified empty-prompt pattern.',
@@ -97,7 +98,7 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
     else if (driver.id === 'watcher') {
       const watcher = options.files ? await readStateFile<{ state?: string; pid?: unknown }>(options.files.dir, 'watcher.json') : null;
       state = watcher?.state === 'expired' ? 'lapsed' : watcher?.state === 'armed' && watcherAlive(watcher.pid) ? 'active' : 'unavailable';
-      if (state === 'unavailable') unavailableReason = 'watcher_missing';
+      if (state === 'unavailable') unavailableReason = watcher?.state === 'failing' && watcherAlive(watcher.pid) ? 'watcher_failing' : 'watcher_missing';
     } else if (driver.runtime) {
       const files = options.files ?? filesForDir(path.join(stateRoot(env), harness, 'status'));
       const ctx = { files, harness, sessionId: options.sessionId ?? 'status', env, signal: new AbortController().signal, now: Date.now() };

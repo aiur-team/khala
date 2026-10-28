@@ -12,8 +12,12 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const NOTICE = 'Khala: new channel messages. They arrive in the next hook context.\n';
-export const DEADLINE_MS = 24 * 60 * 60 * 1000;
+// Only an asyncRewake hook can wake an idle Claude session, and Claude kills it at the hook timeout.
+// ponytail: 24 days stays under Node's 2^31 ms timer cap; a session idle longer shows "lapsed" until any prompt.
+export const DEADLINE_MS = 24 * 24 * 60 * 60 * 1000;
 const POLL_MS = 500;
+/** Esc skips Stop and leaves busy behind; expire it like deliver does. */
+const STALE_BUSY_MS = 120_000;
 type IO = { stderr: Pick<NodeJS.WriteStream, 'write'>; env: NodeJS.ProcessEnv; now: () => Date };
 async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number; nudgedCount?: number } | null> {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -74,7 +78,7 @@ function parentAlive(parent: number): boolean {
 export async function watch(stdin: string, _argv: readonly string[], io: IO = { stderr: process.stderr, env: process.env, now: () => new Date() }): Promise<number> {
   let temporary: string | undefined;
   let finish: (() => Promise<void>) | undefined;
-  let state: 'woke' | 'exited' | 'expired' = 'exited';
+  let state: 'armed' | 'failing' | 'woke' | 'exited' | 'expired' = 'exited';
   try {
     const parent = process.ppid;
     const input = JSON.parse(stdin);
@@ -114,7 +118,8 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     const owns = async () => (await readJson(owner))?.nonce === nonce;
     const idle = async () => {
       const activity = await readJson(path.join(dir, 'activity.json'));
-      return activity?.state === 'idle' && typeof activity.updatedAt === 'string' && Number.isFinite(Date.parse(activity.updatedAt));
+      const at = typeof activity?.updatedAt === 'string' ? Date.parse(activity.updatedAt) : NaN;
+      return Number.isFinite(at) && (activity?.state === 'idle' || activity?.state === 'busy' && at > 0 && io.now().getTime() - at >= STALE_BUSY_MS);
     };
     const unread = async () => {
       if (input.hook_event_name !== 'SessionStart') return unreadMessages(dir);
@@ -125,15 +130,25 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       return messages;
     };
     while (io.now().getTime() < deadline) {
-      if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) || !await owns() || !parentAlive(parent)) return 0;
-      if (input.hook_event_name === 'SessionStart' && !(await sessionStartWakeChannels(filesForDir(dir), io.env)).length) return 0;
-      if (await idle() && await unread() > 0) {
-        // Delivery or a new prompt may have raced the first observation.
-        if (await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) && await unread() > 0 && await idle() && await owns()
-          && parentAlive(parent) && io.now().getTime() < deadline) {
-          io.stderr.write(NOTICE);
-          state = 'woke';
-          return 2;
+      try {
+        if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) || !await owns() || !parentAlive(parent)) return 0;
+        if (input.hook_event_name === 'SessionStart' && !(await sessionStartWakeChannels(filesForDir(dir), io.env)).length) return 0;
+        if (await idle() && await unread() > 0) {
+          // Delivery or a new prompt may have raced the first observation.
+          if (await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) && await unread() > 0 && await idle() && await owns()
+            && parentAlive(parent) && io.now().getTime() < deadline) {
+            io.stderr.write(NOTICE);
+            state = 'woke';
+            return 2;
+          }
+        }
+        if (state === 'failing') { state = 'armed'; await finish!(); state = 'exited'; }
+      } catch (error) {
+        // Keep listening through transient storage errors; status shows "failing" meanwhile.
+        if (state !== 'failing') {
+          state = 'failing';
+          try { io.stderr.write(`khala: wake watcher error (${(error as NodeJS.ErrnoException).code ?? 'unknown'}); retrying.\n`); } catch { /* Logging must not stop listening. */ }
+          try { await finish!(); } catch { /* Retry next poll. */ }
         }
       }
       await sleep(Math.min(poll, Math.max(0, deadline - io.now().getTime())));

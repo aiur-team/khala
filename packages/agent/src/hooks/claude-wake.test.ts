@@ -169,14 +169,25 @@ it.each([0, 1, 2, 4, -1])('matches inbox unreadCount with cursor %s, corrupt rec
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount });
   expect(await unreadMessages(files.dir)).toBe((await unreadCount(files.dir)).messages);
 });
-it('silently contains storage and IO errors', async () => {
+it('keeps listening through storage errors, reports failing, and wakes after recovery', async () => {
   await seed('idle', [entry()]);
   await fs.mkdir(files.cursor);
-  expect(await start().result).toEqual({ code: 0, stdout: '', stderr: '' });
-  expect((await watcher()).state).toBe('exited');
+  const running = start();
+  await vi.waitFor(async () => expect((await watcher()).state).toBe('failing'), { timeout: 1500, interval: 10 });
+  expect(running.child.exitCode).toBeNull();
   await fs.rm(files.cursor, { recursive: true });
-  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(), stderr: { write: () => { throw Error('failed'); } } })).toBe(0);
-  expect((await watcher()).state).toBe('exited');
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: 'khala: wake watcher error (EISDIR); retrying.\n' + notice });
+  expect((await watcher()).state).toBe('woke');
+  const env = { XDG_STATE_HOME: root, KHALA_WAKE_TEST_DEADLINE_MS: '300', KHALA_WAKE_TEST_POLL_MS: '10' };
+  expect(await watch(input, [], { env, now: () => new Date(), stderr: { write: () => { throw Error('failed'); } } })).toBe(0);
+  expect((await watcher()).state).toBe('expired');
+});
+it('expires stale busy activity after two minutes, as Esc skips Stop', async () => {
+  await seed('busy', [entry()]);
+  await writeActivity(files, 'busy', () => new Date(Date.now() - 119_000));
+  expect(await start(input, 300).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  await writeActivity(files, 'busy', () => new Date(Date.now() - 121_000));
+  expect(await start().result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
 it.each(['busy', 'claimed', 'superseded'])('rechecks %s after observing unread messages', async race => {
   await seed('idle', [entry()]);
@@ -246,17 +257,17 @@ it('finds a channel joined after the watcher is armed', async () => {
   expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
 
-it('retains backup wake after the former 50-minute deadline', async () => {
+it('retains backup wake after the former 50-minute and 24-hour deadlines', async () => {
   await seed('idle', [entry()]);
   let reads = 0;
-  const now = () => new Date(reads++ === 0 ? 0 : 51 * 60 * 1000);
+  const now = () => new Date(reads++ === 0 ? 0 : 25 * 60 * 60 * 1000);
   const stderr = { write: vi.fn() };
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now, stderr })).toBe(2);
   expect(stderr.write).toHaveBeenCalledExactlyOnceWith(notice);
 });
 
-it('defaults to a 24-hour deadline and records expiry at its boundary', async () => {
-  expect(DEADLINE_MS).toBe(24 * 60 * 60 * 1000);
+it('defaults to a 24-day deadline and records expiry at its boundary', async () => {
+  expect(DEADLINE_MS).toBe(24 * 24 * 60 * 60 * 1000);
   await seed('idle', [entry()]);
   let reads = 0;
   const stderr = { write: vi.fn() };
@@ -353,7 +364,7 @@ it.each(['sdk-cli', 'sdk-ts', 'sdk-py', 'claude-desktop', 'claude-vscode', 'unkn
   expect(Date.now() - started).toBeLessThan(1500);
   expect(await owner()).toBeUndefined();
 });
-it('uses the same 24-hour deadline for SessionStart', async () => {
+it('uses the same 24-day deadline for SessionStart', async () => {
   await seed();
   await joinedChannel('send_failed');
   let reads = 0;
