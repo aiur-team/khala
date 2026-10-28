@@ -136,3 +136,11 @@ it.each(['clear', 'compact'])('preserves busy activity on SessionStart %s', asyn
   await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source }), []);
   expect(await fs.readFile(path.join(files.dir, 'activity.json'), 'utf8')).toBe(activity);
 });
+
+it('names the loaded plugin launcher for the Monitor, not a bare khala on PATH (#1383)', async () => {
+  vi.stubEnv('CLAUDE_PLUGIN_ROOT', "/cache/khala/0.4.18/it's");
+  await writeStatus(files, 'connected', undefined, undefined, 'CHANNELMARK', 'NAMEMARK');
+  expect(await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'resume' }), [])).toBe(0);
+  expect(JSON.parse(String(stdout.mock.calls[0]?.[0])).hookSpecificOutput.additionalContext)
+    .toContain("Monitor on '/cache/khala/0.4.18/it'\\''s/bin/khala' watch --harness claude --session session with");
+});

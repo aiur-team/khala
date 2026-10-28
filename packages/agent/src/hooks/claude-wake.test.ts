@@ -182,12 +182,20 @@ it('keeps listening through storage errors, reports failing, and wakes after rec
   expect(await watch(input, [], { env, now: () => new Date(), stderr: { write: () => { throw Error('failed'); } } })).toBe(0);
   expect((await watcher()).state).toBe('expired');
 });
-it('expires stale busy activity after two minutes, as Esc skips Stop', async () => {
+it('never wakes mid-turn during a long tool call, but wakes after an Esc interrupt', async () => {
   await seed('busy', [entry()]);
-  await writeActivity(files, 'busy', () => new Date(Date.now() - 119_000));
-  expect(await start(input, 300).result).toEqual({ code: 0, stdout: '', stderr: '' });
-  await writeActivity(files, 'busy', () => new Date(Date.now() - 121_000));
-  expect(await start().result).toEqual({ code: 2, stdout: '', stderr: notice });
+  await writeActivity(files, 'busy', () => new Date(Date.now() - 600_000));
+  const transcript = path.join(root, 'transcript.jsonl');
+  await fs.writeFile(transcript, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'tool_use' }] } }) + '\n');
+  const stop = JSON.stringify({ ...JSON.parse(input), transcript_path: transcript });
+  expect(await start(stop, 300).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  await fs.appendFile(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: '[Request interrupted by user]' } }) + '\n');
+  expect(await start(stop).result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('exits at once under claude -p, which would wait for the hook before exiting', async () => {
+  await seed('idle');
+  expect(await start(input, 60_000, 'sdk-cli').result).toEqual({ code: 0, stdout: '', stderr: '' });
+  await expect(fs.stat(path.join(files.dir, 'watcher.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it.each(['busy', 'claimed', 'superseded'])('rechecks %s after observing unread messages', async race => {
   await seed('idle', [entry()]);

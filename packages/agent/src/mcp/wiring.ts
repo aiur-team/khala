@@ -8,7 +8,7 @@ import { adapterFor } from '../harness';
 import { wakeStatus, selectedWakeStatus, wakeDisableNotice, wakeStatusText } from '../wake/status';
 import { qwenInboundAllowed } from '../wake/qwen-socket';
 import { readWakeSettings } from '../wake/shared';
-import { monitorArmed } from '../watch';
+import { claudeWatchCommand, monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
 export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
@@ -26,6 +26,8 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       : createWakeLadder({ files, harness, sessionId, drivers, env,
         warningPrefix: adapter?.wakeWarningName ?? 'wake' }) : undefined;
     const watcherHint = async () => {
+      if (harness === 'claude') return await monitorArmed(files) ? undefined
+        : `Start a background Monitor on ${claudeWatchCommand(sessionId, env)} with timeout_ms 1800000; re-arm it when the Monitor deadline ends.`;
       if (harness !== 'qwen' || (deps.platform ?? process.platform) !== 'win32') return undefined;
       const settings = await readWakeSettings(stateRoot(env));
       if (!await qwenInboundAllowed(env) || settings.off['qwen/socket']) return undefined;

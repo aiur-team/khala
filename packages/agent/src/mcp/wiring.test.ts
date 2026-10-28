@@ -195,6 +195,23 @@ it('reports the active Monitor marker only for a joined Claude session', async (
   await wrapped.close();
 });
 
+it('hints the loaded plugin launcher to an unarmed Claude session on join and status (#1383)', async () => {
+  const env = { ...await environment(), CLAUDE_PLUGIN_ROOT: '/cache/khala/0.4.18' };
+  const client = createPlaceholderClient();
+  client.status = async () => ({ state: 'connected', unread: 0 });
+  client.join = async () => ({ state: 'connected' as const, channelName: 'c' });
+  const wrapped = createRealClientFactory(env, { createClient: () => client })({ harness: 'claude', sessionId: 'hinted' });
+  const command = "'/cache/khala/0.4.18/bin/khala' watch --harness claude --session hinted";
+  expect((await wrapped.status()).watcherHint).toContain(command);
+  expect(await wrapped.join('link', 'name')).toMatchObject({ watcherHint: expect.stringContaining(command) });
+  const files = sessionFiles('claude', 'hinted', env);
+  const nonce = '11111111-1111-1111-1111-111111111111';
+  await writeJsonAtomic(path.join(files.dir, `monitor-${nonce}.json`), { pid: process.pid, nonce });
+  await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { pid: process.pid, nonce });
+  expect(await wrapped.status()).not.toHaveProperty('watcherHint');
+  await wrapped.close();
+});
+
 
 it.each(['codex', 'claude', 'copilot'] as const)('starts restoring %s before any tool call', async harness => {
   const env = await environment();

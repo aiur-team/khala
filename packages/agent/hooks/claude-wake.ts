@@ -8,6 +8,7 @@ import { wakesAgent } from '../src/events/receive';
 import { wakeStart } from '../src/inbox';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
+import { claudeTranscriptInterrupted } from '../src/harness/claude-transcript';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -16,8 +17,6 @@ const NOTICE = 'Khala: new channel messages. They arrive in the next hook contex
 // ponytail: 24 days stays under Node's 2^31 ms timer cap; a session idle longer shows "lapsed" until any prompt.
 export const DEADLINE_MS = 24 * 24 * 60 * 60 * 1000;
 const POLL_MS = 500;
-/** Esc skips Stop and leaves busy behind; expire it like deliver does. */
-const STALE_BUSY_MS = 120_000;
 type IO = { stderr: Pick<NodeJS.WriteStream, 'write'>; env: NodeJS.ProcessEnv; now: () => Date };
 async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number; nudgedCount?: number } | null> {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -87,6 +86,8 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false)) return 0;
     const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
+    // `claude -p` (sdk-cli) waits for this hook before exiting, and an ended run has nothing to wake.
+    if (io.env.CLAUDE_CODE_ENTRYPOINT === 'sdk-cli') return 0;
     if (input.hook_event_name === 'SessionStart') {
       // Claude maps -p to sdk-cli; hooks have piped stdio even in the TUI.
       // Fail closed for SDK, desktop and unknown hosts. Stop keeps its existing behavior.
@@ -119,7 +120,10 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     const idle = async () => {
       const activity = await readJson(path.join(dir, 'activity.json'));
       const at = typeof activity?.updatedAt === 'string' ? Date.parse(activity.updatedAt) : NaN;
-      return Number.isFinite(at) && (activity?.state === 'idle' || activity?.state === 'busy' && at > 0 && io.now().getTime() - at >= STALE_BUSY_MS);
+      // Esc skips Stop and leaves busy behind; only a transcript interrupt ends that turn.
+      // A busy age limit would wake mid-turn during one long tool call.
+      return Number.isFinite(at) && (activity?.state === 'idle' || activity?.state === 'busy' && at > 0
+        && await claudeTranscriptInterrupted(typeof input.transcript_path === 'string' ? input.transcript_path : undefined, activity.updatedAt!));
     };
     const unread = async () => {
       if (input.hook_event_name !== 'SessionStart') return unreadMessages(dir);
