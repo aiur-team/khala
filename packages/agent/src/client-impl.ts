@@ -43,10 +43,15 @@ function safeError(error: unknown): KhalaClientError {
     error instanceof StateError ? error.code : undefined);
 }
 
+/** A secret-free reason: our fixed snake_case reasons, or a Node/Matrix error code such as ERR_MODULE_NOT_FOUND. */
 function errorDetail(error: unknown, fallback: string): string {
-  const failure = safeError(error);
-  if (terminal.includes(failure.message)) return failure.message;
-  return ['unsafe_state_dir', 'storage_failed'].includes(failure.message) ? failure.message : fallback;
+  if (!(error instanceof KhalaClientError) && !(error instanceof StateError)) {
+    const raw = typeof error === 'object' && error !== null ? error as { code?: unknown; errcode?: unknown } : {};
+    const code = raw.code ?? raw.errcode;
+    return typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/u.test(code) ? code : fallback;
+  }
+  const { message } = safeError(error);
+  return /^[a-z][a-z0-9_]{0,63}$/u.test(message) ? message : fallback;
 }
 
 const TYPING_CAP_MS = 10 * 60_000;
@@ -565,10 +570,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const failure = localStatus === 401 || localStatus === 403 || localStatus === 404
           ? new KhalaClientError('not_connected', localStatus === 401 ? 'unauthorized' : localStatus === 403 ? 'removed' : 'channel_deleted') : safeError(error);
         const inviteTimeout = error instanceof Error && error.message === 'invite_timeout';
-        attempt.failure = new KhalaClientError(failure.code, failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(failure, failure.code));
+        const detail = failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(localStatus === undefined ? error : failure, failure.code);
+        console.error(`khala: join_failed ${detail}${error instanceof Error ? ` (${error.name})` : ''}`);
+        attempt.failure = new KhalaClientError(failure.code, detail);
         await cleanup(attempt, terminal.includes(failure.message));
-        await setStatus(attempt, failure.code === 'join_expired' ? 'idle' : 'disconnected',
-          failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(failure, failure.code));
+        await setStatus(attempt, failure.code === 'join_expired' ? 'idle' : 'disconnected', detail);
         attempt.controller.abort();
       }
     } finally {
