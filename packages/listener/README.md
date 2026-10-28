@@ -28,6 +28,8 @@ run TypeScript. No network access or Node process is needed to consume the JSON.
   continuation values, invalid JSON, missing sessions and Stop context support.
   SessionStart is a no-op. Stop's legacy block reason and context path both use
   `<frame/>`; consumers supply their own product wording and version gating.
+- `goldens/*.json`: valid emulated-steer support and notice control projections,
+  plus an invalid carrier example (`cancel`), which validators must reject.
 - `MANIFEST.json`: spec version `1.0.0` and SHA256 of every other artifact's exact
   UTF-8 bytes. Paths are relative to `spec/v1/`; the manifest excludes itself.
 
@@ -44,3 +46,20 @@ before replaying the scheduler and codec fixtures and checking schema projection
 The generator uses `tsx` from the repository's existing development dependencies;
 no runtime dependency or wire decoder is added. JSON object keys and artifact
 paths are sorted, with no clock-dependent values.
+
+## Optional projection fields
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `control.backlog_on_leave_async` | `skip`, `notice` | `skip` advances past unread backlog (Khala behavior); `notice` leaves bodies pull-only and shows a notice. |
+| `support.steer.steer_carrier` | `native`, `emulated_interrupt` | Describes how steer reaches the session, separately from its support status. |
+
+Both fields are optional in v1; existing projections without them remain valid.
+The TypeScript reference exports `ListeningModeControl` and
+`ListeningModeSupportMap` for these projections. `steer_carrier` is only valid
+on the `steer` entry. Renderers must read it: `emulated_interrupt` must always
+be shown as **steer (interrupts current turn)**. It is not a support status;
+`experimental` remains the status for an experimental interrupting route.
+Khala does not adopt `notice` or `emulated_interrupt`; its scheduler and Matrix
+wire decoders are unchanged. These fields describe consumer behavior, not new
+scheduler inputs.

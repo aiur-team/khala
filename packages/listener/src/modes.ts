@@ -12,3 +12,24 @@ export function decodeListeningMode(input: unknown):
     ? { ok: true, value: input as ListeningMode }
     : { ok: false, code: 'invalid_field', field: '' };
 }
+
+export const BACKLOG_ON_LEAVE_ASYNC = ['skip', 'notice'] as const;
+export const STEER_CARRIERS = ['native', 'emulated_interrupt'] as const;
+
+/** Shared spec projections; Matrix wire records have separate evidence and decoders. */
+export type ListeningModeControl = Readonly<{
+  requested: ListeningMode | null;
+  effective: ListeningMode | null;
+  effective_reason: string | null;
+  version: number;
+  backlog_on_leave_async?: (typeof BACKLOG_ON_LEAVE_ASYNC)[number];
+}>;
+export type ListeningModeSupportEntry = Readonly<{
+  status: (typeof MODE_SUPPORT_STATUSES)[number];
+  reason: string | null;
+}>;
+export type ListeningModeSupportMap = Readonly<{
+  steer: ListeningModeSupportEntry & Readonly<{ steer_carrier?: (typeof STEER_CARRIERS)[number] }>;
+  sync: ListeningModeSupportEntry;
+  async: ListeningModeSupportEntry;
+}>;

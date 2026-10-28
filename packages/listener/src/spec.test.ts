@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { createClaudeStyleCodec, decideDelivery, decodeListeningMode, LISTENING_MODES, MODE_SUPPORT_STATUSES,
-  type HookEvent, type ListeningMode } from './index';
+  type HookEvent, type ListeningMode, type ListeningModeControl, type ListeningModeSupportMap } from './index';
 import { generateSpec, diskFiles, checkSpec, specDirectory } from '../scripts/generate-spec.mjs';
 
 const read = (path: string): unknown => JSON.parse(readFileSync(join(specDirectory, path), 'utf8'));
@@ -16,7 +16,7 @@ type Schema = {
 const schema = read('listening-mode.v1.schema.json') as Schema;
 // Only the generated schema's vocabulary is supported; fail closed on additions.
 function validates(value: unknown, rule: Schema, root = schema): boolean {
-  const supported = ['$schema', '$id', 'title', '$defs', '$ref', 'anyOf', 'const', 'enum', 'type',
+  const supported = ['$schema', '$id', 'title', 'description', '$defs', '$ref', 'anyOf', 'const', 'enum', 'type',
     'properties', 'required', 'additionalProperties', 'minLength', 'minimum', 'maximum'];
   for (const key of Object.keys(rule)) if (!supported.includes(key)) throw new Error(`Unsupported schema keyword: ${key}`);
   if (rule.$ref) {
@@ -154,4 +154,38 @@ it('spec: no hook golden contains Khala frame copy', async () => {
       expect(envelope.reason ?? envelope.hookSpecificOutput.additionalContext).toBe('<frame/>');
     }
   }
+});
+
+it('spec: support map with steer_carrier emulated_interrupt validates', () => {
+  const support = read('goldens/support-map-emulated-steer.json') as ListeningModeSupportMap;
+  expect(support.steer.steer_carrier).toBe('emulated_interrupt');
+  expect(support.steer.status).toBe('experimental');
+  expect(validates(support, definition('support'))).toBe(true);
+  expect(validates(support, schema)).toBe(true);
+  const native: ListeningModeSupportMap = { ...support, steer: { ...support.steer, steer_carrier: 'native' } };
+  expect(validates(native, definition('support'))).toBe(true);
+});
+
+it('spec: control record with backlog_on_leave_async notice validates', () => {
+  const control = read('goldens/control-record-notice.json') as ListeningModeControl;
+  expect(control.backlog_on_leave_async).toBe('notice');
+  expect(validates(control, definition('control'))).toBe(true);
+  expect(validates(control, schema)).toBe(true);
+  const skip: ListeningModeControl = { ...control, backlog_on_leave_async: 'skip' };
+  expect(validates(skip, definition('control'))).toBe(true);
+  for (const backlog of ['cancel', null, 0]) {
+    expect(validates({ ...control, backlog_on_leave_async: backlog }, definition('control'))).toBe(false);
+  }
+});
+
+it('spec: steer_carrier cancel is rejected, as are carriers on other modes', () => {
+  const support = read('goldens/support-map-emulated-steer.json') as ListeningModeSupportMap;
+  expect(validates(read('goldens/invalid-carrier.json'), definition('support'))).toBe(false);
+  for (const carrier of [null, 0]) {
+    expect(validates({ ...support, steer: { ...support.steer, steer_carrier: carrier } }, definition('support'))).toBe(false);
+  }
+  for (const mode of ['sync', 'async'] as const) {
+    expect(validates({ ...support, [mode]: { ...support[mode], steer_carrier: 'native' } }, definition('support'))).toBe(false);
+  }
+  expect(validates({ ...support, steer: { status: 'emulated_interrupt', reason: null } }, definition('support'))).toBe(false);
 });
