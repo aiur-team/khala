@@ -8,7 +8,7 @@ const confirmed: AgentJoinView = { ...pending, state: 'confirmed', agentUserId: 
 const ready: AgentJoinView = { ...confirmed, state: 'ready' };
 const ok = (view: AgentJoinView): AgentJoinResult => ({ kind: 'ok', view });
 const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
-function fixture(view = pending, readyTimeoutMs = 60_000) {
+function fixture(view = pending, readyTimeoutMs = 180_000) {
   const port = { view: vi.fn<AgentJoinPort['view']>().mockResolvedValue(ok(view)),
     confirm: vi.fn<AgentJoinPort['confirm']>().mockResolvedValue(ok(confirmed)),
     status: vi.fn<AgentJoinPort['status']>().mockResolvedValue(ok(confirmed)) };
@@ -38,16 +38,33 @@ describe('agent confirmation controller', () => {
     controller.dispose();
   });
 
-  it('times out after 60 seconds and retries status without another confirmation', async () => {
-    const { port, controller } = fixture();
+  it('names the stage, flags a slow join, keeps polling past the agent\'s own retries and joins without a click', async () => {
+    const { port, controller } = fixture(pending, 180_000);
     controller.start(); await flush(); await controller.confirm();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'ready_timeout' });
+    expect(controller.getSnapshot()).toEqual({ state: 'connecting', view: confirmed });
+    port.status.mockResolvedValue(ok({ ...confirmed, state: 'claimed' }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(controller.getSnapshot()).toEqual({ state: 'connecting', view: { ...confirmed, state: 'claimed' } });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(controller.getSnapshot()).toMatchObject({ state: 'connecting', slow: true });
     port.status.mockResolvedValue(ok(ready));
-    controller.retry(); controller.retry(); await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(controller.getSnapshot()).toEqual({ state: 'done', view: ready });
     expect(port.confirm).toHaveBeenCalledTimes(1);
-    expect(controller.getSnapshot().state).toBe('done');
     controller.dispose();
+  });
+
+  it('gives up after the deadline with a cause per stage, and offers no blind retry', async () => {
+    for (const [state, code] of [['confirmed', 'not_picked_up'], ['claimed', 'not_finished']] as const) {
+      const { port, controller } = fixture({ ...confirmed, state });
+      port.status.mockResolvedValue(ok({ ...confirmed, state }));
+      controller.start(); await flush(); await vi.advanceTimersByTimeAsync(180_000);
+      expect(controller.getSnapshot()).toMatchObject({ state: 'error', code });
+      const calls = port.status.mock.calls.length;
+      controller.retry(); await vi.advanceTimersByTimeAsync(5000);
+      expect(port.status).toHaveBeenCalledTimes(calls);
+      controller.dispose();
+    }
   });
 
   it('confirms with no click when Approve joins is off and the viewer issued the link, and waits for a click otherwise', async () => {
@@ -119,15 +136,36 @@ describe('agent confirmation controller', () => {
     controller.dispose();
   });
 
-  it('re-polls after a lost confirmation response without posting again', async () => {
+  it('retry rereads the join: a confirm that landed resumes polling without posting again', async () => {
     const { port, controller } = fixture();
     port.confirm.mockRejectedValue(new Error('response lost'));
     port.status.mockResolvedValue(ok(ready));
     controller.start(); await flush(); await controller.confirm();
     expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'unavailable' });
+    port.view.mockResolvedValue(ok(confirmed));
     controller.retry(); await vi.advanceTimersByTimeAsync(1000);
     expect(controller.getSnapshot().state).toBe('done');
     expect(port.confirm).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
+  it('retry after a confirm that never landed offers Confirm again', async () => {
+    const { port, controller } = fixture();
+    port.confirm.mockRejectedValueOnce(new Error('offline'));
+    controller.start(); await flush(); await controller.confirm();
+    controller.retry(); await flush();
+    expect(controller.getSnapshot()).toEqual({ state: 'review', view: pending });
+    await controller.confirm();
+    expect(port.confirm).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toEqual({ state: 'connecting', view: confirmed });
+    controller.dispose();
+  });
+
+  it('does not retry a signed-out error: the page signs in instead', async () => {
+    const { port, controller } = fixture();
+    port.view.mockResolvedValue({ kind: 'error', code: 'signed_out' });
+    controller.start(); await flush(); controller.retry(); await flush();
+    expect(port.view).toHaveBeenCalledTimes(1);
     controller.dispose();
   });
 
@@ -146,7 +184,7 @@ describe('agent confirmation controller', () => {
     controller.start(); await flush(); await vi.advanceTimersByTimeAsync(3000);
     expect(port.status).toHaveBeenCalledTimes(1);
     expect(port.status.mock.calls[0]?.[1]?.aborted).toBe(true);
-    expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'ready_timeout' });
+    expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'not_picked_up' });
     controller.dispose();
   });
 

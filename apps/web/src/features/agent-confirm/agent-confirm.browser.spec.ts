@@ -67,7 +67,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       assert.equal(await page.evaluate(() => localStorage.getItem('khala.theme')), toggled);
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
       await page.getByRole('link', { name: 'Open channel' }).waitFor();
-      await expect(page.getByText('Helper joined Launch.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Helper was invited to Launch.', { exact: true })).toBeVisible();
       assert.equal(confirmations, 1);
       assert.equal(polls, 3);
       // No Matrix device: the page never takes the cross-tab device lock, so any tab or browser works.

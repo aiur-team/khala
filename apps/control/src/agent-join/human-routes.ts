@@ -74,7 +74,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
   function viewOf(record: JoinRecord): AgentJoinView {
     const state = effectiveState(record, deps.clock());
     return { joinId: record.joinId, label: record.label, harness: record.harness, channelName: record.channelName,
-      roomId: record.roomId, state: state === 'claimed' ? 'confirmed' : state,
+      roomId: record.roomId, state,
       ...(record.agentUserId ? { agentUserId: record.agentUserId } : {}),
     };
   }
@@ -87,9 +87,10 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const read = await deps.joins.read(joinId);
       if (read.kind !== 'found') return read.kind === 'absent' ? error(404, 'not_found') : unavailable();
       let { record, revision } = read;
-      if (effectiveState(record, deps.clock()) === 'expired') return error(404, 'not_found');
       const denied = await membership(principal, record);
       if (denied) return denied;
+      // Members only: an expired view names the agent and channel.
+      if (effectiveState(record, deps.clock()) === 'expired') return json(200, viewOf(record));
       if (record.ownerId && record.ownerId !== principal.ownerId) return error(409, 'already_confirmed_by_other');
       if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') {
         if (record.rejoinApproval && !await rememberApproval(record, record.rejoinApproval.ownerLabel, record.rejoinApproval.generation, true)) return unavailable();
@@ -142,7 +143,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         next: { value: owner, expiresAt: null },
       });
       if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId && mapped.current.value.label === name)) return unavailable();
-      if (effectiveState(record, deps.clock()) === 'expired') return error(404, 'not_found');
+      if (effectiveState(record, deps.clock()) === 'expired') return json(200, viewOf(record));
       // Persist the cleanup pointer before making the claim permanent. A failed final
       // confirmation (including a process crash) remains a pending, expirable join.
       const staged: JoinRecord = { ...record, ...(rejoin ? { rejoin: true } : {}), label: name, agentUserId: userId };
@@ -151,13 +152,13 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         const latest = await deps.joins.read(joinId);
         if (latest.kind !== 'found' || latest.record.ownerId !== principal.ownerId) return unavailable();
         if (['confirmed', 'claimed', 'ready'].includes(latest.record.state)) return json(200, viewOf(latest.record));
-        if (latest.record.state !== 'pending' || effectiveState(latest.record, deps.clock()) === 'expired') return error(404, 'not_found');
+        if (latest.record.state !== 'pending' || effectiveState(latest.record, deps.clock()) === 'expired') return json(200, viewOf(latest.record));
         if (latest.record.agentUserId === userId && latest.record.label === name) stagedResult = { kind: 'applied', revision: latest.revision };
         else stagedResult = await deps.joins.replace(joinId, latest.revision, staged, 'name');
       }
       if (stagedResult.kind !== 'applied') return unavailable();
       record = staged; revision = stagedResult.revision;
-      if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
+      if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return json(200, viewOf(record)); }
       if (approvedUsername !== undefined) {
         const approval = await safeRead(deps.store, rejoinApprovalKey(identityId));
         if (approval.kind !== 'record' || !validRejoinApproval(approval.record.value)

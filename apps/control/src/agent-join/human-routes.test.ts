@@ -92,7 +92,7 @@ it('checks authorization before looking up joins and maps auth rejections', asyn
   expect((await f.handlers.status(f.request())).status).toBe(401);
   f.deps.auth.authenticateRequest.mockResolvedValue({ kind: 'unavailable' }); expect((await f.handlers.view(f.request())).status).toBe(503);
 });
-it('enforces methods, exact query parameters, membership and expiry', async () => {
+it('enforces methods, exact query parameters and membership, and reports expiry on confirm', async () => {
   const f = await fixture();
   expect((await f.handlers.view(f.request('POST'))).status).toBe(405);
   expect((await f.handlers.confirm(f.request())).status).toBe(405);
@@ -101,13 +101,15 @@ it('enforces methods, exact query parameters, membership and expiry', async () =
   f.deps.inspectMembership.mockResolvedValue({ kind: 'unavailable' }); expect((await f.handlers.status(f.request())).status).toBe(503);
   f.deps.inspectMembership.mockResolvedValue({ kind: 'joined', historyReady: true }); f.advance();
   expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ state: 'expired' });
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+  { const expired = await f.handlers.confirm(f.request('POST')); expect(expired.status).toBe(200); expect(await expired.json()).toMatchObject({ state: 'expired' }); }
+  // A non-member learns nothing about an expired request.
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'absent' }); expect((await f.handlers.confirm(f.request('POST'))).status).toBe(403);
 });
-it('maps claimed to confirmed and keeps ready visible after expiry', async () => {
+it('reports claimed and ready as they are, even after expiry', async () => {
   for (const state of ['claimed', 'ready'] as const) {
     const f = await fixture(); const read = await f.joins.read(f.joinId); if (read.kind !== 'found') throw Error();
     await f.joins.replace(f.joinId, read.revision, { ...read.record, state, ownerId: 'owner', agentUserId: credentials.userId }, 'test'); f.advance();
-    expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: state === 'claimed' ? 'confirmed' : 'ready', agentUserId: credentials.userId });
+    expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state, agentUserId: credentials.userId });
     expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
     expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
   }
@@ -148,7 +150,7 @@ it('fails closed on an unresolved final confirmation conflict', async () => {
 it('shows expired confirmed records with identity and refuses confirmation', async () => {
   const f = await fixture(); await f.handlers.confirm(f.request('POST')); f.advance();
   expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: 'expired', agentUserId: credentials.userId });
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+  { const expired = await f.handlers.confirm(f.request('POST')); expect(expired.status).toBe(200); expect(await expired.json()).toMatchObject({ state: 'expired' }); }
 });
 
 it('assigns the profile-based name, previews it and persists the owner index', async () => {
@@ -199,7 +201,7 @@ it('does not fail confirmation when the owner index is unavailable', async () =>
 it('refuses confirmation if provisioning crosses the join deadline', async () => {
   const f = await fixture({ username: 'Kevin' });
   f.deps.provisioner.provision.mockImplementationOnce(async () => { f.advance(); return { kind: 'ok', credentials }; });
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+  { const expired = await f.handlers.confirm(f.request('POST')); expect(expired.status).toBe(200); expect(await expired.json()).toMatchObject({ state: 'expired' }); }
 });
 
 it('keeps one hosted identity and its rename across fresh join requests for the same session', async () => {

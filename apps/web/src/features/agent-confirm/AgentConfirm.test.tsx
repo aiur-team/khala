@@ -31,13 +31,13 @@ describe('AgentConfirm', () => {
   });
   it('never asks to keep the tab open: the server finishes the join', () => {
     for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'connecting', view }, { state: 'done', view },
-      { state: 'error', code: 'ready_timeout', view }] satisfies AgentConfirmSnapshot[]) {
+      { state: 'error', code: 'not_finished', view }] satisfies AgentConfirmSnapshot[]) {
       expect(render(snapshot)).not.toContain('Keep this tab open');
     }
   });
   it('links to the encoded channel after success', () => {
     const html = render({ state: 'done', view });
-    expect(html).toContain('Helper joined Launch.');
+    expect(html).toContain('Helper was invited to Launch.');
     expect(html).toContain('href="/channels/!r1%3Akhala.local">Open channel');
   });
   it.each<[AgentConfirmError, string, boolean]>([
@@ -47,13 +47,15 @@ describe('AgentConfirm', () => {
     ['not_found', 'This confirmation link is not valid.', false],
     ['expired', 'This request expired. Ask your agent to run join again.', false],
     ['already_confirmed_by_other', 'Another member already confirmed this agent.', false],
-    ['ready_timeout', 'The agent did not finish connecting.', true],
+    ['not_picked_up', 'Your agent did not pick up the confirmation. Check that it is still running, then ask it to run join again.', false],
+    ['not_finished', 'Your agent started connecting but did not finish. Ask it to run join again.', false],
     ['unavailable', 'Khala is unavailable right now. Try again.', true],
-    ['signed_out', 'Khala is unavailable right now. Try again.', true],
+    ['signed_out', 'You are signed out. Sign in to continue.', false],
   ])('renders %s with appropriate retry', (code, copy, retry) => {
     const html = render({ state: 'error', code });
     expect(html).toContain(`role="alert">${copy}`);
     expect(html.includes('>Retry</button>')).toBe(retry);
+    expect(html.includes('>Sign in</button>')).toBe(code === 'signed_out');
     expect(html).not.toMatch(/\b(room|chat)\b/i);
   });
   it('renders review as the agent-finish card', () => {
@@ -64,18 +66,27 @@ describe('AgentConfirm', () => {
     expect(html).toContain('<p class="kh-fin-p" aria-hidden="true">wants to join <b>Launch</b></p>');
     expect(html).toContain('<button type="button" class="kh-btn pri">Confirm</button>');
   });
-  it('renders connecting with a spinner and status', () => {
-    expect(render({ state: 'connecting', view })).toContain(
-      '<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">Connecting Helper…</p>');
+  it.each<[AgentJoinView['state'], string]>([
+    ['pending', 'Confirming…'],
+    ['confirmed', 'Waiting for Helper to pick up the confirmation…'],
+    ['claimed', 'Helper is connecting…'],
+  ])('renders the %s stage with a spinner and status', (state, copy) => {
+    expect(render({ state: 'connecting', view: { ...view, state } })).toContain(
+      `<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">${copy}</p>`);
+  });
+  it('says when a join is slow', () => {
+    const slow = 'This is taking longer than usual. Check that your agent is still running.';
+    expect(render({ state: 'connecting', view, slow: true })).toContain(slow);
+    expect(render({ state: 'connecting', view })).not.toContain(slow);
   });
   it('renders done with a check line and a primary Open channel link', () => {
     const html = render({ state: 'done', view });
-    expect(html).toMatch(/<span class="kh-fin-ok"><svg [^>]*>.*?<\/svg>Helper joined Launch\.<\/span>/);
+    expect(html).toMatch(/<span class="kh-fin-ok"><svg [^>]*>.*?<\/svg>Helper was invited to Launch\.<\/span>/);
     expect(html).toContain('<a class="kh-btn pri" href="/channels/!r1%3Akhala.local">Open channel</a>');
   });
   it('renders a retryable error as an alert with Retry', () => {
-    expect(render({ state: 'error', code: 'ready_timeout', view })).toContain(
-      '<p class="kh-fin-p kh-fin-err" role="alert">The agent did not finish connecting.</p><button type="button" class="kh-btn">Retry</button>');
+    expect(render({ state: 'error', code: 'unavailable', view })).toContain(
+      '<p class="kh-fin-p kh-fin-err" role="alert">Khala is unavailable right now. Try again.</p><button type="button" class="kh-btn">Retry</button>');
   });
   it('titles a viewless error without the chip', () => {
     const html = render({ state: 'error', code: 'not_found' });
@@ -84,7 +95,7 @@ describe('AgentConfirm', () => {
   });
   it('has no close button and keeps Bungee to the wordmark', () => {
     for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'connecting', view }, { state: 'done', view },
-      { state: 'error', code: 'ready_timeout', view }] satisfies AgentConfirmSnapshot[]) {
+      { state: 'error', code: 'not_finished', view }] satisfies AgentConfirmSnapshot[]) {
       const html = render(snapshot);
       expect(html).not.toContain('kh-fin-x');
       expect(html.match(/class="wm"/g)).toHaveLength(1);

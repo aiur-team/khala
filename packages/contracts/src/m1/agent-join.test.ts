@@ -15,6 +15,7 @@ describe('M1 agent join', () => {
     expect(join.decodeAgentJoinView({ ...view, agentUserId: credentials.userId })).toEqual({ ok: true, value: { ...view, agentUserId: credentials.userId } });
     expect(join.decodeAgentJoinView({ ...view, access: 'join' })).toEqual({ ok: true, value: { ...view, access: 'join' } });
     expect(join.decodeAgentJoinView({ ...view, access: 'admin' }).ok).toBe(false);
+    expect(join.decodeAgentJoinView({ ...view, state: 'claimed' })).toEqual({ ok: true, value: { ...view, state: 'claimed' } });
     for (const error of ['wrong_account', 'invite_unavailable']) expect(join.decodeAgentJoinError({ error })).toEqual({ ok: true, value: { error } });
   });
   it('rejects extra and missing fields on each wire shape', () => {
