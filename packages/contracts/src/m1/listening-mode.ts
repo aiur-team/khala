@@ -1,12 +1,8 @@
 import { type Decoded, decodeWith, fail, literal, object, version } from '../messaging/decode';
-import { DEFAULT_LISTENING_MODE } from '@khala/listener';
-export { DEFAULT_LISTENING_MODE } from '@khala/listener';
+import { DEFAULT_LISTENING_MODE, LISTENING_MODES, type ListeningMode } from '@khala/listener';
+export { DEFAULT_LISTENING_MODE, LISTENING_MODES, type ListeningMode } from '@khala/listener';
 import { readMatrixUserId } from './agent-join';
 
-/** Highest attention first. `mute` (nothing delivered, nothing wakes) needs no delivery route, so it lives
- * here rather than in the delivery capability model. */
-export const LISTENING_MODES = ['steer', 'sync', 'async', 'mute'] as const;
-export type ListeningMode = (typeof LISTENING_MODES)[number];
 export function decodeListeningMode(input: unknown): Decoded<ListeningMode> {
   return decodeWith(() => literal(input, '', LISTENING_MODES));
 }

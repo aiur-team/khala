@@ -1,11 +1,11 @@
-// The shared projection deliberately excludes Matrix member-only `mute` and route evidence.
+// The shared projection excludes route evidence; `mute` is a mode with no delivery route or support entry.
 const ref = name => ({ $ref: `#/$defs/${name}` });
 const object = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] });
 
-export function listeningSchema(modes, statuses, backlogs, carriers) {
+export function listeningSchema(modes, deliveryModes, statuses, backlogs, carriers) {
   const text = { type: 'string' };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -25,7 +25,7 @@ export function listeningSchema(modes, statuses, backlogs, carriers) {
         steer_carrier: { type: 'string', enum: [...carriers],
           description: 'Renderers must read this carrier: emulated_interrupt must display steer (interrupts current turn).' } },
       ['status', 'reason']),
-      support: object(Object.fromEntries(modes.map(mode => [mode,
+      support: object(Object.fromEntries(deliveryModes.map(mode => [mode,
         ref(mode === 'steer' ? 'steerSupportEntry' : 'supportEntry')]))),
       parsedHook: object({ sessionId: text, event: { enum: ['start', 'prompt', 'tool', 'stop', 'limit'] },
         continuation: { type: 'boolean' }, workspace: text, transcriptPath: text, promptText: text },

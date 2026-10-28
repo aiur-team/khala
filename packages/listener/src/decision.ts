@@ -1,4 +1,4 @@
-import type { ListeningMode } from './modes';
+import type { DeliveryMode } from './modes.js';
 
 export type HookEvent = 'start' | 'prompt' | 'tool' | 'stop';
 export type DecisionInput = Readonly<{
@@ -9,7 +9,7 @@ export type DecisionInput = Readonly<{
   busyAgeMs: number | null;
   interruptedSinceBusy: boolean;
 }>;
-export type Decision = Readonly<{ deliverModes: readonly ListeningMode[]; markIdleOnly: boolean }>;
+export type Decision = Readonly<{ deliverModes: readonly DeliveryMode[]; markIdleOnly: boolean }>;
 
 export function decideDelivery(input: DecisionInput): Decision {
   if (input.event === 'start') return { deliverModes: [], markIdleOnly: false };

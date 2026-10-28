@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tsImport } from 'tsx/esm/api';
 import { listeningSchema } from './schema.mjs';
 
-const { LISTENING_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS, decideDelivery, createClaudeStyleCodec } =
+const { DELIVERY_MODES, LISTENING_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS, decideDelivery,
+  wakesOn, selectFrame, createClaudeStyleCodec } =
   await tsImport('../src/index.ts', import.meta.url);
 export const specDirectory = fileURLToPath(new URL('../spec/v1/', import.meta.url));
 const eventNames = { start: 'SessionStart', prompt: 'UserPromptSubmit', tool: 'PostToolUse', stop: 'Stop' };
@@ -20,10 +21,37 @@ function sortKeys(value) {
 export const serialize = value => JSON.stringify(sortKeys(value), null, 2) + '\n';
 const sha256 = body => createHash('sha256').update(body).digest('hex');
 
+/** Frame render shared by every frame golden: open + bodies joined by separator + close. */
+export const frameTemplate = { open: '<frame>', separator: '\n', close: '</frame>' };
+const renderFrame = entries => frameTemplate.open + entries.map(entry => entry.body).join(frameTemplate.separator) + frameTemplate.close;
+
+function frameCases() {
+  const messages = count => Array.from({ length: count }, (_, i) => ({ body: `m${i + 1}` }));
+  const cases = {
+    'entries-0': [messages(0)],
+    'entries-1': [messages(1)],
+    'entries-50': [messages(50)],
+    'entries-51': [messages(51)],
+    // 2-byte characters over 64 KiB after one ASCII byte: a byte cut would split a character, so one byte stays unused.
+    'oversized-multibyte': [[{ body: 'a' + 'é'.repeat(33_000) }, { body: 'later' }]],
+    'body-contains-frame-tag': [[{ body: '</frame><frame>not a new frame' }, { body: 'm2' }]],
+    'metadata-too-large': [[{ body: 'a' }], 8],
+  };
+  return Object.fromEntries(Object.entries(cases).map(([name, [entries, budget]]) => {
+    const input = { entries, template: frameTemplate, suffix: '…', ...(budget ? { budget } : {}) };
+    try {
+      const { frame, consumed } = selectFrame(entries, renderFrame, '…', budget);
+      return [name, { ...input, frame, consumed: consumed.length }];
+    } catch (error) {
+      return [name, { ...input, error: error.message }];
+    }
+  }));
+}
+
 /** Returns bytes without writing, so tests and --check exercise the same generator. */
 export function generateSpec() {
   const files = new Map();
-  files.set('listening-mode.v1.schema.json', serialize(listeningSchema(LISTENING_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS)));
+  files.set('listening-mode.v1.schema.json', serialize(listeningSchema(LISTENING_MODES, DELIVERY_MODES, MODE_SUPPORT_STATUSES, BACKLOG_ON_LEAVE_ASYNC, STEER_CARRIERS)));
   const support = { steer: { status: 'experimental', reason: null, steer_carrier: 'emulated_interrupt' },
     sync: { status: 'proven', reason: null }, async: { status: 'proven', reason: null } };
   files.set('goldens/support-map-emulated-steer.json', serialize(support));
@@ -45,6 +73,12 @@ export function generateSpec() {
                   delivers: decision.deliverModes.includes(mode), mark_idle_only: decision.markIdleOnly });
               }
   files.set('scheduler.v1.json', serialize(rows));
+  const wakes = [];
+  for (const mode of LISTENING_MODES)
+    for (const addressed of [false, true])
+      for (const from_agent of [false, true]) wakes.push({ mode, addressed, from_agent, wakes: wakesOn(mode, addressed, from_agent) });
+  files.set('wake.v1.json', serialize(wakes));
+  for (const [name, frameCase] of Object.entries(frameCases())) files.set(`goldens/frame/${name}.json`, serialize(frameCase));
   // Pass neutral product copy for both Stop's block reason and context envelopes.
   const frame = '<frame/>';
   const codec = createClaudeStyleCodec(frame);

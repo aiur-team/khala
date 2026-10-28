@@ -3,3 +3,4 @@ export function serialize(value: unknown): string;
 export function generateSpec(): Map<string, string>;
 export function diskFiles(directory?: string, prefix?: string): Promise<string[]>;
 export function checkSpec(): Promise<void>;
+export const frameTemplate: { open: string; separator: string; close: string };

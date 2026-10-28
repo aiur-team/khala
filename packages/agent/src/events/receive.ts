@@ -1,6 +1,7 @@
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { decodeChannelEvent, formatChannelEventLine } from '@khala/contracts/m1/channel-event';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { wakesOn } from '@khala/listener';
 
 /** `you` is the agent's own display name: a handoff addressed to it is delivered like a mention. */
 export function toEventInboxEntry(base: Omit<InboxEntry, 'kind' | 'body'>, rawContent: unknown, you?: string): { entry: InboxEntry; key?: string } | null {
@@ -40,11 +41,8 @@ export function mentions(entry: InboxEntry, name: string | undefined): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(entry.body);
 }
 
-/** Sync wakes an idle agent, or re-opens its turn at Stop, only for a message from a
- * person (or an unclassified sender) or one that names it. Other agents' messages wait for the
- * next turn's hook context. Async wakes only for a direct ping; mute never wakes. */
+/** The shared listener's wake rule (`wakesOn`); an unknown mode wakes like steer. */
 export function wakesAgent(entry: InboxEntry, mode: ListeningMode | undefined, you: string | undefined): boolean {
-  if (mode === 'mute' || !isWakeEntry(entry)) return false;
-  const pinged = entry.mention === true || mentions(entry, you);
-  return mode === 'async' ? pinged : mode !== 'sync' || entry.senderKind !== 'agent' || pinged;
+  if (!isWakeEntry(entry)) return false;
+  return wakesOn(mode ?? 'steer', entry.mention === true || mentions(entry, you), entry.senderKind === 'agent');
 }
