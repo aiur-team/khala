@@ -347,6 +347,19 @@ it('contains a session startup error without leaking its token', async () => {
   await vi.waitFor(async () => expect((await statusFile())?.state).toBe('disconnected'));
   expect((await statusFile())?.detail).toBe('internal_error'); expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
 });
+it.each([
+  ['a deleted install', () => startSession.mockRejectedValue(Object.assign(new Error('Cannot find module /SECRET/chunk.js'), { code: 'ERR_MODULE_NOT_FOUND' })), 'ERR_MODULE_NOT_FOUND'],
+  ['a ready failure', () => joinApi.reportReady.mockRejectedValue(new KhalaClientError('internal_error', 'not_confirmed')), 'not_confirmed'],
+])('names the cause of a join that fails after the claim: %s', async (_name, arrange, detail) => {
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+  arrange();
+  await client.join(link, 'Codex'); poll.resolve(credentials);
+  await vi.waitFor(async () => expect((await statusFile())?.state).toBe('disconnected'));
+  expect((await statusFile())?.detail).toBe(detail);
+  expect(stderr).toHaveBeenCalledWith(expect.stringContaining(`khala: join_failed ${detail}`));
+  expect(JSON.stringify(stderr.mock.calls)).not.toContain('SECRET');
+  stderr.mockRestore();
+});
 it('falls back to the room id and propagates injected fetch and invite timeout', async () => {
   const fakeFetch = vi.fn<typeof fetch>();
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now,

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,11 +34,16 @@ function run(args: string[], env: Record<string, string> = {}, input = '') {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-it('prefers KHALA_BIN, then the pinned copy, then another khala on PATH, then npx', async () => {
+it('prefers KHALA_BIN, then the pinned copy, then the pinned version through npx, never another khala on PATH', async () => {
   await script(path.join(fakeBin, 'npx'), echo('npx'));
-  expect(run(['hook', 'deliver'], {}, 'in')).toMatchObject({ status: 0, stdout: `npx:-y ${manifest.name}@${manifest.version} hook deliverin` });
+  await script(path.join(fakeBin, 'npm'), 'echo "$*" >> "$NPM_LOG"');
   await script(path.join(fakeBin, 'khala'), echo('path'));
-  expect(run(['mcp', '--harness', 'claude'])).toMatchObject({ status: 0, stdout: 'path:mcp --harness claude' });
+  const env = { NPM_LOG: path.join(root, 'npm.log') };
+  expect(run(['hook', 'deliver'], env, 'in')).toMatchObject({ status: 0, stdout: `npx:-y ${manifest.name}@${manifest.version} hook deliverin` });
+  expect(run(['mcp', '--harness', 'claude'], env)).toMatchObject({ status: 0, stdout: `npx:-y ${manifest.name}@${manifest.version} mcp --harness claude` });
+  // A missing pinned copy (no SessionStart on this version, or removed) starts its install.
+  for (let i = 0; i < 100 && !await fs.stat(env.NPM_LOG).catch(() => null); i++) await sleep(50);
+  expect(await fs.readFile(env.NPM_LOG, 'utf8')).toContain(`${manifest.name}@${manifest.version}`);
   await script(path.join(data, `npm-${manifest.version}`, 'bin/khala'), echo('pinned'));
   expect(run(['hook', 'deliver'], {}, '{"x":1}')).toMatchObject({ status: 0, stdout: 'pinned:hook deliver{"x":1}' });
   await script(path.join(root, 'dev/khala.mjs'), echo('dev'));
@@ -61,6 +67,25 @@ it('installs the pinned version in the background on SessionStart, once', async 
   expect(run(['--ensure-installed'], env).status).toBe(0);
   expect(await fs.readFile(env.NPM_LOG, 'utf8')).toBe(`${manifest.name}@${manifest.version}\n`);
   expect(await fs.readdir(data)).toEqual(expect.not.arrayContaining([expect.stringMatching(/^\.tmp-/)]));
+});
+
+it('removes old versions after a week, except one a running process still uses', async () => {
+  await script(path.join(fakeBin, 'npm'), [
+    'prefix=""; while [ $# -gt 0 ]; do [ "$1" = --prefix ] && prefix="$2"; shift; done',
+    'mkdir -p "$prefix/bin" && printf \'#!/bin/sh\\n\' > "$prefix/bin/khala" && chmod +x "$prefix/bin/khala"',
+  ].join('\n'));
+  const old = new Date(Date.now() - 8 * 86_400_000);
+  for (const name of ['npm-0.0.1', 'npm-0.0.2', 'npm-0.0.3']) {
+    await script(path.join(data, name, 'bin/khala'), 'sleep 30');
+    if (name !== 'npm-0.0.3') await fs.utimes(path.join(data, name), old, old);
+  }
+  const live = spawn(path.join(data, 'npm-0.0.1', 'bin/khala'), ['mcp', '--harness', 'claude'], { stdio: 'ignore' });
+  await once(live, 'spawn');
+  try {
+    await fs.mkdir(path.join(data, `.install-${manifest.version}.lock`));
+    expect(run(['--install-locked']).status).toBe(0);
+    expect((await fs.readdir(data)).sort()).toEqual(['npm-0.0.1', 'npm-0.0.3', `npm-${manifest.version}`]);
+  } finally { live.kill(); }
 });
 
 it('skips the install under KHALA_BIN', async () => {
