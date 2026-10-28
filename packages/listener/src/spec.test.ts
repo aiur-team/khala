@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
-import { createClaudeStyleCodec, decideDelivery, decodeListeningMode, LISTENING_MODES, MODE_SUPPORT_STATUSES,
+import { createClaudeStyleCodec, decideDelivery, decodeListeningMode, DELIVERY_MODES, LISTENING_MODES, MODE_SUPPORT_STATUSES,
+  selectFrame, wakesOn,
   type HookEvent, type ListeningMode, type ListeningModeControl, type ListeningModeSupportMap } from './index';
-import { generateSpec, diskFiles, checkSpec, specDirectory } from '../scripts/generate-spec.mjs';
+import { generateSpec, diskFiles, checkSpec, specDirectory, frameTemplate } from '../scripts/generate-spec.mjs';
 
 const read = (path: string): unknown => JSON.parse(readFileSync(join(specDirectory, path), 'utf8'));
 type Schema = {
@@ -54,12 +55,12 @@ it('spec: scheduler.v1.json matches decideDelivery for every grid row', () => {
   const rows = read('scheduler.v1.json') as Row[];
   const keys = new Set(rows.map(row => JSON.stringify([row.harness, row.event, row.mode, row.busy,
     row.busy_age_ms, row.continuation, row.interrupted_since_busy])));
-  expect(rows).toHaveLength(2 * 4 * 3 * 2 * 4 * 2 * 2);
+  expect(rows).toHaveLength(2 * 4 * 4 * 2 * 4 * 2 * 2);
   expect(keys.size).toBe(rows.length);
   // Enumerate expected inputs independently: missing or substituted rows cannot pass by self-replay.
   for (const harness of ['claude', 'codex'])
     for (const event of ['start', 'prompt', 'tool', 'stop'])
-      for (const mode of ['steer', 'sync', 'async'])
+      for (const mode of ['steer', 'sync', 'async', 'mute'])
         for (const busy of [false, true])
           for (const age of [0, 119999, 120000, null])
             for (const continuation of [false, true])
@@ -70,8 +71,41 @@ it('spec: scheduler.v1.json matches decideDelivery for every grid row', () => {
     const result = decideDelivery({ harness: row.harness, event: row.event, busy: row.busy,
       busyAgeMs: row.busy_age_ms, continuation: row.continuation, interruptedSinceBusy: row.interrupted_since_busy });
     expect({ delivers: row.delivers, markIdleOnly: row.mark_idle_only }).toEqual({
-      delivers: result.deliverModes.includes(row.mode), markIdleOnly: result.markIdleOnly });
+      delivers: (result.deliverModes as readonly string[]).includes(row.mode), markIdleOnly: result.markIdleOnly });
   }
+});
+
+it('spec: wake.v1.json matches wakesOn: async only when addressed, mute never', () => {
+  const rows = read('wake.v1.json') as { mode: ListeningMode; addressed: boolean; from_agent: boolean; wakes: boolean }[];
+  expect(rows).toHaveLength(16);
+  for (const row of rows) expect(row.wakes).toBe(wakesOn(row.mode, row.addressed, row.from_agent));
+  // Independent of the reference, so a self-replayed regression cannot pass.
+  const woken = rows.filter(row => row.wakes).map(row => `${row.mode}:${row.addressed}:${row.from_agent}`).sort();
+  expect(woken).toEqual(['async:true:false', 'async:true:true', 'steer:false:false', 'steer:false:true', 'steer:true:false',
+    'steer:true:true', 'sync:false:false', 'sync:true:false', 'sync:true:true']);
+});
+
+type FrameGolden = { entries: { body: string }[]; template: typeof frameTemplate; suffix: string; budget?: number }
+  & ({ frame: string | null; consumed: number } | { error: string });
+it('spec: every frame golden replays selectFrame, with the 50-message and 64 KiB caps pinned', async () => {
+  const paths = (await diskFiles()).filter(path => path.startsWith('goldens/frame/'));
+  expect(paths).toHaveLength(7);
+  for (const path of paths) {
+    const golden = read(path) as FrameGolden;
+    const { open, separator, close } = golden.template;
+    const run = () => selectFrame(golden.entries, entries => open + entries.map(entry => entry.body).join(separator) + close,
+      golden.suffix, golden.budget);
+    if ('error' in golden) expect(run, path).toThrow(golden.error);
+    else {
+      const { frame, consumed } = run();
+      expect({ frame, consumed: consumed.length }, path).toEqual({ frame: golden.frame, consumed: golden.consumed });
+    }
+  }
+  // Fixed expectations: changing MAX_FRAME_MESSAGES or MAX_FRAME_BYTES must fail here.
+  expect((read('goldens/frame/entries-51.json') as { consumed: number }).consumed).toBe(50);
+  const oversized = read('goldens/frame/oversized-multibyte.json') as { frame: string; consumed: number };
+  expect([Buffer.byteLength(oversized.frame), oversized.consumed]).toEqual([65_535, 1]);
+  expect((read('goldens/frame/metadata-too-large.json') as { error: string }).error).toBe('frame_metadata_too_large');
 });
 
 it('spec: regenerated artifacts equal the checked-in files and manifest hashes', async () => {
@@ -111,12 +145,13 @@ it('spec: every hook golden validates against the schema and replays the codec',
 });
 
 it('spec: schema rejects an unknown mode, extra command keys and incomplete projections', () => {
-  for (const mode of [...LISTENING_MODES, 'mute', 'unknown', null, 0]) {
+  for (const mode of [...LISTENING_MODES, 'unknown', null, 0]) {
     expect(validates(mode, definition('mode'))).toBe(decodeListeningMode(mode).ok);
   }
   const command = { v: 1, agent: '@agent:example.org', mode: 'sync' };
   expect(validates(command, definition('command'))).toBe(true);
-  for (const patch of [{ mode: 'unknown' }, { mode: 'mute' }, { extra: true }, { v: 2 }, { agent: '' }]) {
+  expect(validates({ ...command, mode: 'mute' }, definition('command'))).toBe(true);
+  for (const patch of [{ mode: 'unknown' }, { extra: true }, { v: 2 }, { agent: '' }]) {
     expect(validates({ ...command, ...patch }, definition('command'))).toBe(false);
   }
   for (const key of Object.keys(command)) {
@@ -124,11 +159,12 @@ it('spec: schema rejects an unknown mode, extra command keys and incomplete proj
   }
   const control = { requested: 'sync', effective: null, effective_reason: null, version: 0 };
   expect(validates(control, definition('control'))).toBe(true);
-  for (const patch of [{ requested: 'unknown' }, { effective: 'mute' }, { version: -1 }, { version: 0.5 },
+  expect(validates({ ...control, effective: 'mute' }, definition('control'))).toBe(true);
+  for (const patch of [{ requested: 'unknown' }, { version: -1 }, { version: 0.5 },
     { version: Number.MAX_SAFE_INTEGER + 1 }, { effective_reason: 2 }, { extra: true }]) {
     expect(validates({ ...control, ...patch }, definition('control'))).toBe(false);
   }
-  const support = Object.fromEntries(LISTENING_MODES.map(mode => [mode, { status: 'unknown', reason: 'unavailable' }]));
+  const support = Object.fromEntries(DELIVERY_MODES.map(mode => [mode, { status: 'unknown', reason: 'unavailable' }]));
   expect(validates(support, definition('support'))).toBe(true);
   for (const status of MODE_SUPPORT_STATUSES) {
     expect(validates({ ...support, sync: { status, reason: null } }, definition('support'))).toBe(true);

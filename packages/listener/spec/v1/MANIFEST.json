@@ -5,6 +5,34 @@
       "sha256": "850cd4a82c634ab9ffa9a8189ebe95f9c0a8303fecc3e2cecf1623c4ba2730e8"
     },
     {
+      "path": "goldens/frame/body-contains-frame-tag.json",
+      "sha256": "8b5362702dd3c922c8b373c323d890215be60cfae0c9633f554911319b13ab60"
+    },
+    {
+      "path": "goldens/frame/entries-0.json",
+      "sha256": "b7e6b99ab31cd1b77952f42c75e03908c8ee16d59e90aad263c66b75f0052910"
+    },
+    {
+      "path": "goldens/frame/entries-1.json",
+      "sha256": "fb1e326dba4399f10c07074affce5cd871cdd313e3e3251927aa5d3b07f41365"
+    },
+    {
+      "path": "goldens/frame/entries-50.json",
+      "sha256": "878b9caf856a74e6362dbc6dc0f5fe53af23b12feb6f46a1dec9504a72509f5c"
+    },
+    {
+      "path": "goldens/frame/entries-51.json",
+      "sha256": "99dd0d0bf4a63d09fe8a0f9d765443e39addf2e7d816e8f5704bd28ec1de8007"
+    },
+    {
+      "path": "goldens/frame/metadata-too-large.json",
+      "sha256": "4a4a739bf083056b919b7c3b50f2161ac2283f934219f4024f0c08672f978d76"
+    },
+    {
+      "path": "goldens/frame/oversized-multibyte.json",
+      "sha256": "dca1abe1f3f7eeea5107be8dba82a569666110cb6a1f5d83abc756434633bf7a"
+    },
+    {
       "path": "goldens/hook/claude-PostToolUse-absent.json",
       "sha256": "d41f08eb7fac5971fa70151491f2d5cb0f3842314728bbdf76c17e2879687400"
     },
@@ -214,11 +242,15 @@
     },
     {
       "path": "listening-mode.v1.schema.json",
-      "sha256": "18067a9cab9d17cb27fbee5a11acf9a91e4dfa49aeeb5e27cae63ed9b9cade44"
+      "sha256": "6126bedd9f514437c1c87da88716720f8e9d7b0e70d15095be6e7d66ef9ace58"
     },
     {
       "path": "scheduler.v1.json",
-      "sha256": "7fffb3a32247e485f237cafa9222b7a7a93ce616bcc548f21a870b00d075a191"
+      "sha256": "8b20ff79714267a556aa2bc3d91cb2b2614a6395f63a98e8ff33b26d58c86cd0"
+    },
+    {
+      "path": "wake.v1.json",
+      "sha256": "fca167dc22d8e5e918c259b4113945ec80b1d37aaeae43f297810054fd811f96"
     }
   ],
   "spec_version": "1.0.0"

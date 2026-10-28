@@ -3,8 +3,8 @@ import {
 } from './decode';
 import { type BindingId, type CommandId, type ParticipantId, readId } from './ids';
 
-import { LISTENING_MODES, MODE_SUPPORT_STATUSES, type ListeningMode } from '@khala/listener';
-export { LISTENING_MODES, MODE_SUPPORT_STATUSES, decodeListeningMode, type ListeningMode } from '@khala/listener';
+import { DELIVERY_MODES as LISTENING_MODES, MODE_SUPPORT_STATUSES, type DeliveryMode as ListeningMode } from '@khala/listener';
+export { DELIVERY_MODES as LISTENING_MODES, MODE_SUPPORT_STATUSES, type DeliveryMode as ListeningMode } from '@khala/listener';
 export const ACKNOWLEDGEMENT_SUPPORT = ['unknown', 'unsupported', 'batch_token_next_call'] as const;
 export const OWNER_ROUTE_GRANT_COMMAND_KINDS = [
   'grant_experimental_route', 'revoke_experimental_route', 'grant_hard_cancel', 'revoke_hard_cancel',

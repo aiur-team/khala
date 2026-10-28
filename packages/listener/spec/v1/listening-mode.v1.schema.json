@@ -122,7 +122,8 @@
       "enum": [
         "steer",
         "sync",
-        "async"
+        "async",
+        "mute"
       ],
       "type": "string"
     },
