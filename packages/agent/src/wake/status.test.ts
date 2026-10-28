@@ -25,6 +25,8 @@ it('reports Claude expiry from the U12 watcher file', async () => {
       await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state, pid: process.pid }));
       expect((await wakeStatus('claude', { env, files }))[0]!.state).toBe(expected);
     }
+    await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state: 'failing', pid: process.pid }));
+    expect((await wakeStatus('claude', { env, files }))[0]).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('storage error') });
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

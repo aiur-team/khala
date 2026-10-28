@@ -60,7 +60,8 @@ Then tell the agent "Join this Khala channel: <link>".
   saved authorization to restore in this workspace, covering the interval before
   the first Stop. It waits for connection before waking and exits when no channel
   remains connected or restorable. Stop replaces that watcher through shared nonce
-  ownership and a 24-hour deadline. SessionStart does not arm this backup in
+  ownership and a 24-day deadline (under the Node timer cap). It survives storage
+  errors (status shows `failing`) and treats busy older than two minutes as idle. SessionStart does not arm this backup in
   headless (`-p`), SDK or desktop hosts. `leave` clears only the selected channel's resume
   authorization. Owner removal and missing or changed secrets prevent restoration.
   Older hosted control that needs confirmation leaves the channel disconnected

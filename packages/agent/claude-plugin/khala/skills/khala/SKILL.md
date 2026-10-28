@@ -60,4 +60,4 @@ a fresh local link. If a link returns `link_unavailable`, ask for a replacement.
 A new session must join before arming.
 `watcherArmed: false` is a reminder to arm it. Notifications contain counts only;
 use `read` for messages. If Monitor is unavailable, tell your user; the
-24-hour Stop-hook wake remains a backup, armed only after a completed turn.
+24-day Stop-hook wake remains a backup, armed only after a completed turn.
