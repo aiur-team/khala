@@ -63,7 +63,7 @@ export async function watchSession(files: SessionFiles, io: {
     const wake = await readWakeSettings(stateRoot(env));
     return await qwenInboundAllowed(env) && !wake.off['qwen/socket'] && !wake.off['qwen/background-shell'];
   };
-  let watcher: FSWatcher | undefined;
+  const watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
   let running: Promise<void> | undefined;
   let dirty = false;
@@ -74,7 +74,7 @@ export async function watchSession(files: SessionFiles, io: {
   const finished = new Promise<void>(resolve => { finish = resolve; });
   const stop = (exit = 0, reason = 'stopped') => {
     if (done) return;
-    done = true; code = exit; watcher?.close(); clearInterval(timer);
+    done = true; code = exit; for (const w of watchers) w.close(); clearInterval(timer);
     if (!qwen || exit !== 0) io.stderr?.(`khala watch: stopped (${reason}). Do not re-arm.`);
     finish();
   };
@@ -220,11 +220,13 @@ export async function watchSession(files: SessionFiles, io: {
     };
     let published = false;
     // Watch the directory rather than an inode: status/mode/session use atomic rename.
-    // Recursive, so channel subdirectories wake the scan too (Node 22 supports it on every platform).
-    watcher = watchDirectory(files.dir, { recursive: true }, (_event, filename) => {
-      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(path.basename(String(filename))))) notify();
-    });
-    watcher.on('error', error => stop(3, errorReason(error)));
+    // Recursive, so channel subdirectories wake the scan too. Node's recursive Linux watcher
+    // loses repeat atomic renames of top-level files, so the top level also gets a plain watch.
+    const onChange = (_event: string, filename: string | Buffer | null) => {
+      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json', 'activity.json'].includes(path.basename(String(filename))))) notify();
+    };
+    watchers.push(watchDirectory(files.dir, onChange), watchDirectory(files.dir, { recursive: true }, onChange));
+    for (const w of watchers) w.on('error', error => stop(3, errorReason(error)));
     lastHeartbeat = Date.now();
     await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
     await writeJsonAtomic(path.join(storage, MARKER), { nonce, pid: process.pid, startedAt: Date.now() });
@@ -242,7 +244,7 @@ export async function watchSession(files: SessionFiles, io: {
     return 3;
   } finally {
     clearInterval(timer);
-    watcher?.close();
+    for (const w of watchers) w.close();
     io.signal.removeEventListener('abort', abort);
     // Remove only this generation's lease; comparing then unlinking the shared marker
     // could erase a replacement that races cleanup. The marker alone is not liveness.
