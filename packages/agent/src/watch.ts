@@ -16,6 +16,7 @@ import { readWakeSettings } from './wake/shared';
 
 const MARKER = 'monitor.json';
 const OBSERVATION = 'monitor-cursor.json';
+const TICK_MS = 2_000;
 const NONCE_PATTERN = /^[a-f0-9-]{36}$/;
 const leaseFile = (dir: string, nonce: string) => path.join(dir, `monitor-${nonce}.json`);
 type Observation = { userId: string; roomId: string; count: number; lastEventId: string | null };
@@ -219,17 +220,18 @@ export async function watchSession(files: SessionFiles, io: {
     };
     let published = false;
     // Watch the directory rather than an inode: status/mode/session use atomic rename.
-    watcher = watchDirectory(files.dir, (_event, filename) => {
-      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename)))) notify();
+    // Recursive, so channel subdirectories wake the scan too (Node 22 supports it on every platform).
+    watcher = watchDirectory(files.dir, { recursive: true }, (_event, filename) => {
+      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(path.basename(String(filename))))) notify();
     });
     watcher.on('error', error => stop(3, errorReason(error)));
     lastHeartbeat = Date.now();
     await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
     await writeJsonAtomic(path.join(storage, MARKER), { nonce, pid: process.pid, startedAt: Date.now() });
     published = true;
-    // Re-list on every tick: subdirectory writes and channels joined after startup
-    // need observation even on platforms without recursive fs.watch.
-    timer = setInterval(notify, 100);
+    // Fallback tick for missed fs events, the lease heartbeat and Muse request deadlines.
+    // Each scan re-reads every inbox, so a fast tick is a busy loop on a large inbox.
+    timer = setInterval(notify, TICK_MS);
     io.signal.addEventListener('abort', abort, { once: true });
     if (io.signal.aborted) stop(); else notify();
     await finished;
@@ -248,6 +250,12 @@ export async function watchSession(files: SessionFiles, io: {
       if (!['ENOENT', 'EACCES', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     });
   }
+}
+
+/** The loaded plugin's own launcher pins its version; a bare `khala` on PATH may be another install (#1383). */
+export function claudeWatchCommand(sessionId: string, env: NodeJS.ProcessEnv): string {
+  const root = env.CLAUDE_PLUGIN_ROOT;
+  return `${root ? `'${path.join(root, 'bin', 'khala').replaceAll("'", "'\\''")}'` : 'khala'} watch --harness claude --session ${sessionId}`;
 }
 
 export const WATCH_USAGE = 'usage: khala watch [--harness <id>] [--session <id>]';

@@ -259,6 +259,18 @@ it('discovers a later join, keeps running after one channel leaves, and exits on
   await expect(result).resolves.toBe(2);
 });
 
+it('stays idle without rescanning a large inbox, then emits a channel append at once (#1383)', async () => {
+  const a = await joined('!a:local', 'big');
+  await appendEntries(a, Array.from({ length: 10_000 }, (_, i) => ({ ...entry(i), roomId: '!a:local', sender: '@self:local' })));
+  await armed();
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const reads = vi.mocked(fs.readFile);
+  reads.mockClear();
+  await new Promise(resolve => setTimeout(resolve, 1_000));
+  expect(reads.mock.calls.filter(([file]) => String(file).endsWith('inbox.jsonl'))).toHaveLength(0);
+  await appendEntries(a, [{ ...entry(10_001), roomId: '!a:local' }]);
+  await vi.waitFor(() => expect(lines).toEqual(['khala: 1 new message in #big (1 mentions you)\n']), { timeout: 1_000 });
+});
 it('captures the empty legacy startup baseline before delivery can race the first scan', async () => {
   const realRead = (await vi.importActual<typeof fs>('node:fs/promises')).readFile;
   let raced = false;
