@@ -25,7 +25,8 @@ async function legacyRoomId(files: SessionFiles): Promise<string | undefined> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new StateError('storage_failed');
   }
-  try { return roomId(JSON.parse(content.split('\n')[0]!)); } catch { return undefined; }
+  // The newest entry names the current room: a flat inbox outlives a move to another room.
+  try { return roomId(JSON.parse(content.trimEnd().split('\n').at(-1)!)); } catch { return undefined; }
 }
 
 export async function listChannels(files: SessionFiles): Promise<ChannelRef[]> {
