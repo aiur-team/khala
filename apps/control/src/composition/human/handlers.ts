@@ -387,6 +387,23 @@ export function createHumanHandlers(
       }),
     },
     {
+      // The agent's owner or the channel creator; agents hold no human session, so they never reach this (#1396).
+      path: '/api/human/channels/remove-agent', methods: post,
+      handle: request => withServices(request, async ({ auth, administration }) => {
+        const principal = await authorized(auth, request);
+        if (isResponse(principal)) return principal;
+        if (!administration) return unavailable('feature_unavailable');
+        const value = await readJsonObject(request);
+        if (!value || !hasExactKeys(value, ['roomId', 'userId']) || typeof value.userId !== 'string'
+          || !/^@[^\s:]{1,255}:[^\s]{1,255}$/u.test(value.userId)) return json(400, { code: 'invalid_request' });
+        const roomId = decodeRoomId(value.roomId);
+        if (!roomId.ok) return json(400, { code: 'invalid_request' });
+        const result = await administration.removeAgent(principal, roomId.value, value.userId);
+        return result.kind === 'ok' ? json(200, { kind: 'ok' }) : result.kind === 'forbidden' ? json(403, { code: 'forbidden' })
+          : result.kind === 'not_found' ? json(404, { code: 'not_found' }) : unavailable();
+      }),
+    },
+    {
       path: MATRIX_SESSION_PATH,
       methods: post,
       handle: request => withServices(request, async ({ auth, messaging }) => {

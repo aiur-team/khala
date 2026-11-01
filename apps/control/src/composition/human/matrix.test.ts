@@ -6,6 +6,7 @@ import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { defaultHumanColor, humanColorRecordKey } from '@khala/contracts/m1/colors';
 import { agentOwnerRecordKey, humanEmailRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
+import { agentRemoved } from '../../invitations/removals';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import { ensureMessagingAccount } from '../../auth/provisioning';
 
@@ -975,4 +976,51 @@ it('serializes a second removal against a paused owner-authorized unban and then
   expect(await matrix.gateway.admit(input)).toEqual({ kind: 'forbidden' });
   expect(targetMembership).toBe('ban');
   expect(mutations).toEqual(['ban', 'unban', 'invite', 'join', 'ban']);
+});
+
+it('removes one agent for its owner or the channel creator only, then reports it removed (#1396)', async () => {
+  const roomId = '!agent-removal:matrix.example.test' as RoomId;
+  const bob = 'owner_bob' as OwnerId; const carol = 'owner_carol' as OwnerId;
+  const creatorUser = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+  const bobAgent = '@bob-agent:matrix.example.test'; const carolAgent = '@carol-agent:matrix.example.test';
+  const members: Record<string, string> = { [creatorUser]: 'join', [ownerMatrixUserId(bob, 'matrix.example.test')]: 'join',
+    [ownerMatrixUserId(carol, 'matrix.example.test')]: 'join', [bobAgent]: 'join', [carolAgent]: 'join' };
+  const store = memoryStore();
+  for (const [user, owner] of [[bobAgent, bob], [carolAgent, carol]] as const) {
+    await store.compareAndSet({ key: agentOwnerRecordKey(user), expectedRevision: null, operationId: user, next: { value: { matrixUserId: user, ownerId: owner, ownerLabel: 'X', harness: 'codex', label: 'Agent', createdAt: '2026-10-05T00:00:00Z' }, expiresAt: null } });
+  }
+  const kicked: string[] = []; const revoked: string[] = []; let lastLogin = '';
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+    const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+    if (path.endsWith('/login')) {
+      const value = JSON.parse(String(init?.body));
+      lastLogin = value.identifier.user;
+      return json(200, { user_id: value.identifier.user, device_id: value.device_id, access_token: value.identifier.user });
+    }
+    if (path.includes('/state/m.room.member/')) {
+      const membership = members[decodeURIComponent(path.split('/').at(-1)!)];
+      return membership ? json(200, { membership }) : json(404, {});
+    }
+    if (path.includes('/state/m.room.create/')) return json(200, { creator: creatorUser });
+    if (path.endsWith('/joined_rooms')) return json(200, { joined_rooms: [] });
+    if (path.endsWith('/logout/all')) { revoked.push(lastLogin); return json(200, {}); }
+    if (path.endsWith('/logout')) return json(200, {});
+    if (path.endsWith('/kick')) { const user = JSON.parse(String(init?.body)).user_id; kicked.push(user); members[user] = 'leave'; return json(200, {}); }
+    throw new Error(path);
+  });
+  const matrix = services(fetch, store);
+  // Bob may not remove Carol's agent: he owns neither it nor the channel.
+  expect(await matrix.administration.removeAgent({ ...principal, ownerId: bob }, roomId, carolAgent)).toEqual({ kind: 'forbidden' });
+  expect(await matrix.administration.removeAgent({ ...principal, ownerId: bob }, roomId, '@nobody:matrix.example.test')).toEqual({ kind: 'not_found' });
+  expect(kicked).toEqual([]);
+  // Bob removes his own agent in a channel he does not own.
+  expect(await matrix.administration.removeAgent({ ...principal, ownerId: bob }, roomId, bobAgent)).toEqual({ kind: 'ok' });
+  // The channel creator removes anyone's agent.
+  expect(await matrix.administration.removeAgent(principal, roomId, carolAgent)).toEqual({ kind: 'ok' });
+  expect(kicked).toEqual([bobAgent, carolAgent]);
+  expect(revoked).toEqual([bobAgent, carolAgent]);
+  expect(await agentRemoved(store, roomId, bobAgent)).toBe(true);
+  // Retrying after the kick is idempotent.
+  expect(await matrix.administration.removeAgent({ ...principal, ownerId: bob }, roomId, bobAgent)).toEqual({ kind: 'ok' });
+  expect(kicked).toHaveLength(2);
 });

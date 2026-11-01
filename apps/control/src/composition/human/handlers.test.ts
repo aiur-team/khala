@@ -16,7 +16,7 @@ import {
 } from './handlers';
 
 const ORIGIN = 'https://khala.aiur.team';
-const FLOW_ROUTE_COUNT = 12;
+const FLOW_ROUTE_COUNT = 13;
 const flowRoutes = () => registerHumanHandlers().slice(0, FLOW_ROUTE_COUNT);
 const principal: AuthPrincipal = {
   v: 1,
@@ -100,6 +100,7 @@ describe('human handler registration', () => {
       ['/api/human/channels/creator', ['GET']],
       ['/api/human/channels/approve-joins', ['GET', 'POST']],
       ['/api/human/channels/remove-human', ['POST']],
+      ['/api/human/channels/remove-agent', ['POST']],
       [MATRIX_SESSION_PATH, ['POST']],
       [MATRIX_PARTICIPANTS_PATH, ['POST']],
     ]);
@@ -405,16 +406,16 @@ describe('admission route handlers', () => {
 });
 
 describe('registerHumanHandlers', () => {
-  it('registers exactly the twelve human flow routes', () => {
+  it('registers exactly the thirteen human flow routes', () => {
     const registrations = registerHumanHandlers();
-    expect(registrations).toHaveLength(12);
+    expect(registrations).toHaveLength(13);
     expect(Object.isFrozen(registrations)).toBe(true);
   });
 
   it('appends the supplied channel-link route', () => {
     const r = { path: '/api/human/channel-link/resolve', methods: ['POST'], handle: async () => new Response() };
     const registrations = registerHumanHandlers({ channelLink: () => [r] });
-    expect(registrations.slice(0, 12).map(({ path, methods }) => ({ path, methods })))
+    expect(registrations.slice(0, 13).map(({ path, methods }) => ({ path, methods })))
       .toEqual(registerHumanHandlers().map(({ path, methods }) => ({ path, methods })));
     expect(registrations.at(-1)).toBe(r);
   });
@@ -425,6 +426,7 @@ it('authenticates creator lookup and authorizes human removal, mapping provider 
   const administration: NonNullable<HumanHandlerServices['administration']> = {
     creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
     removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+    removeAgent: vi.fn(async () => ({ kind: 'ok' as const })),
     approveJoins: vi.fn(async () => ({ kind: 'ok' as const, on: false, owner: true })),
     setApproveJoins: vi.fn(async () => ({ kind: 'ok' as const })),
   };
@@ -445,10 +447,37 @@ it('authenticates creator lookup and authorizes human removal, mapping provider 
   expect((await post.handle(mutation())).status).toBe(403);
 });
 
+it('removes one agent through the human-only route and maps refusals (#1396)', async () => {
+  const administration: NonNullable<HumanHandlerServices['administration']> = {
+    creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
+    removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+    removeAgent: vi.fn(async () => ({ kind: 'ok' as const })),
+    approveJoins: vi.fn(async () => ({ kind: 'ok' as const, on: false, owner: true })),
+    setApproveJoins: vi.fn(async () => ({ kind: 'ok' as const })),
+  };
+  const supplied = { ...services(), administration };
+  const post = route(createHumanHandlers(() => supplied), '/api/human/channels/remove-agent');
+  const mutation = (value: unknown = { roomId: 'room_1', userId: '@agent:matrix.test' }) => request('/api/human/channels/remove-agent', { method: 'POST', body: JSON.stringify(value) });
+  expect(await body(await post.handle(mutation()))).toEqual({ kind: 'ok' });
+  expect(administration.removeAgent).toHaveBeenCalledWith(principal, 'room_1', '@agent:matrix.test');
+  for (const bad of [{ roomId: 'room_1', userId: 'agent' }, { roomId: 'room_1' }, { roomId: 'room_1', userId: '@a:b', extra: 1 }]) {
+    expect((await post.handle(mutation(bad))).status).toBe(400);
+  }
+  for (const [kind, status] of [['forbidden', 403], ['not_found', 404], ['unavailable', 503]] as const) {
+    vi.mocked(administration.removeAgent).mockResolvedValueOnce({ kind });
+    expect((await post.handle(mutation())).status).toBe(status);
+  }
+  // No human session (an agent's bearer included) never reaches the administration.
+  vi.mocked(supplied.auth.requireHumanMutation).mockResolvedValueOnce({ kind: 'rejected', code: 'signed_out' });
+  expect((await post.handle(mutation())).status).toBe(401);
+  expect(administration.removeAgent).toHaveBeenCalledTimes(4);
+});
+
 it('reads Approve joins for members and lets only the owner change it', async () => {
   const administration: NonNullable<HumanHandlerServices['administration']> = {
     creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
     removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+    removeAgent: vi.fn(async () => ({ kind: 'ok' as const })),
     approveJoins: vi.fn(async () => ({ kind: 'ok' as const, on: true, owner: false })),
     setApproveJoins: vi.fn(async () => ({ kind: 'forbidden' as const })),
   };

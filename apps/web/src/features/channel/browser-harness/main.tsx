@@ -85,6 +85,7 @@ function Harness() {
         publish(snapshot.agents.filter(agent => agent.ownerId !== ownerId));
         return 'removed';
       }}
+      onRemoveAgent={async participantId => { publish(snapshot.agents.filter(agent => agent.participantId !== participantId)); return 'removed'; }}
       humanParticipants={humans} describeParticipant={describeParticipant}
       modeFor={participantId => modes[participantId] ?? 'sync'}
       onSetMode={async (participantId, mode) => {

@@ -71,3 +71,24 @@ export async function completeRemoval(store: ControlStore, roomId: RoomId, owner
   }
   return false;
 }
+
+/** One agent removed from one room (#1396). A fresh human confirm clears it; saved rejoin approval never does. */
+const agentKey = (roomId: RoomId, userId: string) => `channel.agent-removed.v1.${createHash('sha256').update(JSON.stringify([roomId, userId])).digest('hex')}`;
+export async function agentRemoved(store: ControlStore, roomId: RoomId, userId: string): Promise<boolean | 'unavailable'> {
+  try {
+    const read = await store.read<{ removed: boolean }>(agentKey(roomId, userId));
+    return read.kind === 'absent' ? false : read.kind === 'record' ? read.record.value.removed === true : 'unavailable';
+  } catch { return 'unavailable'; }
+}
+export async function setAgentRemoved(store: ControlStore, roomId: RoomId, userId: string, removed: boolean): Promise<boolean> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const read = await store.read<{ removed: boolean }>(agentKey(roomId, userId));
+    if (read.kind === 'unavailable') return false;
+    if ((read.kind === 'record' && read.record.value.removed === true) === removed) return true;
+    const written = await store.compareAndSet({ key: agentKey(roomId, userId), expectedRevision: read.kind === 'record' ? read.record.revision : null,
+      operationId: `channel.agent-removed.${randomUUID()}`, next: { value: { removed }, expiresAt: null } });
+    if (written.kind === 'applied') return true;
+    if (written.kind !== 'conflict') return false;
+  }
+  return false;
+}

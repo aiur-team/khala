@@ -291,6 +291,14 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         room.refresh?.();
         return 'removed' as const;
       } } : {})}
+      {...(context.room.administration?.removeAgent ? { onRemoveAgent: async (participantId: string) => {
+        const detail = context.describeParticipant?.(participantId);
+        if (detail?.kind !== 'agent') return 'failed' as const;
+        const result = await context.room.administration!.removeAgent!({ roomId, userId: detail.matrixUserId });
+        if (result.kind !== 'ok') return 'failed' as const;
+        room.refresh?.();
+        return 'removed' as const;
+      } } : {})}
       viewerOwnerId={viewer.ownerId}
       viewerName={channelViewer?.displayName ?? viewer.displayName}
       viewerEmail={context.principal.verifiedEmail}

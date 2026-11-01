@@ -1,7 +1,7 @@
 import { withMembershipLease } from '../../invitations/membership-lock';
 import { roomAgents } from '../../agent-join/session-status';
 import { CHANNEL_EVENT_TYPE, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
-import { readRoomRemovals, recordRemoval, completeRemoval } from '../../invitations/removals';
+import { readRoomRemovals, recordRemoval, completeRemoval, agentRemoved, setAgentRemoved } from '../../invitations/removals';
 import { readApproveJoins, writeApproveJoins } from '../../invitations/approve-joins';
 import { decodeHumanInitialsRecord, humanInitialsRecordKey } from '@khala/contracts/m1/initials';
 import { createHash, createHmac } from 'node:crypto';
@@ -78,6 +78,8 @@ export type MatrixParticipant = Participant;
 export interface MatrixChannelAdministration {
   creator(principal: AuthPrincipal, roomId: RoomId): Promise<{ kind: 'ok'; ownerId: OwnerId } | { kind: 'forbidden' | 'unavailable' }>;
   removeHuman(principal: AuthPrincipal, roomId: RoomId, ownerId: OwnerId): Promise<{ kind: 'ok' | 'forbidden' | 'not_found' | 'unavailable' }>;
+  /** Kicks one agent and revokes its session. Its owner or the channel creator only (#1396). */
+  removeAgent(principal: AuthPrincipal, roomId: RoomId, userId: string): Promise<{ kind: 'ok' | 'forbidden' | 'not_found' | 'unavailable' }>;
   /** Any member reads the channel's Approve joins setting; `owner` says whether they may change it. */
   approveJoins(principal: AuthPrincipal, roomId: RoomId): Promise<{ kind: 'ok'; on: boolean; owner: boolean } | { kind: 'forbidden' | 'unavailable' }>;
   /** Only the channel creator changes it. */
@@ -738,6 +740,32 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       if (creator.kind !== 'ok') return creator;
       if (creator.ownerId !== principal.ownerId) return { kind: 'forbidden' };
       return { kind: await writeApproveJoins(options.store, roomId, on) ? 'ok' : 'unavailable' };
+    },
+    async removeAgent(principal, roomId, userId) {
+      const creator = await administration.creator(principal, roomId);
+      if (creator.kind !== 'ok') return creator;
+      const read = await options.store.read(agentOwnerRecordKey(userId));
+      if (read.kind === 'unavailable') return { kind: 'unavailable' };
+      const decoded = read.kind === 'record' ? decodeAgentOwnerRecord(read.record.value) : null;
+      if (!decoded?.ok || decoded.value.matrixUserId !== userId) return { kind: 'not_found' };
+      if (decoded.value.ownerId !== principal.ownerId && creator.ownerId !== principal.ownerId) return { kind: 'forbidden' };
+      const session = await controlLogin(creator.ownerId);
+      if (!session) return { kind: 'unavailable' };
+      const headers = { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' };
+      const member = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(userId)}`, { headers });
+      const membership = member.ok ? safeObject(await body(member))?.membership : member.status === 404 ? null : undefined;
+      if (membership === undefined) return { kind: 'unavailable' };
+      if (membership !== 'join' && membership !== 'invite') {
+        const removed = await agentRemoved(options.store, roomId, userId);
+        return removed === 'unavailable' ? { kind: 'unavailable' } : { kind: removed ? 'ok' : 'not_found' };
+      }
+      // Record first: session status then reports removed and saved rejoin approval stops re-adding it.
+      if (!await setAgentRemoved(options.store, roomId, userId, true)) return { kind: 'unavailable' };
+      const kicked = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/kick`, {
+        method: 'POST', headers, body: JSON.stringify({ user_id: userId }),
+      });
+      if (!kicked.ok || !await revokeAgent(userId, roomId)) return { kind: 'unavailable' };
+      return { kind: 'ok' };
     },
     async removeHuman(principal, roomId, ownerId) {
       return withMembershipLease(options.store, roomId, ownerId, async lease => {

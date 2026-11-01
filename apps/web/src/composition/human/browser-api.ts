@@ -517,6 +517,15 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       const body = await jsonObject(response);
       return body && hasExactKeys(body, ['on']) && body.on === input.on ? { kind: 'ok', value: null } : unavailable();
     },
+    async removeAgent(input, callOptions) {
+      const response = await mutation('/api/human/channels/remove-agent', input, callOptions?.signal);
+      if (response?.status === 403) return rejected('forbidden');
+      if (response?.status === 404) return rejected('not_found');
+      if (response?.status === 400) return rejected('invalid_request');
+      if (response?.status !== 200) return unavailable();
+      const body = await jsonObject(response);
+      return body && hasExactKeys(body, ['kind']) && body.kind === 'ok' ? { kind: 'ok', value: null } : unavailable();
+    },
     async removeHuman(input, callOptions) {
       const response = await mutation('/api/human/channels/remove-human', input, callOptions?.signal);
       if (response?.status === 403) return rejected('forbidden');
