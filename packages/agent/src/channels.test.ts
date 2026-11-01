@@ -66,6 +66,11 @@ it('resumes after cursor has already moved', async () => {
   expect(await fs.readFile(nested.cursor, 'utf8')).toBe('{"deliveredCount":2}\n');
   expect((await listChannels(files))[0]?.roomId).toBe('!eco:test');
 });
+it('migrates a legacy inbox that moved rooms into its newest room, not a stale duplicate', async () => {
+  await fs.writeFile(files.inbox, ['!old:test', '!old:test', '!new:test'].map(roomId => JSON.stringify({ roomId })).join('\n') + '\n');
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect((await listChannels(files)).map(ref => ref.roomId)).toEqual(['!new:test']);
+});
 it('discards legacy files with no room id', async () => {
   for (const name of ['cursor.json', 'mode.json', 'inbox.jsonl']) await fs.writeFile(path.join(files.dir, name), '{}\n');
   expect(await migrateLegacy(files)).toBe('discarded');

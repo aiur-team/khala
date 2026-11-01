@@ -1325,10 +1325,15 @@ it.each(['missing', 'invalid', 'changed'])('does not restore with a %s rejoin se
   else await writeStateFile(f.files.dir, 'rejoin.json', { secret: kind === 'invalid' ? 'short' : 'z'.repeat(43) });
   await restartMulti(f); expect(f.start).not.toHaveBeenCalled(); expect(f.api.requestJoin).not.toHaveBeenCalled();
 });
-it('does not restore authorization from another workspace', async () => {
+it('keeps authorization from another workspace for a bare join but does not auto-restore it', async () => {
   const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
-  await restartMulti(f, { XDG_STATE_HOME: root, PWD: path.join(root, 'other-workspace') });
+  await client.close(); f.start.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root, PWD: path.join(root, 'other-workspace') }, now, joinApi: f.api, startSession: f.start });
+  await client.resume!();
   expect(f.start).not.toHaveBeenCalled();
+  for (const control of f.controls) expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'resume.json')).not.toBeNull();
+  await expect(client.join(undefined, 'Codex')).resolves.toMatchObject({ state: 'connected' });
+  expect(f.start).toHaveBeenCalledTimes(2);
 });
 it('keeps hosted restoration non-terminal when old control needs owner approval', async () => {
   const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
@@ -1596,7 +1601,7 @@ it('ignores duplicate and older owner mode commands replayed from the saved sync
 });
 
 
-it.each(['missing', 'invalid', 'changed', 'workspace', 'offline', 'server-error', 'revoked'])('logs out and wipes saved crypto when %s resume authorization is discarded', async kind => {
+it.each(['missing', 'invalid', 'changed', 'offline', 'server-error', 'revoked'])('logs out and wipes saved crypto when %s resume authorization is discarded', async kind => {
   vi.resetModules();
   const f = await multiClient(['A']);
   delete (f.controls[0]!.creds as AgentCredentials).transport;
@@ -1604,14 +1609,14 @@ it.each(['missing', 'invalid', 'changed', 'workspace', 'offline', 'server-error'
   const channelDir = channelFiles(f.files, f.controls[0]!.creds.roomId).dir;
   await fs.writeFile(path.join(channelDir, 'crypto.json'), JSON.stringify(f.controls[0]!.creds), { mode: 0o600 });
   if (kind === 'missing') await fs.rm(path.join(f.files.dir, 'rejoin.json'));
-  else if (kind !== 'workspace') await writeStateFile(f.files.dir, 'rejoin.json', { secret: kind === 'invalid' ? 'short' : 'z'.repeat(43) });
+  else await writeStateFile(f.files.dir, 'rejoin.json', { secret: kind === 'invalid' ? 'short' : 'z'.repeat(43) });
   const fetcher = vi.fn<typeof fetch>(async () => {
     if (kind === 'offline') throw new Error('offline');
     return Response.json({}, { status: kind === 'server-error' ? 503 : kind === 'revoked' ? 401 : 200 });
   });
   f.api.requestJoin.mockClear(); f.start.mockClear();
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi',
-    env: { XDG_STATE_HOME: root, ...(kind === 'workspace' ? { PWD: path.join(root, 'other-workspace') } : {}) },
+    env: { XDG_STATE_HOME: root },
     now, joinApi: f.api, startSession: f.start, fetch: fetcher });
   await client.resume!();
   expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${credentials.homeserver}/_matrix/client/v3/logout`,

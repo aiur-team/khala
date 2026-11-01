@@ -257,3 +257,51 @@ it('restores a Claude channel across MCP restarts and config dirs, rejoins witho
     } finally { await after.close(); }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+it('reconnects a linked channel at MCP start after SIGTERM and a resume under another CLAUDE_CONFIG_DIR, with no link', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-claude-sigterm-'));
+  const env = { XDG_STATE_HOME: root, PWD: process.cwd(), CLAUDE_CODE_SESSION_ID: 'thread' };
+  const roomId = '!kill:local';
+  const nested = channelFiles(await openSessionDir('claude', 'thread', env), roomId);
+  const credentials = { transport: 'local' as const, homeserver: 'http://127.0.0.1:47830', userId: '@agent:local', accessToken: 'private', deviceId: 'device', roomId };
+  const session: ChannelSession = {
+    userId: credentials.userId, inviter: () => '@owner:local', displayName: () => 'Agent', roomName: () => 'Kill',
+    onMessage: () => () => {}, onListeningModeCommand: () => () => {}, publishListeningMode: async () => {}, waitForInvite: async () => {}, join: async () => {},
+    history: async () => ({ messages: [] }), send: async () => ({ eventId: '$send' }), sendChannelEvent: async () => ({ eventId: '$event' }), stop: async () => {},
+  };
+  const joinApi = {
+    requestJoin: vi.fn(async () => ({ origin: 'http://127.0.0.1:47830', joinId: 'join', pollSecret: 'poll', confirmUrl: 'http://127.0.0.1:47830/confirm', expiresAt: new Date(Date.now() + 600_000).toISOString(), autoConfirmed: true as const })),
+    pollJoin: vi.fn(async () => credentials), reportReady: vi.fn(async () => {}),
+  };
+  const start = vi.fn(async () => session);
+  const factory = (configDir: string) => createRealClientFactory({ ...env, CLAUDE_CONFIG_DIR: configDir },
+    { createClient: options => createKhalaAgentClient({ ...options, env: { ...env, CLAUDE_CONFIG_DIR: configDir }, joinApi, startSession: start }) });
+  // The first process joins from a link, then is killed: no close(), so no clean shutdown state.
+  const killed = factory('/profile/default')({ harness: 'claude', sessionId: 'thread' });
+  const input = new PassThrough(), output = new PassThrough();
+  try {
+    await expect(killed.join('http://127.0.0.1:47830/join/abcdefgh', 'Claude')).resolves.toMatchObject({ state: 'connected' });
+    const running = runMcpCommand([], { env: { ...env, CLAUDE_CONFIG_DIR: '/profile/second' }, input, output, createClient: factory('/profile/second') });
+    try {
+      await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2), 5_000);
+      await vi.waitFor(async () => expect(await readStatus(nested)).toMatchObject({ state: 'connected' }));
+      expect(joinApi.requestJoin).toHaveBeenCalledOnce(); // Nobody supplied the link again.
+    } finally { input.end(); await running; output.destroy(); }
+  } finally { await killed.close(); await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('migrates an old flat-layout channel to its newest room and reports reinvite_needed for a bare join', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-claude-legacy-'));
+  const env = { XDG_STATE_HOME: root, PWD: process.cwd() };
+  const files = await openSessionDir('claude', 'thread', env);
+  await writeStateFile(files.dir, 'rejoin.json', { secret: 'S'.repeat(43) });
+  // An older client wrote one session-level inbox; the channel later moved to a new room.
+  await fs.writeFile(files.inbox, ['!old:test', '!new:test'].map(roomId => JSON.stringify({ roomId })).join('\n') + '\n', { mode: 0o600 });
+  const start = vi.fn();
+  const client = createKhalaAgentClient({ harness: 'claude', sessionId: 'thread', env: { ...env, CLAUDE_CONFIG_DIR: '/profile/second' }, startSession: start });
+  try {
+    await expect(client.join(undefined, 'Claude')).rejects.toMatchObject({ code: 'link_unavailable', extra: { reason: 'reinvite_needed' } });
+    expect((await client.status()).channels?.map(channel => channel.roomId)).toEqual(['!new:test']);
+    expect(start).not.toHaveBeenCalled();
+  } finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
+});

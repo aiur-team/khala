@@ -725,7 +725,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       } catch (error) { failure ??= error; }
     }
     if (result) return result;
-    throw failure ? safeError(failure) : new KhalaClientError('link_unavailable', 'no_saved_channel');
+    if (failure) throw safeError(failure);
+    // Channels saved by an older layout, or joined before rejoin secrets, have no saved link.
+    throw new KhalaClientError('link_unavailable', 'no_saved_channel', refs().length ? { reason: 'reinvite_needed' } : undefined);
   }
   const client: KhalaAgentClient & { resume(): Promise<void> } = {
     // A user-set session title names a new agent; servers keep an existing name on rejoin.
@@ -743,11 +745,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
-          if (!savedSecret || authorization.secretHash !== secretHash() || authorization.workspace !== workspace || authorization.roomId !== ref.roomId || authorization.localCredentials && (authorization.localCredentials.transport !== 'local' || authorization.localCredentials.roomId !== ref.roomId) || typeof authorization.link !== 'string' || typeof authorization.label !== 'string') {
+          if (!savedSecret || authorization.secretHash !== secretHash() || authorization.roomId !== ref.roomId || authorization.localCredentials && (authorization.localCredentials.transport !== 'local' || authorization.localCredentials.roomId !== ref.roomId) || typeof authorization.link !== 'string' || typeof authorization.label !== 'string') {
             await removeStateFile(ref.files.dir, 'resume.json');
             await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
+          // Another cwd only skips the automatic restore; the agent's bare join may still use it.
+          if (authorization.workspace !== workspace) return;
           const restoring = join(authorization.link, authorization.label, authorization).catch(() => {});
           restores.set(ref.key, restoring);
           void restoring.then(() => { if (restores.get(ref.key) === restoring) restores.delete(ref.key); });
