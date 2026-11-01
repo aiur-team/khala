@@ -420,6 +420,47 @@ test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000 }, 
   }
 });
 
+test('the agent pane removes the viewer’s own agent, and anyone’s only for the channel owner (#1396)', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
+  const chromiumProfileRoot = await mkdtemp('/tmp/khala-channel-profile-');
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true,
+      args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const open = async (name: string) => {
+      await page.locator(`.kh-stack .kh-av[aria-label="${name}"]`).click();
+      const pane = page.getByRole('complementary', { name: `${name} details` });
+      await pane.waitFor();
+      return pane;
+    };
+    // Theo owns the channel: Mira may remove only her own agent.
+    await page.goto(`${server.resolvedUrls!.local[0]!}?nonowner`);
+    const builder = await open('Builder');
+    assert.equal(await builder.getByRole('button', { name: 'Remove from channel' }).count(), 0);
+    await builder.getByRole('button', { name: 'Close details' }).click();
+    const scout = await open('Scout');
+    await scout.getByRole('button', { name: 'Remove from channel' }).click();
+    await scout.getByRole('button', { name: 'Cancel' }).click();
+    await scout.getByRole('button', { name: 'Remove from channel' }).click();
+    await scout.getByRole('group', { name: 'Remove Scout' }).getByRole('button', { name: 'Remove', exact: true }).click();
+    await expect(page.locator('.kh-card.has-detail')).toHaveCount(0);
+    await expect(page.locator('.kh-stack .kh-av[aria-label="Scout"]')).toHaveCount(0);
+    // Mira owns the channel: she may remove Theo's agent too.
+    await page.goto(server.resolvedUrls!.local[0]!);
+    const theirs = await open('Builder');
+    await expect(theirs.getByRole('button', { name: 'Remove from channel' })).toHaveCount(1);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
 test('a failed copy leaves the link selected for copying by hand', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
   const chromiumProfileRoot = await mkdtemp('/tmp/khala-channel-profile-');

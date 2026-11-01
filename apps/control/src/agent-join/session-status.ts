@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { decodeRoomId, type ControlStore, type RoomId } from '@khala/contracts/messaging/index';
-import { readRoomRemovals } from '../invitations/removals';
+import { agentRemoved, readRoomRemovals } from '../invitations/removals';
 
 const key = (token: string) => `agent-session-status.v1.${createHash('sha256').update(token).digest('hex')}`;
 type SessionIndex = Readonly<{ v: 1; userId: string; roomId: string; generation: number }>;
@@ -47,6 +47,9 @@ export function createAgentSessionStatusHandler(store: ControlStore, options?: R
         if (removals === 'unavailable') return json(503, { error: 'unavailable' });
         const entry = removals ? Object.values(removals.owners).find(entry => entry.agents.includes(claimedIdentity.userId)) : undefined;
         if (entry && !entry.complete) return json(200, { removed: true });
+        const agent = await agentRemoved(store, claimedIdentity.roomId, claimedIdentity.userId);
+        if (agent === 'unavailable') return json(503, { error: 'unavailable' });
+        if (agent) return json(200, { removed: true });
         // A valid token after completed logout/all is a fresh authorized issuance.
         const remembered = await rememberAgentSession(store, { homeserver: options.homeserverOrigin,
           userId: claimedIdentity.userId, roomId: claimedIdentity.roomId, accessToken: token,
@@ -59,7 +62,9 @@ export function createAgentSessionStatusHandler(store: ControlStore, options?: R
       const removals = await readRoomRemovals(store, session.roomId as RoomId);
       if (removals === 'unavailable') return json(503, { error: 'unavailable' });
       const removed = removals ? Object.values(removals.owners).some(entry => entry.generation > session.generation && entry.agents.includes(session.userId)) : false;
-      return json(200, { removed });
+      const agent = removed || await agentRemoved(store, session.roomId as RoomId, session.userId);
+      if (agent === 'unavailable') return json(503, { error: 'unavailable' });
+      return json(200, { removed: agent });
     } catch { return json(503, { error: 'unavailable' }); }
   };
 }

@@ -18,7 +18,7 @@ import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icon
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
+import { AgentName, ChannelRoster, harnessName, MemberAvatar, RemoveAgent, RenameAgent, type RemoveAgentHandler, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
 import type { ChannelAgentView, ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';
 import { memberCountLabel, ownerOfLabel } from './roster-model';
@@ -34,6 +34,8 @@ export interface ChannelScreenProps {
   title: string;
   creatorOwnerId?: string;
   onRemoveHuman?: RemoveHumanHandler;
+  /** Removes an agent; the detail pane offers it for the viewer's agents, or any agent when the viewer owns the channel. */
+  onRemoveAgent?: RemoveAgentHandler;
   /** @deprecated The design header has no description line. */
   description?: string;
   /** @deprecated The surrounding `KhalaApp` owns the theme. */
@@ -137,9 +139,9 @@ function HumanDetail({ human, members, recent, timeOptions, onOpen, onMention, o
   </ParticipantDetail>;
 }
 
-function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, onOpen, onMention, onClose }: Readonly<{
+function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, remove, onOpen, onMention, onClose }: Readonly<{
   agent: AgentMember; members: ChannelMembers; recent: readonly RecentEntry[]; joinedAt: string | undefined;
-  rename: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
+  rename: ReactNode; remove: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
 }>) {
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
   const pill = <><i>{agent.ownerInitials}</i>
@@ -159,6 +161,7 @@ function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, on
     <Recent entries={recent} timeOptions={timeOptions} />
     {onMention ? <div className="kh-d-act"><button type="button" className="pri" onClick={() => onMention(agent.name)}>@ Mention</button></div> : null}
     {rename ? <div className="kh-d-sec"><span className="kh-d-lbl">Rename</span>{rename}</div> : null}
+    {remove ? <div className="kh-d-sec">{remove}</div> : null}
   </ParticipantDetail>;
 }
 
@@ -171,7 +174,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
   humanParticipants, currentNames, renameAgent, modeFor, lockedFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
-  renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
+  renderAddAgent, creatorOwnerId, onRemoveHuman, onRemoveAgent, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
   onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator requests 2026-10-02/2026-10-23: per-member colours, resolved once per channel as this viewer sees them.
@@ -275,6 +278,8 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       recent={recent(selectedMember.participantId)} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
       rename={selectedMember.isViewerOwned && renameAgent ? <RenameAgent key={focus?.request ?? 0}
         participantId={selectedMember.participantId} name={selectedMember.name} renameAgent={renameAgent} autoFocus={focus !== null} /> : null}
+      remove={onRemoveAgent && (selectedMember.isViewerOwned || creatorOwnerId !== undefined && creatorOwnerId === viewerOwnerId)
+        ? <RemoveAgent agent={selectedMember} remove={onRemoveAgent} /> : null}
       onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   }
 

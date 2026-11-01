@@ -1,5 +1,5 @@
 import { rejoinIdentity, rejoinApprovalKey, validRejoinApproval, type RejoinApproval } from './rejoin';
-import { readRoomRemovals } from '../invitations/removals';
+import { agentRemoved, readRoomRemovals, setAgentRemoved } from '../invitations/removals';
 import { readApproveJoins } from '../invitations/approve-joins';
 import { rememberAgentSession, rememberRoomAgent } from './session-status';
 import { createHash } from 'node:crypto';
@@ -107,6 +107,8 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (!username) return unavailable();
       const identityId = rejoinIdentity(record) ?? joinId;
       const userId = deps.provisioner.agentUserId(identityId, principal.ownerId);
+      // Only a human confirm (no approvedUsername) re-adds an agent someone removed (#1396).
+      if (approvedUsername === undefined && !await setAgentRemoved(deps.store, record.roomId as RoomId, userId, false)) return unavailable();
       const existing = await safeRead(deps.store, agentOwnerRecordKey(userId));
       if (existing.kind === 'unavailable') return unavailable();
       const decoded = existing.kind === 'record' ? decodeAgentOwnerRecord(existing.record.value) : null;
@@ -214,6 +216,9 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
     if (removals === 'unavailable') throw Error('unavailable');
     const removal = removals?.owners[grant.ownerId];
     if (removal && (!removal.complete || removal.generation > grant.generation)) return true;
+    const agentGone = await agentRemoved(deps.store, read.record.roomId as RoomId, deps.provisioner.agentUserId(identity, grant.ownerId));
+    if (agentGone === 'unavailable') throw Error('unavailable');
+    if (agentGone) return true;
     const response = await confirm(joinId, { ownerId: grant.ownerId, verifiedEmail: '' }, grant.ownerLabel);
     // Losing membership never reuses approval; the ordinary human flow can authorize anew.
     if (response.status === 403) {

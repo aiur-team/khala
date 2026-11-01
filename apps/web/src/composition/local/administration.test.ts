@@ -29,3 +29,10 @@ it('rejects self-removal and unknown humans without touching agents', async () =
   expect(await port.removeHuman({ roomId, ownerId: LOCAL_OWNER_ID as OwnerId })).toEqual({ kind: 'rejected', code: 'forbidden' });
   expect(await port.removeHuman({ roomId, ownerId: 'other' as OwnerId })).toEqual({ kind: 'rejected', code: 'not_found' });
 });
+it('removes an agent through the helper member route (#1396)', async () => {
+  const calls: string[] = [];
+  const port = createLocalAdministration({ ...http, send: async (method, path) => { calls.push(`${method} ${path}`); return path.includes('gone') ? { kind: 'error', status: 404, code: 'not_found' } : { kind: 'ok', value: null as never }; } });
+  expect(await port.removeAgent!({ roomId, userId: '@agent:local' })).toEqual({ kind: 'ok', value: null });
+  expect(await port.removeAgent!({ roomId, userId: '@gone:local' })).toEqual({ kind: 'rejected', code: 'not_found' });
+  expect(calls[0]).toBe(`DELETE /api/local/channels/${encodeURIComponent(roomId)}/members/${encodeURIComponent('@agent:local')}`);
+});

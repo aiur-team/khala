@@ -350,6 +350,32 @@ function RemoveHuman({ human, agents, remove }: Readonly<{ human: HumanMember; a
   </span>;
 }
 
+export type RemoveAgentHandler = (participantId: string) => Promise<'removed' | 'failed'>;
+
+/** The agent detail pane's Remove from channel action, behind a confirm (#1396). */
+export function RemoveAgent({ agent, remove }: Readonly<{ agent: AgentMember; remove: RemoveAgentHandler }>) {
+  const [confirming, setConfirming] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const label = agentLabel(agent);
+  async function confirm() {
+    if (sending) return;
+    setSending(true);
+    setError('');
+    const result = await remove(agent.participantId).catch(() => 'failed' as const);
+    setSending(false);
+    // On success the agent leaves the roster and the pane closes.
+    if (result !== 'removed') setError('Couldn’t remove. Try again.');
+  }
+  if (!confirming) return <button type="button" className="kh-btn danger" onClick={() => setConfirming(true)}>Remove from channel</button>;
+  return <div role="group" aria-label={`Remove ${label}`}>
+    <p>Remove {label} from this channel? It loses access and won’t rejoin on its own.</p>
+    {error ? <p role="alert">{error}</p> : null}
+    <div className="kh-row2"><button type="button" className="kh-btn danger" disabled={sending} onClick={() => void confirm()}>{sending ? 'Removing…' : 'Remove'}</button>
+      <button type="button" className="kh-btn" onClick={() => { setConfirming(false); setError(''); }}>Cancel</button></div>
+  </div>;
+}
+
 export type ChannelRosterProps = Readonly<{
   members: ChannelMembers;
   creatorOwnerId?: string | undefined;

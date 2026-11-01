@@ -1,4 +1,5 @@
-import { recordRemoval } from '../invitations/removals';
+import { recordRemoval, setAgentRemoved } from '../invitations/removals';
+import { createAgentSessionStatusHandler } from './session-status';
 import { writeApproveJoins } from '../invitations/approve-joins';
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
@@ -494,6 +495,24 @@ it('requires fresh human approval after observing owner membership loss, even if
   expect(await f.handlers.autoConfirm(resumedId)).toBe(true);
   const resumed = await f.joins.read(resumedId);
   expect(resumed.kind === 'found' && resumed.record.state).toBe('confirmed');
+});
+
+it('never auto-rejoins a removed agent; only a fresh human confirm re-adds it (#1396)', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  await enableRejoin(f);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  const status = createAgentSessionStatusHandler(f.store);
+  const removed = async () => (await (await status(new Request('https://khala.test/api/agent/session/status', { headers: { authorization: 'Bearer token' } }))).json() as { removed: boolean }).removed;
+  expect(await removed()).toBe(false);
+  expect(await setAgentRemoved(f.store, credentials.roomId as RoomId, credentials.userId, true)).toBe(true);
+  expect(await removed()).toBe(true);
+  const joinId = await nextRejoin(f);
+  expect(await f.handlers.autoConfirm(joinId)).toBe(true);
+  const read = await f.joins.read(joinId);
+  expect(read.kind === 'found' && read.record.state).toBe('pending');
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+  expect((await f.handlers.confirm(f.request('POST', `joinId=${joinId}`))).status).toBe(200);
+  expect(await removed()).toBe(false);
 });
 
 it('refreshes the owner label from the current profile when auto-confirming', async () => {
