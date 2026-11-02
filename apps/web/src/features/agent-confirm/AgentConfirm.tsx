@@ -25,13 +25,6 @@ const errors: Record<AgentConfirmError, string> = {
   signed_out: 'You are signed out. Sign in to continue.',
 };
 
-/** What the join is waiting on while the page polls. */
-function stage(view: AgentJoinView): string {
-  if (view.state === 'pending') return 'Confirming…';
-  if (view.state === 'confirmed') return `Waiting for ${view.label} to pick up the confirmation…`;
-  return `${view.label} is connecting…`;
-}
-
 function initialTheme(): ThemeChoice {
   return resolveInitialTheme(typeof localStorage === 'undefined' ? {} : { storage: localStorage });
 }
@@ -109,10 +102,10 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, email, ...page 
             Join {snapshot.view.channelName} and add {snapshot.view.label}</button>
         </> : <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>}
       </> : null}
+      {/* One steady word while connecting: no stage or timing copy (operator request). */}
       {snapshot.state === 'connecting' ? <>
         <span className="kh-spin" aria-hidden="true" />
-        <p className="kh-fin-p" role="status">{stage(snapshot.view)}</p>
-        {snapshot.slow ? <p className="kh-fin-p">This is taking longer than usual. Check that your agent is still running.</p> : null}
+        <p className="kh-fin-p" role="status">Connecting</p>
       </> : null}
       {snapshot.state === 'done' ? <>
         {/* `ready` means the server invited the agent; it joins once it accepts. */}
