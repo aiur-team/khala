@@ -66,19 +66,12 @@ describe('AgentConfirm', () => {
     expect(html).toContain('<p class="kh-fin-p" aria-hidden="true">wants to join <b>Launch</b></p>');
     expect(html).toContain('<button type="button" class="kh-btn pri">Confirm</button>');
   });
-  it.each<[AgentJoinView['state'], string]>([
-    ['pending', 'Confirming…'],
-    ['confirmed', 'Waiting for Helper to pick up the confirmation…'],
-    ['claimed', 'Helper is connecting…'],
-  ])('renders the %s stage with a spinner and status', (state, copy) => {
-    expect(render({ state: 'connecting', view: { ...view, state } })).toContain(
-      `<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">${copy}</p>`);
-  });
-  it('says when a join is slow', () => {
-    const slow = 'This is taking longer than usual. Check that your agent is still running.';
-    expect(render({ state: 'connecting', view, slow: true })).toContain(slow);
-    expect(render({ state: 'connecting', view })).not.toContain(slow);
-  });
+  it.each<[AgentJoinView['state'], boolean]>([['pending', false], ['confirmed', false], ['claimed', false], ['claimed', true]])(
+    'shows only a spinner and one steady word while %s (slow: %s)', (state, slow) => {
+      const html = render({ state: 'connecting', view: { ...view, state }, ...(slow ? { slow: true as const } : {}) });
+      expect(html).toContain('<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">Connecting</p></div>');
+      expect(html).not.toMatch(/Waiting|is connecting|Confirming|longer than usual/);
+    });
   it('renders done with a check line and a primary Open channel link', () => {
     const html = render({ state: 'done', view });
     expect(html).toMatch(/<span class="kh-fin-ok"><svg [^>]*>.*?<\/svg>Helper was invited to Launch\.<\/span>/);
