@@ -65,6 +65,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     profile: api.profile,
     listeningMode: matrix.listeningMode,
     modeLocked: matrix.modeLocked,
+    idleMute: matrix.idleMute,
     subscribeListeningModes: matrix.subscribeListeningModes,
     setListeningMode: matrix.setListeningMode,
     isJoined: matrix.isJoined,

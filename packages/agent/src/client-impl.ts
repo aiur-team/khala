@@ -1,8 +1,8 @@
 import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRef } from './channels';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { ATTENTION, applyArchived, applyListeningMode, delegateChannel, isDelegated, readModeState } from './mode';
+import { decodeListeningModeCommand, DEFAULT_IDLE_MUTE_MIN, type ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { ATTENTION, applyArchived, applyListeningMode, delegateChannel, idleMuteDue, isDelegated, readModeState } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
 import { encodeChannelEvent, foldCoordination, type CoordinationEvent } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
@@ -36,7 +36,7 @@ type Attempt = {
   label: string; restore?: ResumeAuthorization; link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
   failure?: KhalaClientError; files?: SessionFiles; status: StatusFile; appends: Promise<void>; acceptEventKey: ReturnType<typeof createEventKeyFilter>;
-  cryptoReset?: boolean; readReceipt?: string; typingSince?: number | undefined; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
+  cryptoReset?: boolean; readReceipt?: string; typingSince?: number | undefined; lastHumanAt?: number; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
   return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error',
@@ -57,6 +57,8 @@ function errorDetail(error: unknown, fallback: string): string {
 const TYPING_CAP_MS = 10 * 60_000;
 const TYPING_STALE_BUSY_MS = 120_000;
 const TYPING_WAKE_GRACE_MS = 10_000;
+/** Only a human message restarts the listener timeout: agent-to-agent chatter is the token waste it stops. */
+const isHumanMessage = (entry: InboxEntry) => entry.senderKind === 'human' && entry.kind === 'message';
 
 /** How long a delegated channel stays async to the session after a background agent's wait ends. */
 const DELEGATE_GRACE_MS = 120_000;
@@ -99,6 +101,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             await setStatus(attempt, attempt.status.state, attempt.status.detail);
             if (await markDelivered(attempt)) attempt.typingSince ??= now().getTime();
             await updateTyping(attempt);
+            await idleMute(attempt).catch(() => {});
             attempt.session?.setAway?.(away);
           }
         }
@@ -106,6 +109,22 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       void heartbeatTask.catch(() => {});
     }, 15_000);
     heartbeatTimer.unref();
+  }
+
+  /** The owner's listener timeout: with no human message (agent chatter does not count) for the chosen time, the agent
+   * mutes itself through set_mode, which respects the lock and archive, publishes the mode and posts the notice. */
+  async function idleMute(attempt: Attempt): Promise<void> {
+    const { files, credentials } = attempt;
+    if (!files || !credentials) return;
+    const state = await readModeState(files);
+    const joined = Date.parse((await readStateFile<{ originalJoinedAt?: string }>(files.dir, 'channel.json'))?.originalJoinedAt ?? '') || 0;
+    const due = (lastHumanAt: number) => idleMuteDue(state, lastHumanAt, joined, now().getTime());
+    // Read the inbox once per attempt (it survives restarts), and only once the timeout could be due.
+    if (!due(attempt.lastHumanAt ?? 0)) return;
+    attempt.lastHumanAt ??= (await readEntries(files)).reduce((newest, entry) => isHumanMessage(entry) ? Math.max(newest, Date.parse(entry.ts)) : newest, 0);
+    if (!due(attempt.lastHumanAt)) return;
+    const span = state.idleMuteMin % 60 ? `${state.idleMuteMin} min` : `${state.idleMuteMin / 60} hr`;
+    await client.setMode('mute', { trigger: 'self', reason: `no human message for ${span}` }, credentials.roomId);
   }
 
   /** Delivery hooks run in other processes; the read receipt for what they delivered goes from here. */
@@ -459,6 +478,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           if (message.type === 'm.room.member') await trackOwnName(attempt, session, message, credentials.transport === 'local');
           const entry = inboxEntry(message, session, attempt.acceptEventKey);
           if (!entry) return;
+          if (isHumanMessage(entry)) attempt.lastHumanAt = Math.max(attempt.lastHumanAt ?? 0, Date.parse(entry.ts));
           if (await appendInbox(channelDir, entry) && current(attempt) && isWakeEntry(entry)) {
             try { options.onInboxAppend?.(entry); } catch { /* A waker cannot break intake. */ }
           }
@@ -479,7 +499,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const mode = asyncOnly && decoded.value.mode !== 'mute' ? 'async' : decoded.value.mode;
           const published = await publishMode(attempt, session, credentials.roomId, mode);
           await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts,
-            ...(decoded.value.locked !== undefined ? { locked: decoded.value.locked } : {}), ...(published ? {} : { pendingPublish: true }) }, now);
+            ...(decoded.value.locked !== undefined ? { locked: decoded.value.locked } : {}),
+            ...(decoded.value.idleMuteMin !== undefined ? { idleMuteMin: decoded.value.idleMuteMin } : {}), ...(published ? {} : { pendingPublish: true }) }, now);
         }).catch(async () => {
           if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {});
         });
@@ -503,8 +524,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (!savedJoinBoundary && membershipTime !== undefined) originalJoinedAt = new Date(membershipTime).toISOString();
       if (asyncOnly) {
         // An async-only harness listens no closer than async; a mute it chose survives a rejoin.
-        const mode = (await readModeState(attempt.files!)).mode === 'mute' ? 'mute' : 'async';
-        await writeStateFile(channelDir, 'mode.json', { mode });
+        const { mode: saved, idleMuteMin } = await readModeState(attempt.files!);
+        const mode = saved === 'mute' ? 'mute' : 'async';
+        await writeStateFile(channelDir, 'mode.json', { mode, ...(idleMuteMin !== DEFAULT_IDLE_MUTE_MIN ? { idleMuteMin } : {}) });
         await publishMode(attempt, session, credentials.roomId, mode);
       } else if (session.listeningMode) {
         const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');

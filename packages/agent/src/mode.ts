@@ -1,14 +1,23 @@
-import { decodeListeningMode, DEFAULT_LISTENING_MODE, type ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { decodeListeningMode, DEFAULT_IDLE_MUTE_MIN, DEFAULT_LISTENING_MODE, IDLE_MUTE_CHOICES, type IdleMuteMinutes, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import path from 'node:path';
 import { advanceCursor, markNudged, readCursor, readEntries, unread } from './inbox';
 import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './state';
 
-/** The owner-chosen mode, whether the owner archived the channel, and whether they locked the mode. */
-export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean; locked: boolean }> {
+/** The owner-chosen mode, whether the owner archived the channel or locked the mode, their listener timeout,
+ * and when the owner last set the mode (ms). */
+export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean; locked: boolean; idleMuteMin: IdleMuteMinutes; ownerSetAt: number }> {
   const content = await readJson<unknown>(files.mode);
   const record = typeof content === 'object' && content !== null ? content as Record<string, unknown> : {};
   const decoded = decodeListeningMode(record.mode);
-  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true, locked: record.locked === true };
+  const idle = IDLE_MUTE_CHOICES.find(choice => choice === record.idleMuteMin) ?? DEFAULT_IDLE_MUTE_MIN;
+  const ownerSetAt = record.changedBy === 'owner' && typeof record.updatedAt === 'string' ? Date.parse(record.updatedAt) || 0 : 0;
+  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true, locked: record.locked === true, idleMuteMin: idle, ownerSetAt };
+}
+/** The listener timeout is due once `idleMuteMin` passed since the newest of the last human message, the owner's
+ * last mode change and the join (all ms). It only lowers: never for mute, an archived or locked mode, or Off (0). */
+export function idleMuteDue(state: Awaited<ReturnType<typeof readModeState>>, lastHumanAt: number, joinedAt: number, now: number): boolean {
+  const since = Math.max(lastHumanAt, state.ownerSetAt, joinedAt);
+  return state.idleMuteMin > 0 && state.mode !== 'mute' && !state.archived && !state.locked && since > 0 && now - since >= state.idleMuteMin * 60_000;
 }
 const delegateFile = (files: SessionFiles) => path.join(files.dir, 'delegate.json');
 /** A background agent waiting on this channel (read wait) holds a lease until `ms` from now. */
@@ -53,12 +62,12 @@ const QUIET: ReadonlySet<ListeningMode> = new Set(['async', 'mute']);
 /** An agent change records `eventTs` (its own time) so a replayed older owner command cannot undo it.
  * Leaving a quiet mode (`async`, `mute`) skips the queued backlog unless `keepBacklog` is set. */
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
-  meta: ({ changedBy: 'owner'; eventId: string; locked?: boolean } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
+  meta: ({ changedBy: 'owner'; eventId: string; locked?: boolean; idleMuteMin?: IdleMuteMinutes } | { changedBy: 'agent'; reason: string; eventId?: string }) & { eventTs?: number; pendingPublish?: true; keepBacklog?: boolean },
   now: () => Date = () => new Date()) {
   const { keepBacklog, ...record } = meta;
-  const { mode: previous, archived, locked } = await readModeState(files);
+  const { mode: previous, archived, locked, idleMuteMin } = await readModeState(files);
   if (QUIET.has(previous) && !QUIET.has(next) && !keepBacklog) await skipBacklog(files);
   if (previous === 'mute' && next === 'async') await skipPings(files);
-  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...(locked ? { locked } : {}), ...record, updatedAt: now().toISOString() });
+  await writeJsonAtomic(files.mode, { mode: next, ...(archived ? { archived } : {}), ...(locked ? { locked } : {}), ...(idleMuteMin !== DEFAULT_IDLE_MUTE_MIN ? { idleMuteMin } : {}), ...record, updatedAt: now().toISOString() });
   return { previous, next };
 }

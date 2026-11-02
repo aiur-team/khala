@@ -727,6 +727,40 @@ describe('agent-initiated listening mode', () => {
     expect(session.publishListeningMode).toHaveBeenLastCalledWith(credentials.roomId, 'sync', expect.any(AbortSignal));
     expect(session.sendChannelEvent).not.toHaveBeenCalled();
   });
+  it('mutes after the listener timeout without a human message; agent chatter never resets it, an owner raise does, Off disables it', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const start = now().getTime();
+    let t = start;
+    const at = (minutes: number) => { t = start + minutes * 60_000; };
+    await client.close();
+    client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now: () => new Date(t), startSession, joinApi });
+    vi.mocked(session.displayName).mockReturnValue('Maker-PC');
+    const beat = async () => { await vi.advanceTimersByTimeAsync(15_000); await client.status(); };
+    const owner = (eventId: string, content: Record<string, unknown>) => modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, ...content }), eventId, ts: t });
+    try {
+      await connected();
+      at(30); handler!({ ...message('$human'), ts: t });
+      at(80); handler!({ ...message('$agent', '@agent-peer:s'), ts: t });
+      await beat();
+      expect((await client.status()).listeningMode).toBe('sync');
+      at(91); await beat();
+      await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('mute'));
+      expect(session.publishListeningMode).toHaveBeenLastCalledWith(credentials.roomId, 'mute', expect.any(AbortSignal));
+      expect(notices()).toEqual(['Maker-PC switched to mute: no human message for 1 hr']);
+      // An owner raise restarts the clock; the owner's 15 min choice applies from then.
+      at(100); owner('$raise', { mode: 'steer', idleMuteMin: 15 });
+      await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('steer'));
+      at(114); await beat();
+      expect((await client.status()).listeningMode).toBe('steer');
+      at(116); await beat();
+      await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('mute'));
+      expect(notices().at(-1)).toBe('Maker-PC switched to mute: no human message for 15 min');
+      at(120); owner('$off', { mode: 'sync', idleMuteMin: 0 });
+      await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('sync'));
+      at(5000); await beat();
+      expect((await client.status()).listeningMode).toBe('sync');
+    } finally { vi.useRealTimers(); }
+  });
   it('posts a visible event before leaving with a reason', async () => {
     vi.mocked(session.displayName).mockReturnValue('Maker-PC');
     await connected();
