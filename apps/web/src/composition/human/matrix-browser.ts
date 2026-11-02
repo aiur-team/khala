@@ -44,7 +44,7 @@ import { ARCHIVED_ACCOUNT_DATA_TYPE, ARCHIVED_MEMBER_KEY, ARCHIVE_NOTICE_TYPE, m
 import type { ChannelNameResult, ChannelNamesPort, MediaPort, MemberPresence, TypingPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
-  DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, MODE_LOCKS_ACCOUNT_DATA_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
+  DEFAULT_IDLE_MUTE_MIN, DEFAULT_LISTENING_MODE, IDLE_MUTE_ACCOUNT_DATA_TYPE, IDLE_MUTE_CHOICES, LISTENING_MODE_COMMAND_TYPE, MODE_LOCKS_ACCOUNT_DATA_TYPE, type IdleMuteMinutes, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
 } from '@khala/contracts/m1/listening-mode';
 import {
   createBrowserDeviceService,
@@ -751,6 +751,12 @@ export function readModeLocked(client: Pick<MatrixClient, 'getRoom'>, roomId: st
   return client.getRoom(roomId)?.getAccountData(MODE_LOCKS_ACCOUNT_DATA_TYPE)?.getContent()[userId] === true;
 }
 
+/** The listener timeout the viewer set for agent `userId` in `roomId`, from their private room account data; 1 hr by default. */
+export function readIdleMute(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): IdleMuteMinutes {
+  const saved = client.getRoom(roomId)?.getAccountData(IDLE_MUTE_ACCOUNT_DATA_TYPE)?.getContent()[userId];
+  return IDLE_MUTE_CHOICES.find(choice => choice === saved) ?? DEFAULT_IDLE_MUTE_MIN;
+}
+
 type OwnMemberClient = Pick<MatrixClient, 'getRoom' | 'getUserId' | 'getStateEvent' | 'sendStateEvent'>;
 const ownMemberWrites = new Map<string, Promise<unknown>>();
 
@@ -904,20 +910,25 @@ export function sendTyping(client: Pick<MatrixClient, 'sendTyping'>, sent: Map<s
   void client.sendTyping(roomId, typing, TYPING_TIMEOUT_MS).catch(() => undefined);
 }
 
-/** Sends the owner's encrypted listening-mode command to one agent. A `locked` change is first saved in the owner's account data. */
+/** Sends the owner's encrypted listening-mode command to one agent. A `locked` or `idleMuteMin` change is first saved in the owner's account data. */
 export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'setRoomAccountData'>, roomId: string, userId: string,
-  mode: ListeningMode, txnId: string, locked?: boolean): Promise<'sent' | 'failed'> {
+  mode: ListeningMode, txnId: string, locked?: boolean, idleMuteMin?: IdleMuteMinutes): Promise<'sent' | 'failed'> {
   try {
     const room = client.getRoom(roomId);
     if (!room?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return 'failed';
+    const setData = client.setRoomAccountData as unknown as (roomId: string, type: string, content: object) => Promise<unknown>;
     if (locked !== undefined) {
       const locks: Record<string, unknown> = { ...room.getAccountData(MODE_LOCKS_ACCOUNT_DATA_TYPE)?.getContent() };
       if (locked) locks[userId] = true; else delete locks[userId];
-      const setData = client.setRoomAccountData as unknown as (roomId: string, type: string, content: object) => Promise<unknown>;
       await setData.call(client, roomId, MODE_LOCKS_ACCOUNT_DATA_TYPE, locks);
     }
+    if (idleMuteMin !== undefined) {
+      const timeouts: Record<string, unknown> = { ...room.getAccountData(IDLE_MUTE_ACCOUNT_DATA_TYPE)?.getContent() };
+      if (idleMuteMin === DEFAULT_IDLE_MUTE_MIN) delete timeouts[userId]; else timeouts[userId] = idleMuteMin;
+      await setData.call(client, roomId, IDLE_MUTE_ACCOUNT_DATA_TYPE, timeouts);
+    }
     const send = client.sendEvent as unknown as (roomId: string, type: string, content: object, txnId: string) => Promise<unknown>;
-    const content: ListeningModeCommandContent = { v: 1, agent: userId, mode, ...(locked !== undefined ? { locked } : {}) };
+    const content: ListeningModeCommandContent = { v: 1, agent: userId, mode, ...(locked !== undefined ? { locked } : {}), ...(idleMuteMin !== undefined ? { idleMuteMin } : {}) };
     await send.call(client, roomId, LISTENING_MODE_COMMAND_TYPE, content, txnId);
     return 'sent';
   } catch { return 'failed'; }
@@ -932,9 +943,10 @@ export type MatrixBrowserPorts = Readonly<{
   isJoined(roomId: RoomId): boolean;
   listeningMode(roomId: RoomId, userId: string): ListeningMode;
   modeLocked(roomId: RoomId, userId: string): boolean;
-  /** Calls `listener` whenever a member event or the viewer's mode locks change in `roomId`. */
+  idleMute(roomId: RoomId, userId: string): IdleMuteMinutes;
+  /** Calls `listener` whenever a member event or the viewer's mode locks or listener timeouts change in `roomId`. */
   subscribeListeningModes(roomId: RoomId, listener: () => void): () => void;
-  setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string, locked?: boolean): Promise<'sent' | 'failed'>;
+  setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string, locked?: boolean, idleMuteMin?: IdleMuteMinutes): Promise<'sent' | 'failed'>;
   participant(): ParticipantView | null;
   channelNames: ChannelNamesPort;
   memberSince(roomId: RoomId, userId: string): number | null;
@@ -1082,15 +1094,16 @@ export function createMatrixBrowserPorts(input: Readonly<{
         if (runtime.active === active && event.getRoomId() === roomId && event.getType() === EventType.RoomMember) listener();
       };
       const locks = (event: MatrixEvent, room: Room) => {
-        if (runtime.active === active && room.roomId === roomId && event.getType() === MODE_LOCKS_ACCOUNT_DATA_TYPE) listener();
+        if (runtime.active === active && room.roomId === roomId && [MODE_LOCKS_ACCOUNT_DATA_TYPE, IDLE_MUTE_ACCOUNT_DATA_TYPE].some(type => type === event.getType())) listener();
       };
       active.client.on(RoomStateEvent.Events, publish);
       active.client.on(RoomEvent.AccountData, locks);
       return () => { active.client.off(RoomStateEvent.Events, publish); active.client.off(RoomEvent.AccountData, locks); };
     },
     modeLocked: (roomId, userId) => !!runtime.active && readModeLocked(runtime.active.client, roomId, userId),
-    setListeningMode: (roomId, userId, mode, txnId, locked) => runtime.active
-      ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId, locked) : Promise.resolve('failed'),
+    idleMute: (roomId, userId) => runtime.active ? readIdleMute(runtime.active.client, roomId, userId) : DEFAULT_IDLE_MUTE_MIN,
+    setListeningMode: (roomId, userId, mode, txnId, locked, idleMuteMin) => runtime.active
+      ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId, locked, idleMuteMin) : Promise.resolve('failed'),
     device, room, conversations, syncStatus, participant: () => runtime.active?.actor ?? null,
     channelNames: { setOwnName: (roomId, name) => runtime.active
       ? setOwnChannelName(runtime.active.client, roomId, name) : Promise.resolve({ kind: 'error', code: 'unavailable' }) },

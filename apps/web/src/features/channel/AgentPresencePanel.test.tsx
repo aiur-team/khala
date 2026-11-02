@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
-import { ChannelRoster, MemberAvatar, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
+import { ChannelRoster, ListenerTimeout, MemberAvatar, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers } from './members';
 
@@ -15,6 +15,16 @@ const scout: ChannelAgentView = {
 };
 const members = (agents: readonly ChannelAgentView[]) => resolveMembers({ viewer: { participantId: 'p_mira', ownerId: mira, name: 'Mira' },
   humans: [], agents });
+
+describe('ListenerTimeout', () => {
+  it('offers the fixed timeouts with the current one checked, and says agent messages do not count', () => {
+    const html = renderToStaticMarkup(<ListenerTimeout agent={members([scout]).agents[0]!} value={240} onChange={async () => 'sent'} />);
+    expect(html).toContain('aria-label="Listener timeout for Scout"');
+    expect([...html.matchAll(/data-v="(\d+)">([^<]+)</g)].map(match => [match[1], match[2]])).toEqual([['15', '15m'], ['60', '1h'], ['240', '4h'], ['1440', '24h'], ['0', 'Off']]);
+    expect(html).toMatch(/aria-checked="true" class="on" data-v="240"/);
+    expect(html).toContain('Agent messages don’t count.');
+  });
+});
 
 describe('ChannelRoster', () => {
   it.each(['antigravity', 'muse'])('renders initials for registered %s without a logo', harness => {

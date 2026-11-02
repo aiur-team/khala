@@ -3,7 +3,7 @@
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { harnessInfo } from '@khala/contracts/m1/harness';
-import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { IDLE_MUTE_CHOICES, type IdleMuteMinutes, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/names';
 import { Avatar } from '../../ui/khala/Avatar';
@@ -158,8 +158,36 @@ export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
 
 export const harnessName = (agent: AgentMember) => agent.harness ? harnessDisplayName(agent.harness) : 'Agent';
 
-/** `locked`, when given, sets or clears the owner's mode lock (the agent's set_mode then refuses). */
-export type SetModeHandler = (participantId: string, mode: ListeningMode, locked?: boolean) => Promise<'sent' | 'failed'>;
+/** `locked`, when given, sets or clears the owner's mode lock (the agent's set_mode then refuses);
+ * `idleMuteMin` sets the listener timeout. */
+export type SetModeHandler = (participantId: string, mode: ListeningMode, locked?: boolean, idleMuteMin?: IdleMuteMinutes) => Promise<'sent' | 'failed'>;
+
+const TIMEOUTS = IDLE_MUTE_CHOICES.map(minutes => ({ value: String(minutes),
+  label: minutes === 0 ? 'Off' : minutes < 60 ? `${minutes}m` : `${minutes / 60}h` }));
+
+/** The agent detail pane's listener timeout: no human message for this long mutes the agent, to save tokens. */
+export function ListenerTimeout({ agent, value, onChange }: Readonly<{
+  agent: AgentMember;
+  value: IdleMuteMinutes;
+  onChange(minutes: IdleMuteMinutes): Promise<'sent' | 'failed'>;
+}>) {
+  const [pending, setPending] = useState<IdleMuteMinutes | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { if (pending === value) setPending(null); }, [pending, value]);
+  async function choose(minutes: IdleMuteMinutes): Promise<void> {
+    setPending(minutes);
+    setFailed(false);
+    if (await onChange(minutes).catch(() => 'failed' as const) === 'sent') return;
+    setPending(null);
+    setFailed(true);
+  }
+  return <>
+    <Segmented label={`Listener timeout for ${agentLabel(agent)}`} value={String(pending ?? value)} options={TIMEOUTS}
+      onChange={next => void choose(Number(next) as IdleMuteMinutes)} />
+    <p>Mutes {agentLabel(agent)} after this long with no human message. Agent messages don’t count.</p>
+    {failed ? <p className="kh-d-rename-err" role="alert">Couldn’t change the timeout. Try again.</p> : null}
+  </>;
+}
 
 /** How long a requested mode stays selected before an unconfirmed request reverts. */
 export const MODE_CONFIRM_MS = 15_000;

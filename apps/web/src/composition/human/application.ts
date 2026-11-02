@@ -2,7 +2,7 @@ import type { ChannelColors } from '@khala/contracts/m1/colors';
 import type { AgentNamesPort, ChannelNamesPort, MemberPresence, MediaPort, TypingPort } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
-import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+import type { IdleMuteMinutes, ListeningMode } from '@khala/contracts/m1/listening-mode';
 // Browser composition lifecycle for the ordinary human flow. It exposes only
 // verified contract ports to route composition and owns their route/device
 // teardown ordering; UI modules never locate global services themselves.
@@ -60,9 +60,11 @@ export interface HumanApplicationPorts {
   readonly listeningMode?: (roomId: RoomId, matrixUserId: string) => ListeningMode;
   /** Hosted only: whether the viewer locked this agent's mode (set_mode refuses). */
   readonly modeLocked?: (roomId: RoomId, matrixUserId: string) => boolean;
+  /** Hosted only: the listener timeout (minutes, 0 is Off) the viewer set for this agent. */
+  readonly idleMute?: (roomId: RoomId, matrixUserId: string) => IdleMuteMinutes;
   readonly subscribeListeningModes?: (roomId: RoomId, listener: () => void) => Disposer;
-  /** Sends the owner's listening-mode command to their agent; `locked`, when given, sets or clears the mode lock. */
-  readonly setListeningMode?: (roomId: RoomId, matrixUserId: string, mode: ListeningMode, txnId: string, locked?: boolean) => Promise<'sent' | 'failed'>;
+  /** Sends the owner's listening-mode command to their agent; `locked` and `idleMuteMin`, when given, change the mode lock and listener timeout. */
+  readonly setListeningMode?: (roomId: RoomId, matrixUserId: string, mode: ListeningMode, txnId: string, locked?: boolean, idleMuteMin?: IdleMuteMinutes) => Promise<'sent' | 'failed'>;
   readonly identity: IdentityPort;
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;

@@ -17,8 +17,8 @@ import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-ti
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
-import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { AgentName, ChannelRoster, harnessName, MemberAvatar, RemoveAgent, RenameAgent, type RemoveAgentHandler, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
+import type { IdleMuteMinutes, ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { AgentName, ChannelRoster, harnessName, ListenerTimeout, MemberAvatar, RemoveAgent, RenameAgent, type RemoveAgentHandler, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
 import type { ChannelAgentView, ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';
 import { memberCountLabel, ownerOfLabel } from './roster-model';
@@ -63,6 +63,8 @@ export interface ChannelScreenProps {
   modeFor?: (participantId: string) => ListeningMode;
   /** Whether the viewer locked an agent's mode; without it there is no Lock mode toggle. */
   lockedFor?: (participantId: string) => boolean;
+  /** The listener timeout the viewer set for their agent; with `onSetMode` the detail pane offers to change it. */
+  idleMuteFor?: (participantId: string) => IdleMuteMinutes;
   /** Sends a listening-mode change for one of the viewer's agents. Without it the control stays locked. */
   onSetMode?: SetModeHandler;
   /** C3 participant details: an agent's harness and owner label. */
@@ -139,9 +141,9 @@ function HumanDetail({ human, members, recent, timeOptions, onOpen, onMention, o
   </ParticipantDetail>;
 }
 
-function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, remove, onOpen, onMention, onClose }: Readonly<{
+function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, timeout, remove, onOpen, onMention, onClose }: Readonly<{
   agent: AgentMember; members: ChannelMembers; recent: readonly RecentEntry[]; joinedAt: string | undefined;
-  rename: ReactNode; remove: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
+  rename: ReactNode; timeout: ReactNode; remove: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
 }>) {
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
   const pill = <><i>{agent.ownerInitials}</i>
@@ -161,6 +163,7 @@ function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, re
     <Recent entries={recent} timeOptions={timeOptions} />
     {onMention ? <div className="kh-d-act"><button type="button" className="pri" onClick={() => onMention(agent.name)}>@ Mention</button></div> : null}
     {rename ? <div className="kh-d-sec"><span className="kh-d-lbl">Rename</span>{rename}</div> : null}
+    {timeout ? <div className="kh-d-sec"><span className="kh-d-lbl">Listener timeout</span>{timeout}</div> : null}
     {remove ? <div className="kh-d-sec">{remove}</div> : null}
   </ParticipantDetail>;
 }
@@ -173,7 +176,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 }
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
-  humanParticipants, currentNames, renameAgent, modeFor, lockedFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+  humanParticipants, currentNames, renameAgent, modeFor, lockedFor, idleMuteFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, creatorOwnerId, onRemoveHuman, onRemoveAgent, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
   onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -278,6 +281,9 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       recent={recent(selectedMember.participantId)} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
       rename={selectedMember.isViewerOwned && renameAgent ? <RenameAgent key={focus?.request ?? 0}
         participantId={selectedMember.participantId} name={selectedMember.name} renameAgent={renameAgent} autoFocus={focus !== null} /> : null}
+      timeout={selectedMember.isViewerOwned && onSetMode && idleMuteFor ? <ListenerTimeout agent={selectedMember}
+        value={idleMuteFor(selectedMember.participantId)} onChange={minutes => onSetMode(selectedMember.participantId,
+          modeFor?.(selectedMember.participantId) ?? 'sync', undefined, minutes)} /> : null}
       remove={onRemoveAgent && (selectedMember.isViewerOwned || creatorOwnerId !== undefined && creatorOwnerId === viewerOwnerId)
         ? <RemoveAgent agent={selectedMember} remove={onRemoveAgent} /> : null}
       onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;

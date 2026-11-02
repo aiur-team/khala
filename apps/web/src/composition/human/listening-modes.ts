@@ -1,13 +1,13 @@
 // The owner-only listening-mode command, guarded like an agent rename.
 
-import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
+import type { IdleMuteMinutes, ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantView, RoomId } from '@khala/contracts/messaging/index';
 import type { HumanApplicationPorts } from './application';
 
-export type SetListeningMode = (participantId: string, mode: ListeningMode, locked?: boolean) => Promise<'sent' | 'failed'>;
+export type SetListeningMode = (participantId: string, mode: ListeningMode, locked?: boolean, idleMuteMin?: IdleMuteMinutes) => Promise<'sent' | 'failed'>;
 
 /**
- * Sends `mode` (and a `locked` change) to an agent only when the viewer is a joined human who owns it
+ * Sends `mode` (and a `locked` or listener timeout change) to an agent only when the viewer is a joined human who owns it
  * and the agent's Matrix user id is known; otherwise `failed`, unsent.
  */
 export function guardedListeningModeSetter(input: Readonly<{
@@ -18,10 +18,12 @@ export function guardedListeningModeSetter(input: Readonly<{
   matrixUserId(participantId: string): string | undefined;
   send: NonNullable<HumanApplicationPorts['setListeningMode']>;
 }>): SetListeningMode {
-  return async (participantId, mode, locked) => {
+  return async (participantId, mode, locked, idleMuteMin) => {
     const userId = input.matrixUserId(participantId);
     if (input.viewer.kind !== 'human' || input.ownerOf(participantId) !== input.viewer.ownerId
       || !input.joined() || !userId) return 'failed';
-    return input.send(input.roomId, userId, mode, `txn_${crypto.randomUUID()}`, ...(locked === undefined ? [] : [locked]));
+    const txn = `txn_${crypto.randomUUID()}`;
+    if (idleMuteMin !== undefined) return input.send(input.roomId, userId, mode, txn, locked, idleMuteMin);
+    return input.send(input.roomId, userId, mode, txn, ...(locked === undefined ? [] : [locked]));
   };
 }
