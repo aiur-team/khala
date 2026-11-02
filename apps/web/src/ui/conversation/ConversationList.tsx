@@ -93,13 +93,18 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   const visible = active.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(needle));
   const unread = active.reduce((count, item) => count + (item.unreadCount ?? 0), 0);
   const archivedUnread = conversations.some(item => item.archived && item.unreadCount);
+  // Loading keeps the loaded layout: shimmer stands in for the title, count and search.
+  if (status === 'loading') return <>
+    <div className="kh-list-head"><b className="kh-skel" aria-hidden="true">Channels</b><span className="kh-skel" aria-hidden="true">{/* figure spaces size it like "52 unread" */}{'\u2007'.repeat(9)}</span>{action}</div>
+    <div className="kh-search kh-skel" aria-hidden="true" />
+    <div className="kh-convos"><SkeletonRow /><SkeletonRow /><SkeletonRow /><span className="sr-only" role="status">Loading channels…</span></div>
+  </>;
   return <>
     <div className="kh-list-head"><b>Channels</b><span>{unread} unread</span>{action}</div>
     {showSearch ? <label className="kh-search"><SearchIcon />
       <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search" aria-label="Search channels" />
     </label> : null}
     <div className="kh-convos">
-      {status === 'loading' ? <><SkeletonRow /><SkeletonRow /><SkeletonRow /><span className="sr-only" role="status">Loading channels…</span></> : null}
       {status === 'error' ? <div className="kh-cv-empty" role="alert">Channels are unavailable. Try reloading.</div> : null}
       {status === 'ready' && visible.length === 0 ? <div className="kh-cv-empty" role="status">{active.length > 0 && query ? 'No channels match.' : emptyLabel}</div> : null}
       {visible.map(item => {

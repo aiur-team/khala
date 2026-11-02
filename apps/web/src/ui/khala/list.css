@@ -36,10 +36,15 @@
 /* §13.4 loading skeleton [ADAPT] */
 .kh-cv-skel { cursor: default; }
 .kh-cv-skel:hover { background: none; }
-.kh-cv-skel .kh-cv-av, .kh-cv-skel .kh-cv-t > span { border-radius: 50%; background: linear-gradient(100deg, var(--surface-3) 30%, var(--surface-2) 50%, var(--surface-3) 70%); background-size: 200% 100%; animation: khSkel 1.4s ease-in-out infinite; }
+.kh-cv-skel .kh-cv-av { border-radius: 50%; }
+/* Reduced motion: khala-app.css stops the animation, leaving a static placeholder. */
+.kh-cv-skel .kh-cv-av, .kh-cv-skel .kh-cv-t > span, .kh-skel { background: linear-gradient(100deg, var(--surface-3) 30%, var(--surface-2) 50%, var(--surface-3) 70%); background-size: 200% 100%; animation: khSkel 1.4s ease-in-out infinite; }
 .kh-cv-skel .kh-cv-t { gap: 8px; }
 .kh-cv-skel .kh-cv-t > span { display: block; height: 10px; border-radius: 5px; width: 60%; }
 .kh-cv-skel .kh-cv-t > span + span { width: 85%; }
+/* Transparent text sizes the head placeholders like the loaded labels. */
+.kh-list-head .kh-skel { color: transparent; border-radius: 6px; user-select: none; }
+.kh-list-head b.kh-skel { flex: 0 0 auto; margin-right: auto; }
 @keyframes khSkel { to { background-position-x: -200%; } }
 
 /* The New channel popover's error line (§4.3), on the §12.2 `.kh-hint` (controls.css). */

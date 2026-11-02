@@ -159,6 +159,7 @@ describe('HumanApplicationScreen', () => {
       expect(html).toContain('aria-label="Settings"');
       expect(html).not.toContain('Account and device status');
       expect(html).not.toContain('kh-pop-h');
+      if (snapshot.phase === 'initializing_device') expect(html).not.toContain('Getting this device ready…');
       expect(renderRoom).not.toHaveBeenCalled();
     }
   });
@@ -168,7 +169,11 @@ describe('HumanApplicationScreen', () => {
       phase: 'checking_identity', path: '/new', context: null,
     })} identity={identity} routes={routes} renderRoom={renderRoom} />);
     expect(html).toContain('khala-owner-shell');
-    expect(html).toContain('Checking your sign-in…');
+    // Loading shows the list skeleton only: no status words, no stacked status pane.
+    expect(html).not.toContain('Checking your sign-in…');
+    expect(html).not.toContain('khala-pending');
+    expect(html).not.toContain('Channel status');
+    expect(html).toContain('kh-search kh-skel');
     expect(html).not.toContain('Account and device status');
     expect(html).not.toContain('aria-label="Log out"');
     expect(html).not.toContain('Logging out…');
