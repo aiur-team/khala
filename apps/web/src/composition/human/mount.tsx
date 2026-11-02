@@ -16,7 +16,6 @@ import { ConversationList, type ConversationSummary } from '../../ui/conversatio
 import { archiveChannel, ArchivedChannelsRoute } from './ArchivedChannelsRoute';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { CopyIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
-import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
 import { SettingsMenu } from '../../ui/khala/SettingsMenu';
 import { useToast } from '../../ui/khala/Toast';
@@ -220,14 +219,15 @@ function PendingOwnerShell({ application, routes, chrome, phase, local, children
   // No Log out while identity is still being checked, nor ever for the local owner; the theme stays switchable.
   const checking = phase === 'checking_identity';
   const noSignOut = checking || local;
-  // The device status and its retry stay reachable on a phone: the pending
-  // frame stacks the list above the status instead of hiding either.
-  return <KhalaApp className="khala-owner-shell khala-pending" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+  // While loading, only the list skeleton shows. A failed or paused device's status and retry stay
+  // reachable on a phone: the pending frame stacks the list above the status instead of hiding either.
+  const loading = checking || phase === 'initializing_device';
+  return <KhalaApp className={`khala-owner-shell${loading ? '' : ' khala-pending'}`} theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} brandActions={noSignOut ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
       username={null} {...(noSignOut ? {} : { onSignOut: signOut, signingOut })} />}
     list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
-      showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
+      showSearch={false} status={loading ? 'loading' : 'ready'}
       emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
       action={<button type="button" className="kh-ib sm" aria-label="New channel" disabled><PlusIcon /></button>} />}
     main={children} />;
@@ -354,9 +354,7 @@ export function HumanApplicationScreen({
   // A human without a username chooses one before any app route.
   // The URL is left alone, so saving lands on the asked-for route.
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => {
-    const pending = <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity" local={local}>
-        {local ? <LoadingSpinner label="Loading" /> : <SigningIn />}
-      </PendingOwnerShell>;
+    const pending = <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity" local={local}>{null}</PendingOwnerShell>;
     return <ProfileProvider key={context.principal.ownerId} ports={context}>
       <UsernameGate pending={pending} theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange} homeHref={routes.conversationsPath()}
         brandActions={local ? null : <LogoutAction application={application} routes={routes} mode={chrome.mode} />}>

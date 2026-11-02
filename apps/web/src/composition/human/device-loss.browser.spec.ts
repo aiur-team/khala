@@ -225,8 +225,11 @@ test('signed-in index remains visible while device initializes and fails', { tim
     for (const width of [1440, 320]) {
       const page = await browser.newPage({ viewport: { width, height: 700 } });
       await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&hold-device&fail-device&logout');
-      await page.getByRole('region', { name: 'Channel status' }).getByText('Getting this device ready…').waitFor();
-      // Every width shows the gated list and the status together; there is no drawer.
+      await page.locator('.kh-search.kh-skel').waitFor();
+      // Loading shows only the skeleton: no status pane or words.
+      assert.equal(await page.getByRole('region', { name: 'Channel status' }).count(), 0);
+      assert.equal(await page.getByText('Getting this device ready…').count(), 0);
+      // Every width shows the gated list; there is no drawer.
       assert.equal(await page.getByRole('button', { name: 'Channels', exact: true }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'New channel' }).isVisible(), true);
       assert.equal(await page.locator('.khala-owner-shell').count(), 1);
@@ -256,7 +259,7 @@ test('signed-in index remains visible while device initializes and fails', { tim
     }
     const readyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await readyPage.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&hold-device&logout');
-    await readyPage.getByRole('region', { name: 'Channel status' }).waitFor();
+    await readyPage.locator('.kh-search.kh-skel').waitFor();
     await readyPage.evaluate(() => window.__lossHarness.releaseDevice());
     await readyPage.locator('.kh-cv').first().waitFor();
     assert.equal(await readyPage.locator('.kh-pop:not([hidden])').count(), 0);

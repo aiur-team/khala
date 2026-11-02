@@ -131,8 +131,10 @@ export function HumanScreen<Route>({
       || snapshot.reason === 'recovery_required')
     && renderDeviceLoss !== undefined) {
     content = renderDeviceLoss(snapshot.path);
-  } else if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
-    || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity')) && renderPendingShell) {
+  } else if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device') && renderPendingShell) {
+    // Normal loading shows only the shell's skeleton; words appear only on failure.
+    content = null;
+  } else if (snapshot.phase === 'unavailable' && snapshot.source !== 'identity' && renderPendingShell) {
     content = <section className="khala-device-status" aria-label="Channel status">{statusContent(snapshot)}
       {snapshot.phase === 'unavailable' && snapshot.retryable
         ? <button type="button" className="aiur-action" onClick={() => application.navigate(snapshot.path)}>Try again</button>

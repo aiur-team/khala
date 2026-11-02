@@ -127,6 +127,12 @@ describe('ConversationList', () => {
   it('renders each list state', () => {
     const loading = render([], { status: 'loading' });
     expect(loading.match(/class="kh-cv kh-cv-skel"/gu)).toHaveLength(3);
+    // Loading shimmers the title, count and search (even with search off) and shows no visible label.
+    expect(loading).toContain('<div class="kh-list-head"><b class="kh-skel" aria-hidden="true">Channels</b><span class="kh-skel" aria-hidden="true">');
+    expect(loading).toContain('<div class="kh-search kh-skel" aria-hidden="true"></div>');
+    expect(render([], { status: 'loading', showSearch: false })).toContain('kh-search kh-skel');
+    expect(loading).not.toContain('0 unread</span>');
+    expect(loading.replace('<span class="sr-only" role="status">Loading channels…</span>', '')).not.toMatch(/role="(status|alert)"/u);
     expect(render([], { status: 'error' })).toContain('<div class="kh-cv-empty" role="alert">Channels are unavailable. Try reloading.</div>');
     expect(render([])).toContain('<div class="kh-cv-empty" role="status">No channels yet.</div>');
     expect(render([release], { query: 'nothing here' })).toContain('<div class="kh-cv-empty" role="status">No channels match.</div>');
