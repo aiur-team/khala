@@ -60,3 +60,9 @@ export function segmentMentions(text: string, roster: readonly MentionCandidate[
   if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex) });
   return segments;
 }
+
+/** The composer chips: only participants still in the channel, once its member list has loaded. A departed speaker keeps its old `@mention` styling but gets no chip. */
+export function currentMentionTargets<T extends Readonly<{ id: string }>>(targets: readonly T[],
+  currentIds: ReadonlySet<string> | null): T[] {
+  return currentIds ? targets.filter(target => currentIds.has(target.id)) : [...targets];
+}
