@@ -4,6 +4,7 @@ import {
   ClientEvent,
   Direction,
   EventType,
+  Filter,
   MatrixEvent,
   MatrixEventEvent,
   MsgType,
@@ -263,6 +264,23 @@ export function isLiveSync(state: SyncState | null): boolean {
   return state === SyncState.Prepared || state === SyncState.Syncing;
 }
 
+/**
+ * After a reconnect the SDK replays the backlog over several zero-timeout
+ * syncs (`catchingUp`) while room keys arrive; the timeline holds until the last.
+ */
+export function isCatchingUp(client: Pick<MatrixClient, 'getSyncState' | 'getSyncStateData'>): boolean {
+  const state = client.getSyncState();
+  return state === SyncState.Reconnecting || state === SyncState.Error || state === SyncState.Catchup
+    || client.getSyncStateData()?.catchingUp === true;
+}
+
+/**
+ * Incremental syncs otherwise use the homeserver's default timeline limit (10
+ * on Synapse), so a busy channel comes back as a gap. Larger backlogs still
+ * gap and load older on scroll-up.
+ */
+export const SYNC_TIMELINE_LIMIT = 300;
+
 /** Rebinds decrypt listeners as sync adds or removes events; all callbacks share the session fence. */
 export function subscribeConversationIndex(client: Pick<MatrixClient, 'getRooms' | 'on' | 'off'>,
   isCurrent: () => boolean, listener: () => void): () => void {
@@ -355,7 +373,9 @@ function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): 
     if (signal.aborted) return abort();
     signal.addEventListener('abort', abort, { once: true });
     client.on(ClientEvent.Sync, synced);
-    void Promise.resolve(client.startClient({ initialSyncLimit: 50, lazyLoadMembers: true, disablePresence: false }))
+    const filter = new Filter(client.getUserId());
+    filter.setTimelineLimit(SYNC_TIMELINE_LIMIT);
+    void Promise.resolve(client.startClient({ initialSyncLimit: 50, filter, lazyLoadMembers: true, disablePresence: false }))
       .catch(error => finish(() => reject(error)));
   });
 }
@@ -699,8 +719,11 @@ export class MatrixSubstrate implements RoomSubstrate {
     if (!active) return () => undefined;
     const abort = new AbortController();
     let publishEpoch = 0;
+    let held = false;
     const publish = () => {
       if (disposed || this.runtime.active !== active) return;
+      held = isCatchingUp(active.client);
+      if (held) return;
       const room = active.client.getRoom(roomId);
       if (!room) return;
       const epoch = ++publishEpoch;
@@ -731,10 +754,14 @@ export class MatrixSubstrate implements RoomSubstrate {
       () => !disposed && this.runtime.active === active, publish);
     const membershipChanged = () => publish();
     active.client.on(RoomEvent.MyMembership, membershipChanged);
+    // The whole backlog renders in one update once catch-up ends.
+    const synced = () => { if (held) publish(); };
+    active.client.on(ClientEvent.Sync, synced);
     void waitForEncryptedRoom(active.client, roomId, abort.signal).then(publish).catch(() => undefined);
     return () => {
       disposed = true;
       abort.abort();
+      active.client.off(ClientEvent.Sync, synced);
       active.client.off(RoomEvent.MyMembership, membershipChanged);
       active.client.off(RoomEvent.Timeline, receive);
       disposeDecryption();
@@ -1085,7 +1112,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
       const active = runtime.active;
       const view = device.current();
       if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready' || view.generation !== generation || active.generation !== generation) return false;
-      return isLiveSync(active.client.getSyncState());
+      return isLiveSync(active.client.getSyncState()) && !isCatchingUp(active.client);
     },
     subscribe(ownerId, generation, listener) {
       const active = runtime.active;

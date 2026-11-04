@@ -30,7 +30,7 @@ import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
 import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
-import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
+import { ChevronDownIcon, RestoreIcon, UserXIcon } from '../../ui/khala/icons';
 import { humanColorOf, ownerColorOf, useHumanColor, colorSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
 import { buildIdBadgeResolver, harnessLogo, humanInitials, initials, ownerInitials } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
@@ -49,6 +49,8 @@ export interface TimelineScreenProps {
   controller: TimelineController;
   /** Persist the latest event only after the focused viewer has seen it. */
   onReadLatest?: (eventId: EventId) => void | Promise<void>;
+  /** The client is replaying a backlog after a reconnect; new rows land in one update once it ends. */
+  catchingUp?: boolean;
   roomPort: Pick<ChannelPort, 'send'>;
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
@@ -247,7 +249,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  describeParticipant, controller, onReadLatest, catchingUp = false, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, seenBy, agentState, typing, media, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
@@ -370,6 +372,10 @@ export function TimelineScreen({
     glidingRef.current = distanceFromEnd(list) >= 2;
     scrollToLatest(list);
   }, []);
+  const jumpToLatest = () => {
+    setAtLatest(true);
+    if (listRef.current) glideToLatest(listRef.current);
+  };
 
   const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
   const sendBlocked = sendBlockedReason !== null;
@@ -916,7 +922,7 @@ export function TimelineScreen({
           <button type="button" className="kh-btn" onClick={() => void controller.loadOlder()}>Retry</button>
         </div>
       ) : null}
-      {data.phase === 'loading' ? <LoadingSpinner overlay /> : null}
+      {data.phase === 'loading' || catchingUp ? <LoadingSpinner overlay /> : null}
       {data.nameScan === 'retryable' ? <p className="timeline__status" role="alert">
         Agent names could not be checked because history did not load. You can retry while continuing this conversation.
       </p> : null}
@@ -998,18 +1004,13 @@ export function TimelineScreen({
         </div> : null}
         <div className="timeline__jump" aria-live="polite">
           {!atLatest && data.newMessageCount > 0 ? (
-            <button
-              type="button"
-              className="timeline__jump-latest"
-              onClick={() => {
-                setAtLatest(true);
-                const list = listRef.current;
-                if (list) glideToLatest(list);
-              }}
-            >
+            <button type="button" className="timeline__jump-latest" onClick={jumpToLatest}>
               {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
             </button>
           ) : null}
+          {!atLatest ? <button type="button" className="timeline__jump-arrow" aria-label="Jump to latest" onClick={jumpToLatest}>
+            <ChevronDownIcon />
+          </button> : null}
         </div>
       </div>
       {typers.length > 0 ? <p className="kh-typers" aria-live="polite">{typingLabel(typers)}</p> : null}

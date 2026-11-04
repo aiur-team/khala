@@ -120,9 +120,9 @@ storage, or credentials) and drives it with headless Chromium via Playwright:
 - A revoked membership shows an explicit banner and disables the composer.
 - Pagination preserves the reader's anchored row's position *within the
   scrollable list* after 20+ older rows are prepended.
-- A live message arriving while the reader is scrolled away increments a
-  visible "N new messages" count without moving the reader; jump-to-latest
-  returns and clears the count.
+- Scrolled away from latest, a centred down arrow returns to the end; a live
+  message arriving meanwhile adds an "N new messages" pill above it without
+  moving the reader. Both hide at latest.
 
 Run it with `pnpm --filter @khala/web test:browser` (requires a local
 Chromium; the harness build/preview is self-contained and not part of the

@@ -319,6 +319,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
       await frames();
     };
     const pill = page.locator('.timeline__jump-latest');
+    const arrow = page.getByRole('button', { name: 'Jump to latest' });
     for (const width of [1024, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       for (const offset of [0, 40]) {
@@ -356,6 +357,8 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
       }
       await scrollToOffset(300);
       const readingAt = await list.evaluate(node => node.scrollTop);
+      await arrow.waitFor();
+      assert.equal(await pill.count(), 0, 'scrolled up with nothing new shows the arrow alone');
       await pushLive(`first arrival while reading at ${width}`);
       await pill.waitFor();
       assert.equal(await pill.textContent(), '1 new message');
@@ -369,11 +372,14 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
         return { centre: box!.x + box!.width / 2 - (frame!.x + frame!.width / 2), gap: frame!.y + frame!.height - (box!.y + box!.height) };
       };
       const placed = await pillBox();
-      assert.ok(Math.abs(placed.centre) < 2 && placed.gap > 0 && placed.gap < 40, `pill is centred at the list's foot at ${width}: ${JSON.stringify(placed)}`);
+      assert.ok(Math.abs(placed.centre) < 2 && placed.gap > 0 && placed.gap < 80, `pill is centred at the list's foot at ${width}: ${JSON.stringify(placed)}`);
+      const [pillAt, arrowAt] = await Promise.all([pill.boundingBox(), arrow.boundingBox()]);
+      assert.ok(pillAt!.y + pillAt!.height <= arrowAt!.y && Math.abs(pillAt!.x + pillAt!.width / 2 - (arrowAt!.x + arrowAt!.width / 2)) < 2, 'the pill sits centred above the arrow');
       await scrollToOffset(250);
       assert.deepEqual(await pillBox(), placed, 'the pill does not scroll with the rows');
       await pill.click();
       assert.equal(await pill.count(), 0, 'clicking the pill hides it');
+      assert.equal(await arrow.count(), 0, 'and the arrow');
       await page.waitForFunction(() => {
         const node = document.querySelector('.timeline__list')!;
         return node.scrollHeight - node.scrollTop - node.clientHeight < 2;
@@ -384,6 +390,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
       await pill.waitFor();
       await scrollToOffset(0);
       await pill.waitFor({ state: 'detached' });
+      assert.equal(await arrow.count(), 0, 'scrolling back to latest hides the arrow');
     }
     await page.setViewportSize({ width: 1024, height: 900 });
 
