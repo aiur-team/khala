@@ -16,7 +16,7 @@ import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from
 import { attributionFor, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent, type RenderOptions } from './message-renderer';
-import { segmentMentions, type MentionCandidate } from './mentions';
+import { currentMentionTargets, segmentMentions, type MentionCandidate } from './mentions';
 import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
@@ -711,6 +711,9 @@ export function TimelineScreen({
   const mentionRoster = useMemo(() => (JSON.parse(mentionKey) as [string, string, 'human' | 'agent', number][])
     .map(([label, participantId, kind, hue]) => ({ label, participantId, kind, hue })), [mentionKey]);
   useEffect(() => { onMentionRoster?.(mentionRoster); }, [mentionRoster, onMentionRoster]);
+  // Speakers who left (removed, kicked) stay in the roster for old messages, but get no chip.
+  const chipTargets = currentMentionTargets(mentionTargets, members.length === 0 ? null
+    : new Set([viewer, ...members, ...extraParticipants].map(participant => participant.participantId)));
   const renderOptions: RenderOptions = { mentions: mentionRoster, ...(onOpenParticipant ? { onOpenParticipant } : {}),
     ...(media ? { loadImage: loadImageFor } : {}) };
 
@@ -1012,7 +1015,7 @@ export function TimelineScreen({
       {typers.length > 0 ? <p className="kh-typers" aria-live="polite">{typingLabel(typers)}</p> : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         // While an image uploads the draft is locked: it is the caption being sent.
-        disabled={!canCompose || uploading} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={mentionTargets}
+        disabled={!canCompose || uploading} sendDisabled={anySendUnresolved || sendBlocked || uploading} mentionTargets={chipTargets}
         {...(media ? { onAttach: (files: readonly File[]) => void attach(files), attachments: attachments.map(item => ({ url: item.url, name: item.image.name })),
           onRemoveAttachment: (index: number) => { setAttachments(current => current.filter((_, at) => at !== index)); setAttachError(null); }, attachError } : {})}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />

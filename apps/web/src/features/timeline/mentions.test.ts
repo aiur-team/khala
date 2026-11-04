@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { segmentMentions, type MentionCandidate } from './mentions';
+import { currentMentionTargets, segmentMentions, type MentionCandidate } from './mentions';
 
 const opus: MentionCandidate = { label: 'Opus', participantId: 'p-opus', kind: 'agent', hue: 150 };
 const kai: MentionCandidate = { label: 'Kai', participantId: 'p-kai', kind: 'human', hue: 150 };
@@ -51,5 +51,15 @@ describe('segmentMentions', () => {
     const started = performance.now();
     for (let index = 0; index < 500; index += 1) segmentMentions(body, roster);
     expect((performance.now() - started) / 500).toBeLessThan(2);
+  });
+});
+
+describe('currentMentionTargets', () => {
+  const targets = [{ id: 'p-me' }, { id: 'p-opus' }, { id: 'p-removed' }];
+  it('drops a removed member’s chip once the member list has loaded', () => {
+    expect(currentMentionTargets(targets, new Set(['p-me', 'p-opus']))).toEqual([{ id: 'p-me' }, { id: 'p-opus' }]);
+  });
+  it('keeps every target while the member list is unknown', () => {
+    expect(currentMentionTargets(targets, null)).toEqual(targets);
   });
 });

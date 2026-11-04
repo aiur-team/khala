@@ -645,7 +645,8 @@ export class MatrixSubstrate implements RoomSubstrate {
       }
       const participant: ParticipantView = {
         ...mapping,
-        displayName: sender === active.client.getUserId() ? ownerFirstName(active.principal.verifiedEmail) : mapping.displayName,
+        displayName: sender === active.client.getUserId() ? ownerFirstName(active.principal.verifiedEmail)
+          : mapping.displayName === sender ? departedName(active.client, roomId, sender, mapping.kind) : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
@@ -861,6 +862,18 @@ export function migrateLegacyArchives(client: Parameters<typeof setOwnArchived>[
     started.add(room.roomId);
     void agentsOf(room.roomId).then(agents => agents && setOwnArchived(client, room.roomId, true, agents));
   }
+}
+
+/**
+ * A departed sender's last name in `roomId`. The control server names only joined members and returns the raw
+ * user id for anyone removed or gone, so this reads their latest member event (a leave keeps the old name in its
+ * prev_content), else a fixed label: never the raw Matrix id.
+ */
+export function departedName(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string, kind: 'human' | 'agent'): string {
+  const event = client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId);
+  const name: unknown = event?.getContent().displayname ?? event?.getPrevContent().displayname;
+  // The same bounds the control server applies to a joined member's name.
+  return typeof name === 'string' && name.trim() !== '' && name.length <= 256 && name !== userId && !/[\u0000-\u001f\u007f-\u009f]/u.test(name) ? name : kind === 'agent' ? 'Removed agent' : 'Former member';
 }
 
 /** When `userId` took its current name in `roomId`: the time of its latest membership event. */

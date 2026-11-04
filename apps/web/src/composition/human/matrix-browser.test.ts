@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -701,5 +701,20 @@ describe('typing', () => {
     sendTyping(client as unknown as MatrixClient, sent, '!r', false, 22_000);
     sendTyping(client as unknown as MatrixClient, sent, '!r', false, 23_000);
     expect(client.sendTyping.mock.calls).toEqual([['!r', true, 30_000], ['!r', true, 30_000], ['!r', false, 30_000]]);
+  });
+});
+
+describe('departedName', () => {
+  const agent = '@agent-a74c46a5-4wspzp:hs';
+  const sdk = (event: MatrixEvent | null) => ({ getRoom: () => ({ currentState: { getStateEvents: () => event } }) }) as unknown as MatrixClient;
+  const leave = (prev: Record<string, unknown>) => new MatrixEvent({ type: EventType.RoomMember, state_key: agent, sender: '@kevin:hs',
+    content: { membership: 'leave' }, unsigned: { prev_content: prev } });
+  it('keeps a removed agent’s last name from the leave event’s previous content', () => {
+    expect(departedName(sdk(leave({ membership: 'join', displayname: 'Opus · Kevin' })), '!r', agent, 'agent')).toBe('Opus · Kevin');
+  });
+  it('falls back to a fixed label, never the raw Matrix id', () => {
+    expect(departedName(sdk(leave({ membership: 'join', displayname: agent })), '!r', agent, 'agent')).toBe('Removed agent');
+    expect(departedName(sdk(null), '!r', agent, 'agent')).toBe('Removed agent');
+    expect(departedName(sdk(null), '!r', '@bob:hs', 'human')).toBe('Former member');
   });
 });
