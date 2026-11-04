@@ -81,13 +81,14 @@ it('opens locally and completes device start while cross-signing bootstrap never
 it('reports the Live sync state from client sync events, scoped to the active owner and generation', async () => {
   const listeners = new Set<(state: SyncState) => void>();
   let state: SyncState | null = null;
+  let catchingUp = false;
   const emit = (next: SyncState) => { state = next; for (const listener of [...listeners]) listener(next); };
   const client = {
     initRustCrypto: vi.fn(async () => {}), stopClient: vi.fn(), getUserId: () => '@bob:test',
     getCrypto: () => ({ getOwnDeviceKeys: vi.fn(async () => ({ ed25519: 'fingerprint' })),
       getCrossSigningStatus: vi.fn(async () => ({ privateKeysCachedLocally: { masterKey: true } })),
       userHasCrossSigningKeys: vi.fn(async () => true) }),
-    getSyncState: () => state,
+    getSyncState: () => state, getSyncStateData: () => ({ catchingUp }),
     on: vi.fn((event, listener) => { if (event === ClientEvent.Sync) listeners.add(listener); }),
     off: vi.fn((event, listener) => { if (event === ClientEvent.Sync) listeners.delete(listener); }),
     startClient: vi.fn(async () => { emit(SyncState.Prepared); }),
@@ -117,10 +118,15 @@ it('reports the Live sync state from client sync events, scoped to the active ow
   emit(SyncState.Reconnecting);
   expect(listener).toHaveBeenCalledOnce();
   expect(ports.syncStatus.live(bob, 1)).toBe(false);
+  // The first syncs after a reconnect replay the backlog: not live until caught up.
+  catchingUp = true;
+  emit(SyncState.Syncing);
+  expect(ports.syncStatus.live(bob, 1)).toBe(false);
+  catchingUp = false;
   emit(SyncState.Syncing);
   expect(ports.syncStatus.live(bob, 1)).toBe(true);
   dispose();
   emit(SyncState.Error);
-  expect(listener).toHaveBeenCalledTimes(2);
+  expect(listener).toHaveBeenCalledTimes(3);
   await engine.close();
 });

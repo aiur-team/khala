@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
+import { ClientEvent, EventType, Filter, SyncState, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate, SYNC_TIMELINE_LIMIT } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -95,6 +95,7 @@ describe('Matrix browser safety boundaries', () => {
     const client = {
       on: vi.fn((event: string, listener: (...args: never[]) => void) => listeners.set(event, listener)),
       off: vi.fn((event: string) => listeners.delete(event)),
+      getUserId: () => '@me:hs',
       startClient: vi.fn(async () => { throw new Error('sync failed'); }),
       stopClient,
     } as unknown as MatrixClient;
@@ -102,6 +103,9 @@ describe('Matrix browser safety boundaries', () => {
     await expect(startMatrixClient(client, new AbortController().signal)).rejects.toThrow('sync failed');
     expect(client.on).toHaveBeenCalledWith(ClientEvent.Sync, expect.any(Function));
     expect(stopClient).toHaveBeenCalledOnce();
+    // Every incremental sync carries a returning reader's backlog, not the homeserver's 10-event default.
+    const [{ filter }] = vi.mocked(client.startClient).mock.calls[0]! as [{ filter: Filter }];
+    expect(filter.getDefinition().room?.timeline?.limit).toBe(SYNC_TIMELINE_LIMIT);
   });
 
   it('indexes only joined encrypted rooms and previews decrypted text', () => {
@@ -638,7 +642,7 @@ it.each(['leave', 'ban'])('publishes definite %s without waiting for revoked par
   const roomId = '!room:example.test' as RoomId;
   const room = { roomId, name: 'Channel', hasEncryptionStateEvent: () => true,
     getMyMembership: () => membership, getLastLiveEvent: () => undefined } as unknown as Room;
-  const client = { getRoom: () => room, on: vi.fn(), off: vi.fn() } as unknown as MatrixClient;
+  const client = { getRoom: () => room, on: vi.fn(), off: vi.fn(), getSyncState: () => SyncState.Syncing, getSyncStateData: () => null } as unknown as MatrixClient;
   const participants = { resolve: vi.fn(async () => null) };
   const substrate = new MatrixSubstrate({ active: { client, generation: 1 } } as never, decoded.value, participants);
   const listener = vi.fn();
@@ -649,6 +653,41 @@ it.each(['leave', 'ban'])('publishes definite %s without waiting for revoked par
   expect(participants.resolve).not.toHaveBeenCalled();
   dispose();
   expect(client.off).toHaveBeenCalledWith(RoomEvent.MyMembership, expect.any(Function));
+});
+
+it('holds a reconnect backlog until catch-up ends, then publishes it in one update', async () => {
+  const decoded = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+  if (!decoded.ok) throw new Error('limits');
+  const roomId = '!room:example.test' as RoomId;
+  const backlog = Array.from({ length: 120 }, (_, index) => new MatrixEvent({ event_id: `$e${index}`, type: 'm.room.message' }));
+  const live: MatrixEvent[] = [];
+  const room = { roomId, name: 'Channel', hasEncryptionStateEvent: () => true, getMyMembership: () => 'join',
+    getLastLiveEvent: () => live.at(-1), getLiveTimeline: () => ({ getEvents: () => live }) } as unknown as Room;
+  const bus = new EventEmitter();
+  let state: SyncState = SyncState.Reconnecting;
+  let catchingUp = true;
+  const client = Object.assign(bus, { getRoom: () => room, getSyncState: () => state,
+    getSyncStateData: () => ({ catchingUp }) }) as unknown as MatrixClient;
+  const substrate = new MatrixSubstrate({ active: { client, generation: 1 } } as never, decoded.value, { resolve: vi.fn() });
+  // Projection is covered elsewhere; this pins only when it is published.
+  const project = vi.spyOn(substrate as unknown as { events: (events: readonly MatrixEvent[]) => Promise<unknown[]> }, 'events')
+    .mockImplementation(async events => events.map(event => event.getId()));
+  const listener = vi.fn();
+  const dispose = substrate.subscribe(roomId, listener);
+  for (const [index, event] of backlog.entries()) {
+    live.push(event);
+    bus.emit(RoomEvent.Timeline, event, room);
+    // Several zero-timeout syncs replay the backlog; each still reports catching up.
+    if (index % 40 === 39) { state = SyncState.Syncing; bus.emit(ClientEvent.Sync, state); }
+  }
+  await vi.waitFor(() => expect(project).not.toHaveBeenCalled());
+  expect(listener).not.toHaveBeenCalled();
+  catchingUp = false;
+  bus.emit(ClientEvent.Sync, SyncState.Syncing);
+  await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+  expect(listener.mock.calls[0]![0].events).toHaveLength(120);
+  dispose();
+  expect(bus.listenerCount(ClientEvent.Sync)).toBe(0);
 });
 
 describe('member presence and read receipts', () => {

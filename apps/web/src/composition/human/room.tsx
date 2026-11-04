@@ -24,6 +24,7 @@ import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
 import { guardedListeningModeSetter } from './listening-modes';
 import { useProfile } from '../../features/profile/ProfileProvider';
+import { useLiveSync } from './sync-status';
 
 function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
   let readEpoch = 0;
@@ -158,6 +159,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   }, [room, timeline]);
   const account = useHumanAccount();
   const viewer = context.participant?.() ?? null;
+  // No sync port (local mode) means nothing to catch up on.
+  const catchingUp = !useLiveSync(context) && context.syncStatus !== undefined;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
   const lostAccess = controlForbidden || timelineData.membership === 'left' || timelineData.membership === 'revoked';
   useEffect(() => {
@@ -343,7 +346,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       } : {})}
       renderTimeline={(openParticipant, openInvite, onMentionRoster) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
-          onReadLatest={markRead} controller={timeline} roomPort={context.room} roomId={roomId} viewer={channelViewer ?? viewer} viewerInitials={viewerInitials} composerRef={composer}
+          onReadLatest={markRead} catchingUp={catchingUp} controller={timeline} roomPort={context.room} roomId={roomId} viewer={channelViewer ?? viewer} viewerInitials={viewerInitials} composerRef={composer}
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
