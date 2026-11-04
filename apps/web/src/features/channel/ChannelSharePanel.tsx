@@ -8,6 +8,17 @@ import type { HumanChannelLinks } from '../../composition/human/channel-links';
 type ShareState = Readonly<{ operationId: string; url: string | null; status: 'idle' | 'busy' | 'ready' | 'error'; error: string | null }>;
 const fresh = (): ShareState => ({ operationId: crypto.randomUUID(), url: null, status: 'idle', error: null });
 
+// Each popover open remounts the hook, so links are kept in memory per link source and channel until they expire.
+const linkCache = new WeakMap<object, Map<RoomId, Readonly<{ url: string; expiresAt: string | null }>>>();
+function cachedLink(source: object, roomId: RoomId): string | null {
+  const hit = linkCache.get(source)?.get(roomId);
+  return hit && (hit.expiresAt === null || Date.parse(hit.expiresAt) > Date.now()) ? hit.url : null;
+}
+function cacheLink(source: object, roomId: RoomId, url: string, expiresAt: string | null) {
+  const rooms = linkCache.get(source) ?? new Map();
+  linkCache.set(source, rooms.set(roomId, { url, expiresAt }));
+}
+
 export type ChannelLinkSource = Readonly<{
   admission: Pick<AdmissionPort, 'share'>;
   channelLinks?: Pick<HumanChannelLinks, 'personal'>;
@@ -20,10 +31,15 @@ export type ChannelLink = CopyableLink;
  * The channel's one share link. Admission remains server-enforced: the link
  * grants nothing by itself. A personal channel link loads on mount; an
  * admission share is minted on the first copy unless `eager` shows it first.
+ * Either is then reused for the session until it expires.
  */
 export function useChannelLink(admission: ChannelLinkSource['admission'], channelLinks: ChannelLinkSource['channelLinks'], roomId: RoomId,
   { onCopy = copyShareLink, eager = false }: Readonly<{ onCopy?: ((url: string) => Promise<CopyResult>) | undefined; eager?: boolean }> = {}): ChannelLink {
-  const [link, setLink] = useState<ShareState>(fresh);
+  const source = channelLinks ?? admission;
+  const [link, setLink] = useState<ShareState>(() => {
+    const url = cachedLink(source, roomId);
+    return url ? { ...fresh(), url, status: 'ready' } : fresh();
+  });
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [copying, setCopying] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -40,6 +56,7 @@ export function useChannelLink(admission: ChannelLinkSource['admission'], channe
       if (channelLinks) {
         const result = await channelLinks.personal(roomId);
         if (result.kind === 'personal_link') {
+          cacheLink(source, roomId, result.shareUrl, result.expiresAt);
           set({ ...current, status: 'ready', url: result.shareUrl, error: null });
           return result.shareUrl;
         }
@@ -49,6 +66,7 @@ export function useChannelLink(admission: ChannelLinkSource['admission'], channe
       const result = await admission.share({ operationId: current.operationId, roomId,
         policy: { v: 1, kind: 'link', history: 'none' } });
       if (result.kind === 'ok') {
+        cacheLink(source, roomId, result.value.shareUrl, result.value.expiresAt);
         set({ ...current, status: 'ready', url: result.value.shareUrl, error: null });
         return result.value.shareUrl;
       }

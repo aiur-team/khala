@@ -9,7 +9,7 @@
 
 `roster-model.ts` holds the pure grouping, and `members.ts` resolves names, hues, initials, harness and ownership. Routing and proof-key labels fall back to "Agent", "You" or "Channel member", and connection diagnostics never appear.
 
-`useChannelLink` (in `ChannelSharePanel.tsx`) owns the one share link. A personal channel link loads on mount; an admission share is minted on the first copy unless `eager` is set. `ChannelInvite` and `ChannelAddAgent` are the two popover bodies over it. A failed copy leaves the link selected in a field for copying by hand.
+`useChannelLink` (in `ChannelSharePanel.tsx`) owns the one share link. A personal channel link loads on mount; an admission share is minted on the first copy unless `eager` is set. Either is kept in memory per channel until it expires, so reopening a popover shows it at once. `ChannelInvite` and `ChannelAddAgent` are the two popover bodies over it. A failed copy leaves the link selected in a field for copying by hand.
 
 `ChannelUiPort` is the only presence dependency. `createChannelController` subscribes before its initial read, ignores snapshots from another generation, and prevents a late initial read from rolling a live update back.
 
