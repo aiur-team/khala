@@ -730,6 +730,17 @@ describe('typing', () => {
     bus.emit(RoomMemberEvent.Typing, {}, { roomId: '!r' });
     expect(seen).toEqual([['Alice'], ['Alice', 'claude-1']]);
   });
+  it('relabels a typing member as soon as they are renamed', () => {
+    const bus = new EventEmitter();
+    const members = [{ userId: '@b:hs', name: 'everdred-Claude', typing: true }];
+    const client = { getRoom: () => ({ getMembers: () => members }), getUserId: () => '@me:hs',
+      on: bus.on.bind(bus), off: bus.off.bind(bus) } as unknown as MatrixClient;
+    const seen: (readonly string[])[] = [];
+    subscribeTyping(client, '!r', names => seen.push(names));
+    members[0]!.name = 'PC-Khala';
+    bus.emit(RoomMemberEvent.Name, {}, { roomId: '!r' }, 'everdred-Claude');
+    expect(seen).toEqual([['everdred-Claude'], ['PC-Khala']]);
+  });
   it('sends typing at most every 20 s and stops only after it started', () => {
     const client = { sendTyping: vi.fn().mockResolvedValue({}) };
     const sent = new Map<string, number>();

@@ -26,11 +26,16 @@ async function lastJsonl(file: string, marker: string, pick: (entry: Record<stri
 
 /** Claude Code: `/rename` appends `custom-title` entries; `ai-title` entries are automatic and ignored. */
 async function claudeTitle(sessionId: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  const projects = path.join(home(env, 'CLAUDE_CONFIG_DIR', '.claude'), 'projects');
-  for (const dir of await fs.readdir(projects)) {
-    const file = path.join(projects, dir, `${sessionId}.jsonl`);
-    if (!(await fs.stat(file).catch(() => null))?.isFile()) continue;
-    return lastJsonl(file, '"custom-title"', entry => entry.type === 'custom-title' && entry.sessionId === sessionId ? entry.customTitle : undefined);
+  // A session resumed on another account (/switch-login) may keep its transcript in the default profile.
+  const roots = new Set([home(env, 'CLAUDE_CONFIG_DIR', '.claude'), path.join(env.HOME ?? os.homedir(), '.claude')]);
+  for (const root of roots) {
+    const projects = path.join(root, 'projects');
+    for (const dir of await fs.readdir(projects).catch(() => [])) {
+      const file = path.join(projects, dir, `${sessionId}.jsonl`);
+      if (!(await fs.stat(file).catch(() => null))?.isFile()) continue;
+      const title = await lastJsonl(file, '"custom-title"', entry => entry.type === 'custom-title' && entry.sessionId === sessionId ? entry.customTitle : undefined);
+      if (title !== null) return title;
+    }
   }
   return null;
 }

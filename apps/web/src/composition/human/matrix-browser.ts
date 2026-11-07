@@ -929,15 +929,16 @@ export function hasReadEvent(client: Pick<MatrixClient, 'getRoom'>, roomId: stri
   return !!room?.findEventById(eventId) && room.hasUserReadEvent(userId, eventId);
 }
 
-/** Calls `onNames` with the other members typing in `roomId` (Matrix `m.typing`), now and on each change. */
+/** Calls `onNames` with the other members typing in `roomId` (Matrix `m.typing`), now and on each change, renames included. */
 export function subscribeTyping(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'on' | 'off'>, roomId: string,
   onNames: (names: readonly string[]) => void): () => void {
   const emit = () => onNames(client.getRoom(roomId)?.getMembers()
     .filter(member => member.typing && member.userId !== client.getUserId()).map(member => member.name) ?? []);
   const changed = (_event: unknown, member: { roomId: string }) => { if (member.roomId === roomId) emit(); };
   client.on(RoomMemberEvent.Typing, changed);
+  client.on(RoomMemberEvent.Name, changed);
   emit();
-  return () => { client.off(RoomMemberEvent.Typing, changed); };
+  return () => { client.off(RoomMemberEvent.Typing, changed); client.off(RoomMemberEvent.Name, changed); };
 }
 
 const TYPING_TIMEOUT_MS = 30_000;

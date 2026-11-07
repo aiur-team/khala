@@ -16,15 +16,30 @@ it('derives the contract identity deterministically per join', () => {
 });
 it.each([false, true])('registers with a name and logs in without profile updates, existing=%s', async existing => {
   const id = agentIdentity(input.joinId, input.ownerId, 'matrix.test', 'join');
-  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ nonce: 'nonce' })).mockResolvedValueOnce(existing ? Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }) : Response.json({ user_id: id.userId })).mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' }));
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ nonce: 'nonce' })).mockResolvedValueOnce(existing ? Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }) : Response.json({ user_id: id.userId })).mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' })).mockResolvedValueOnce(Response.json({ joined_rooms: ['!room:matrix.test'] }));
   expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toEqual({ kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId: id.userId, deviceId: id.deviceId, accessToken: 'token', roomId: input.roomId } });
   const registration = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
   const password = createHmac('sha256', 'password').update(`khala-agent-password-v1\0${id.userId}`).digest('base64url');
   expect(registration).toEqual({ nonce: 'nonce', username: id.username, password, admin: false, displayname: 'Maya-Claude', mac: createHmac('sha1', 'register').update(`nonce\0${id.username}\0${password}\0notadmin`).digest('hex') });
   expect(JSON.parse(fetch.mock.calls[2]![1]!.body as string)).toMatchObject({ identifier: { user: id.userId }, device_id: id.deviceId, password });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(existing ? 4 : 3);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/profile/'))).toBe(false);
   for (const call of fetch.mock.calls) expect(call[1]!.signal).toBeInstanceOf(AbortSignal);
   expect(new Headers(fetch.mock.calls[0]![1]!.headers).get('X-Khala-Registration-Ingress')).toBe('ingress');
+});
+it('names a returning account that is in no room by its confirmed name, so its Matrix join carries it', async () => {
+  const id = agentIdentity(input.joinId, input.ownerId, 'matrix.test', 'join');
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ nonce: 'nonce' }))
+    .mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' }))
+    .mockResolvedValueOnce(Response.json({ joined_rooms: [] })).mockResolvedValueOnce(Response.json({}));
+  expect(await createAgentProvisioner({ ...options, fetch }).provision({ ...input, label: 'NUC-Aiur' })).toMatchObject({ kind: 'ok' });
+  expect(fetch.mock.calls[4]).toEqual([`https://matrix.test/_matrix/client/v3/profile/${encodeURIComponent(id.userId)}/displayname`,
+    expect.objectContaining({ method: 'PUT', body: JSON.stringify({ displayname: 'NUC-Aiur' }), headers: expect.objectContaining({ authorization: 'Bearer token' }) })]);
+  // A failed rename never blocks the join.
+  fetch.mockReset().mockResolvedValueOnce(Response.json({ nonce: 'nonce' })).mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' })).mockRejectedValueOnce(Error('offline'));
+  expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toMatchObject({ kind: 'ok' });
 });
 it.each(['nonce', 'registration', 'login', 'user', 'device', 'token', 'throw', 'json'])('fails closed on %s failures', async failure => {
   const id = agentIdentity(input.joinId, input.ownerId, 'matrix.test', 'join');
@@ -105,10 +120,11 @@ it('reuses the account identity but issues a fresh device for each join', async 
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(Response.json({ nonce: 'nonce' }))
       .mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
-      .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: deviceId, access_token: 'token' }));
+      .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: deviceId, access_token: 'token' }))
+      .mockResolvedValueOnce(Response.json({ joined_rooms: ['!room:matrix.test'] }));
     const result = await createAgentProvisioner({ ...options, fetch }).provision({ ...input, identityId, joinId });
     expect(result).toMatchObject({ kind: 'ok', credentials: { userId: id.userId, deviceId } });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     devices.push(deviceId);
   }
   expect(devices[0]).not.toBe(devices[1]);

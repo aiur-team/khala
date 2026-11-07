@@ -217,6 +217,8 @@ it('keeps one hosted identity and its rename across fresh join requests for the 
   const nextId = randomBytes(16).toString('base64url');
   // A session title set after the first join never renames the existing agent.
   await f.joins.create({ ...f.record, joinId: nextId, label: 'New-Title', sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
+  // The confirm page shows the name the rejoin will get, not the new title.
+  expect(await (await f.handlers.view(f.request('GET', `joinId=${nextId}`))).json()).toMatchObject({ state: 'pending', label: 'Reviewer' });
   const rejoined = await f.handlers.confirm(f.request('POST', `joinId=${nextId}`));
   expect(rejoined.status).toBe(200);
   expect(await rejoined.json()).toMatchObject({ label: 'Reviewer', agentUserId: credentials.userId });

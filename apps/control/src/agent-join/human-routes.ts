@@ -264,9 +264,16 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();
-        // The name it will join as: its session title or default, numbered when someone in this channel holds it.
-        const names = await deps.roomMemberNames(principal.ownerId, read.record.roomId as RoomId);
-        view.label = freeAgentName(username, read.record.harness, names ?? [], read.record.label);
+        // The name it will join as, as confirm() picks it: a rejoining agent keeps its current name (owner renames
+        // included); a new one takes its session title or default, numbered when someone in this channel holds it.
+        const userId = deps.provisioner.agentUserId(rejoinIdentity(read.record) ?? joinId, principal.ownerId);
+        const owned = await safeRead(deps.store, agentOwnerRecordKey(userId));
+        const previous = owned.kind === 'record' ? decodeAgentOwnerRecord(owned.record.value) : null;
+        if (previous?.ok && previous.value.ownerId === principal.ownerId) view.label = previous.value.label;
+        else {
+          const names = await deps.roomMemberNames(principal.ownerId, read.record.roomId as RoomId);
+          view.label = freeAgentName(username, read.record.harness, names ?? [], read.record.label);
+        }
       }
       return json(200, view);
     } catch { return unavailable(); }
