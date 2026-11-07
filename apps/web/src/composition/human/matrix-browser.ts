@@ -20,8 +20,9 @@ import {
   type MatrixClient,
   type EventTimeline,
 } from 'matrix-js-sdk';
-import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
+import { DecryptionFailureCode, EventShieldReason, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import {
+  decodeDeviceId,
   decodeRoomSummary,
   unavailable,
   type AuthPrincipal,
@@ -532,6 +533,19 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
     ...(event.getType() === 'm.room.member' ? { previousContent: event.getPrevContent() } : {}) }, limits);
 }
 
+/**
+ * The sending device of a decrypted message that is no longer in its sender's
+ * device list. Devices rotate: a removed agent's device is logged out when it
+ * rejoins, but its earlier messages stay. The SDK still authenticated the
+ * Megolm session; only a proven sender mismatch is refused.
+ */
+export async function rotatedDeviceId(crypto: Pick<CryptoApi, 'getEncryptionInfoForEvent'>, event: MatrixEvent): Promise<DeviceId | undefined> {
+  const info = await crypto.getEncryptionInfoForEvent(event).catch(() => null);
+  if (info === null || info.shieldReason === EventShieldReason.MISMATCHED_SENDER) return undefined;
+  const decoded = decodeDeviceId(event.getWireContent().device_id);
+  return decoded.ok ? decoded.value : undefined;
+}
+
 export async function sendRoomMessage(
   client: Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'getDeviceId'>,
   input: { roomId: RoomId; clientTxnId: string; content: MessageContent },
@@ -650,28 +664,30 @@ export class MatrixSubstrate implements RoomSubstrate {
       historyDiagnostic('history_device_info');
       throw new Error('Matrix session changed during device attribution');
     }
-    const projectedEvents = visibleEvents.flatMap(event => {
+    const projectedEvents: SubstrateEvent[] = [];
+    for (const event of visibleEvents) {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
-      if (!sender || !mapping) return [];
+      if (!sender || !mapping) continue;
       const claimed = event.getClaimedEd25519Key();
       const device = claimed
         ? [...(devices.get(sender)?.values() ?? [])].find(candidate => candidate.getFingerprint() === claimed)
         : undefined;
-      const deviceId = device?.deviceId as DeviceId | undefined;
-      if (!event.isDecryptionFailure() && event.getType() === EventType.RoomMessage && deviceId === undefined) {
-        historyDiagnostic('history_device_info');
-        throw new Error('Matrix author device attribution unavailable');
-      }
+      const unattributed = !event.isDecryptionFailure() && event.getType() === EventType.RoomMessage && device === undefined;
+      const deviceId = unattributed ? await rotatedDeviceId(crypto, event) : device?.deviceId as DeviceId | undefined;
       const participant: ParticipantView = {
         ...mapping,
         displayName: sender === active.client.getUserId() ? ownerFirstName(active.principal.verifiedEmail)
           : mapping.displayName === sender ? departedName(active.client, roomId, sender, mapping.kind) : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
-      const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
-      return projected ? [projected] : [];
-    });
+      // One message that cannot be tied to its sender is a placeholder, never a failed page.
+      const projected = unattributed && deviceId === undefined
+        ? { kind: 'undecryptable' as const, eventId: event.getId() as EventId, authorParticipantId: participant.participantId,
+          reason: 'decryption_failed' as const, receivedAt: new Date(event.getTs()).toISOString() }
+        : projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
+      if (projected) projectedEvents.push(projected);
+    }
     return attachNameTargets(projectedEvents,
       targetId => this.participants.resolve([], undefined, roomId, [targetId], session),
       () => this.runtime.active === active).catch(error => {
