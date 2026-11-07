@@ -6,6 +6,7 @@ import { channelFiles, ensureStateDir, openSessionDir, writeStateFile, writeStat
 import * as proc from '../harness/proc';
 import { readPane } from '../wake/terminal/capture';
 import run from '../../hooks/session-start';
+import { claudeAgentId } from '../folder-agent';
 
 let root: string;
 let files: SessionFiles;
@@ -143,4 +144,16 @@ it('names the loaded plugin launcher for the Monitor, not a bare khala on PATH (
   expect(await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'resume' }), [])).toBe(0);
   expect(JSON.parse(String(stdout.mock.calls[0]?.[0])).hookSpecificOutput.additionalContext)
     .toContain("Monitor on '/cache/khala/0.4.18/it'\\''s/bin/khala' watch --harness claude --session session with");
+});
+
+it('reminds any new session in a joined folder and points its Monitor at the folder agent', async () => {
+  vi.stubEnv('CLAUDE_PROJECT_DIR', await fs.realpath(root));
+  const agentId = await claudeAgentId(process.env, 'first');
+  expect(agentId).toMatch(/^folder-/);
+  await writeStatus(await openSessionDir('claude', agentId, process.env), 'disconnected', 'closed', undefined, 'CHANNELMARK');
+  for (const session of ['first', 'second']) {
+    stdout.mockClear();
+    await run(JSON.stringify({ session_id: session, hook_event_name: 'SessionStart', source: 'startup' }), []);
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0])).hookSpecificOutput.additionalContext).toContain(`--session ${agentId} `);
+  }
 });

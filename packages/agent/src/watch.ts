@@ -277,6 +277,11 @@ export default async function run(argv: readonly string[]): Promise<number> {
   if (!id) return invalid('session_unknown');
   if (!SESSION_ID_PATTERN.test(id)) return invalid('invalid_session_id');
   const files = sessionFiles(harness, id, process.env);
+  // A newer Claude session in this folder owns the agent; a stale Monitor must not take its watch.
+  if (harness === 'claude' && await (await import('./folder-agent')).supersededHarness(files.dir).catch(() => false)) {
+    console.error('khala watch: stopped (superseded). Do not re-arm.');
+    return 2;
+  }
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);

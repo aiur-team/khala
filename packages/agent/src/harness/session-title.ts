@@ -53,7 +53,8 @@ function codexTitle(sessionId: string, env: NodeJS.ProcessEnv): Promise<string |
 export async function sessionTitleName(harness: HarnessId, sessionId: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   if (!SESSION_ID_PATTERN.test(sessionId)) return null;
   try {
-    const title = harness === 'claude' ? await claudeTitle(sessionId, env) : harness === 'codex' ? await codexTitle(sessionId, env) : null;
+    // A Claude agent id names its folder; the title belongs to the live conversation.
+    const title = harness === 'claude' ? await claudeTitle(SESSION_ID_PATTERN.test(env.CLAUDE_CODE_SESSION_ID ?? '') ? env.CLAUDE_CODE_SESSION_ID! : sessionId, env) : harness === 'codex' ? await codexTitle(sessionId, env) : null;
     return title === null ? null : agentNameFromTitle(title);
   } catch { return null; }
 }

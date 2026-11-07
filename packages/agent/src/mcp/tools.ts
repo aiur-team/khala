@@ -68,7 +68,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
     : typeof args.reason === 'string' && args.reason.trim().length > 0 && [...args.reason].length <= 140 && !/\p{Cc}/u.test(args.reason);
   const validChannel = (args: Record<string, unknown>) => !Object.hasOwn(args, 'channel') || typeof args.channel === 'string' && args.channel.length > 0;
   return [
-    tool('join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). New hosted sessions require your human to open a confirmation link; previously approved hosted sessions reconnect with their saved secret, and local links join automatically. Without link, rejoins this session\'s saved channels after a restart, resume or account switch.',
+    tool('join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). New hosted sessions require your human to open a confirmation link; previously approved hosted sessions reconnect with their saved secret, and local links join automatically. Without link, rejoins your saved channels after a restart, resume, new conversation in the same folder (Claude) or account switch.',
       { link: { type: 'string', description: 'Channel link. Omit to rejoin your saved channels.' }, label: { type: 'string', minLength: 1, maxLength: 40,
         description: 'Optional and ignored: Khala names you after your session title if your user set one, else <OwnerUsername>-<Model>, and your owner can rename you.' } }, [],
       args => (!Object.hasOwn(args, 'link') || typeof args.link === 'string') && (!Object.hasOwn(args, 'label')
