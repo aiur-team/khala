@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, Filter, SyncState, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, EventShieldColour, EventShieldReason, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate, SYNC_TIMELINE_LIMIT } from './matrix-browser';
+import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, shareHistoryWithAddedAgents, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate, SYNC_TIMELINE_LIMIT } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -602,6 +602,54 @@ describe('browser cross-signing and shared history', () => {
     } as unknown as Room;
     expect(projectJoinedEncryptedRooms({ getRooms: () => [room], getUserId: () => '@me:test' }, limits.value)[0])
       .toMatchObject({ preview: null, timestamp: null });
+  });
+  describe('shareHistoryWithAddedAgents (MSC4268)', () => {
+    const agent = '@agent-0123abcd-abc123:test';
+    const member = (userId: string, membership: string, sender: string, ts: number, content: Record<string, unknown> = {}) =>
+      ({ roomId: '!room:test', userId, membership, events: { member: { getSender: () => sender, getTs: () => ts, getContent: () => content } } });
+    const setup = (members: ReturnType<typeof member>[]) => {
+      const emitter = new EventEmitter();
+      const client = { getUserId: () => '@me:test', getRooms: () => [{ roomId: '!room:test', getMyMembership: () => 'join', getMembers: () => members }],
+        on: emitter.on.bind(emitter), off: emitter.off.bind(emitter) } as unknown as Parameters<typeof shareHistoryWithAddedAgents>[0];
+      const crypto = { shareRoomHistoryWithUser: vi.fn(async () => {}) };
+      return { emitter, client, crypto };
+    };
+    it('shares with an agent this user invites, once', () => {
+      const { emitter, client, crypto } = setup([]);
+      const stop = shareHistoryWithAddedAgents(client, crypto, () => 2000);
+      const invited = member(agent, 'invite', '@me:test', 1000);
+      emitter.emit(RoomMemberEvent.Membership, {}, invited);
+      emitter.emit(RoomMemberEvent.Membership, {}, invited);
+      expect(crypto.shareRoomHistoryWithUser).toHaveBeenCalledExactlyOnceWith('!room:test', agent);
+      stop();
+      expect(emitter.listenerCount(RoomMemberEvent.Membership)).toBe(0);
+    });
+    it('shares on load with a recently joined agent this user added', () => {
+      const { client, crypto } = setup([member(agent, 'join', agent, 1000, { 'com.khala.invited_by': '@me:test' })]);
+      shareHistoryWithAddedAgents(client, crypto, () => 2000);
+      expect(crypto.shareRoomHistoryWithUser).toHaveBeenCalledExactlyOnceWith('!room:test', agent);
+    });
+    it.each([
+      ['another human invited it', member(agent, 'invite', '@other:test', 1000)],
+      ['another human added it', member(agent, 'join', agent, 1000, { 'com.khala.invited_by': '@other:test' })],
+      ['a human', member('@bob:test', 'invite', '@me:test', 1000)],
+      ['past the 24 h acceptance window', member(agent, 'invite', '@me:test', 1000)],
+    ])('skips when %s', (name, candidate) => {
+      const { client, crypto } = setup([candidate]);
+      shareHistoryWithAddedAgents(client, crypto, () => name.startsWith('past') ? 1000 + 24 * 60 * 60_000 + 1 : 2000);
+      expect(crypto.shareRoomHistoryWithUser).not.toHaveBeenCalled();
+    });
+    it('retries after a failed share', async () => {
+      const { emitter, client, crypto } = setup([]);
+      crypto.shareRoomHistoryWithUser.mockRejectedValueOnce(new Error('offline'));
+      shareHistoryWithAddedAgents(client, crypto, () => 2000);
+      const invited = member(agent, 'invite', '@me:test', 1000);
+      emitter.emit(RoomMemberEvent.Membership, {}, invited);
+      await vi.waitFor(() => expect(crypto.shareRoomHistoryWithUser).toHaveBeenCalledOnce());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      emitter.emit(RoomMemberEvent.Membership, {}, invited);
+      expect(crypto.shareRoomHistoryWithUser).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

@@ -59,3 +59,48 @@ Regression tests:
 
 - **Unit test:** `apps/web/src/composition/human/matrix-browser.test.ts`, "device rotation (#1416)".
 - **Live test:** `tests/integration/human/multi-device.spec.ts`. It runs two devices; the agent is added from the first, removed, and re-added from the second. It fails on `f91c6c37` and passes with the fix.
+
+## History for later joiners (spike, 2026-11-07)
+
+Kevin reported an agent saying "Earlier messages are encrypted and I can't read them, so I'm working from your summary". He ruled "this should not happen", and he wants to "see all conversations connected to my email from any number of machines". This revises P14 (`docs/product/decisions.md`). Two outcomes are required:
+
+- **(a)** An agent added to a channel reads the history that the adding human's device can decrypt.
+- **(b)** A human's new device reads earlier history.
+
+The server must never see plaintext or a key that decrypts it.
+
+### Why agents lost history: a regression
+
+The original M1 flow (C13) sent history to agents through MSC4268. The browser's `client.invite()` uploads an encrypted key bundle and sends its key to the invitee over Olm. #1298 (2026-10-22) moved the agent invite to the control server (`inviteAgentAsOwner`, `apps/control/src/composition/human/matrix.ts`) so that the confirm page needs no Matrix client. That server-side device has no crypto, so no bundle has been sent since. Agents still mark a bundle as pending when they join (`client.joinRoom` from the invite, `packages/agent/src/matrix/session.ts`), but none ever arrives. `tests/integration/agent/agent-join-chat.spec.ts` asserts this history, but its confirm step went stale after #1415, so the regression went unnoticed.
+
+### Mechanisms evaluated (matrix-js-sdk 42.4.0, rust crypto)
+
+| Mechanism | SDK support | Verdict |
+|---|---|---|
+| MSC4268 history sharing | `CryptoBackend.shareRoomHistoryWithUser(roomId, userId)`. `invite()` calls it automatically (the old `shareEncryptedHistory` and `acceptSharedHistory` flags are deprecated no-ops). The joiner accepts a bundle from its inviter within 24 h of joining (`MAX_INVITE_ACCEPTANCE_MS_FOR_KEY_BUNDLE`). The bundle carries only sessions flagged shared-history; Khala rooms are created `history_visibility: shared`. | **Use for (a).** It sends only if the sending device's own identity is verified, and the joiner checks that the sender's device is cross-signed. |
+| MSC3061-style key forwarding (`m.room_key_request`) | The rust SDK forwards only to the user's own verified devices; agents are another user. | Rejected. It does not reach agents, and key backup covers own devices better. |
+| Server-side key backup | `resetKeyBackup()` (works without secret storage: the key is kept locally and pushed to verified devices), `checkKeyBackupAndEnable()`, `restoreKeyBackup()`. A received `m.megolm_backup.v1` secret is handled by `handleBackupSecretReceived`. | **Use for (b).** The server stores only the encrypted backup. |
+| Secret storage (SSSS) / recovery key | Supported. | Not now. It needs a recovery key or passphrase that the user must keep. **Proposed default:** no recovery key, the least ceremony. Losing every device still loses history (P14 keeps this part). |
+| QR login / device linking (MSC4108) | `MSC4108SignInWithQR`. | Not now. It needs Synapse's experimental rendezvous endpoint and a camera. Emoji comparison works on any two screens. Can be added later as a second way in. |
+| Self-verification (emoji SAS) | `requestOwnUserVerification()`, `CryptoEvent.VerificationRequestReceived`, `VerifierEvent.ShowSas`. When the device with the self-signing key confirms, it cross-signs the new device. `pushSecretToVerifiedDevices(name)` then sends the backup key over Olm. | **Use for (b).** It also fixes C13: an approved device is cross-signed, so it can send MSC4268 history to agents. |
+
+The control server cannot do any of this. It holds no keys, and it must not: if it vouched for a device, it could insert its own device. Whatever trust a new device gets must come from another device of the same human.
+
+### Design
+
+**(a) Agent history, #1419.** `shareHistoryWithAddedAgents` (`apps/web/src/composition/human/matrix-browser.ts`) runs on every browser device once cross-signing maintenance settles. It shares once per page load for each agent this user added. It reacts to the live invite (the control server invites as the owner's Matrix user, so the invite's sender is "me"). On a later load it also reacts to a join less than 24 h old that carries `com.khala.invited_by` set to me, in case no tab was open at invite time. A share that fails can be retried. Agents need no change, since they already accept bundles on join, so no npm release is needed.
+
+Limits: the SDK sends nothing from a device that is not cross-signed (closed by (b)), and an owner's tab must open within 24 h of the agent joining.
+
+**(b) New-device history, #1420.**
+
+1. **Backup.** A device that holds the cross-signing private keys creates a key backup if the server has none (`getKeyBackupInfo()`, then `resetKeyBackup()`). The SDK then uploads every room key it has, encrypted.
+2. **Approve.** A device whose own identity is not verified offers "Read earlier messages on this device", which calls `requestOwnUserVerification()`. Every other signed-in device of that user shows the request. Both devices show the same emoji, and the user confirms on each. The verifying device cross-signs the new one and pushes the backup key (`pushSecretToVerifiedDevices('m.megolm_backup.v1')`).
+3. **Restore.** The new device enables the backup when the secret arrives and runs `restoreKeyBackup()`. Earlier messages decrypt where they are displayed. The device is now cross-signed, so (a) works from it too.
+
+Ceremony: one tap on the new device, then a comparison of seven emoji on both devices. The user sees no recovery key.
+
+### Verification
+
+- (a) Live: `tests/integration/agent/agent-history.spec.ts`. On a freshly wiped stack (C13: the owner's first device), three messages are sent, then an agent joins and `read` returns all three. The agent log shows `m.room_key_bundle` received and imported. The spec fails without the sharer: the agent marks the bundle pending, and "No key bundle found" is logged.
+- (b) Live: a two-device spec (approval, then earlier messages visible on the new device). See the #1420 PR.

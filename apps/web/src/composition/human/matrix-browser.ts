@@ -18,6 +18,7 @@ import {
   Visibility,
   createClient,
   type MatrixClient,
+  type RoomMember,
   type EventTimeline,
 } from 'matrix-js-sdk';
 import { DecryptionFailureCode, EventShieldReason, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
@@ -179,6 +180,38 @@ export async function ensureCrossSigning(
     clearTimeout(timer);
     bounded.removeEventListener('abort', onAbort);
   }
+}
+
+/** The SDK's MSC4268 sender. Public on the rust backend `getCrypto()` returns, though not on `CryptoApi`. */
+export type HistorySharer = Readonly<{ shareRoomHistoryWithUser(roomId: string, userId: string): Promise<void> }>;
+/** An agent accepts a key bundle only within 24 h of its join (matrix-js-sdk MAX_INVITE_ACCEPTANCE_MS_FOR_KEY_BUNDLE). */
+const HISTORY_SHARE_WINDOW_MS = 24 * 60 * 60_000;
+
+/**
+ * Hands this device's channel history to each agent this user added (MSC4268), since the control server's
+ * invite carries no keys. Covers the live invite and, on a later load, a recent join stamped `com.khala.invited_by`.
+ * The SDK sends nothing unless this device is cross-signed; keys travel Olm-encrypted, the server sees ciphertext.
+ */
+export function shareHistoryWithAddedAgents(client: Pick<MatrixClient, 'getRooms' | 'getUserId' | 'on' | 'off'>,
+  crypto: HistorySharer, now: () => number = Date.now): () => void {
+  const me = client.getUserId();
+  const shared = new Set<string>();
+  const consider = (roomId: string, member: RoomMember) => {
+    const event = member.events.member;
+    if (!me || !event || !AGENT_USER_ID.test(member.userId) || now() - event.getTs() > HISTORY_SHARE_WINDOW_MS) return;
+    const addedByMe = member.membership === 'invite' ? event.getSender() === me
+      : member.membership === 'join' && event.getContent()['com.khala.invited_by'] === me;
+    const key = `${roomId}\0${member.userId}`;
+    if (!addedByMe || shared.has(key)) return;
+    shared.add(key);
+    void crypto.shareRoomHistoryWithUser(roomId, member.userId).catch(() => { shared.delete(key); });
+  };
+  for (const room of client.getRooms()) {
+    if (room.getMyMembership() === 'join') for (const member of room.getMembers()) consider(room.roomId, member);
+  }
+  const changed = (_event: MatrixEvent, member: RoomMember) => consider(member.roomId, member);
+  client.on(RoomMemberEvent.Membership, changed);
+  return () => { client.off(RoomMemberEvent.Membership, changed); };
 }
 
 export function isPreJoinUndecryptable(event: MatrixEvent, joinTs: number | null): boolean {
@@ -482,7 +515,12 @@ class MatrixRuntime {
                 crossSigningStarted = true;
                 // Cross-signing is optional maintenance, after sync and activation.
                 void ensureCrossSigning(crypto, session.userId,
-                  AbortSignal.any([signal, crossSigningAbort.signal]));
+                  AbortSignal.any([signal, crossSigningAbort.signal])).then(() => {
+                  if (!crossSigningAbort.signal.aborted) {
+                    const stop = shareHistoryWithAddedAgents(client, crypto as CryptoApi & HistorySharer);
+                    crossSigningAbort.signal.addEventListener('abort', stop, { once: true });
+                  }
+                });
               }
             } catch (error) {
               stopped = true;
