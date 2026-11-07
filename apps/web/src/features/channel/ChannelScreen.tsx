@@ -13,7 +13,7 @@ import { Avatar } from '../../ui/khala/Avatar';
 import { defaultHumanColor, type ChannelColors, type HumanColorId } from '@khala/contracts/m1/colors';
 import { HumanColorsProvider, channelPalette, colorOf, colorSwatch, humanColorOf, ownerColorOf, resolveChannelColors } from '../../ui/khala/human-colors';
 import { ChannelColorsPicker } from './ChannelColors';
-import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
+import { clockLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
@@ -74,8 +74,6 @@ export interface ChannelScreenProps {
    * `render`, so its `@mentions` are the timeline's chips and open their detail.
    */
   recentActivity?: (participantId: string, render: RecentRender) => readonly RecentEntry[];
-  /** When an agent joined, if known (RFC 3339). */
-  agentJoinedAt?: (participantId: string) => string | undefined;
   /**
    * The thread; `openParticipant` opens (or, if open, closes) a participant's detail.
    * `openInvite` opens the Invite popover, and is absent when Invite is hidden.
@@ -102,12 +100,6 @@ export interface ChannelScreenProps {
 
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
 export type RoomScreenProps = ChannelScreenProps;
-
-function timeLabel(at: string): string {
-  const date = new Date(at);
-  const now = new Date();
-  return dayLabel(date, now) === 'Today' ? clockLabel(date) : dayLabel(date, now);
-}
 
 /** The detail pane's "Recent in Khala" list. */
 export function Recent({ entries, timeOptions }: Readonly<{ entries: readonly RecentEntry[]; timeOptions: TimeOptions }>) {
@@ -141,8 +133,8 @@ function HumanDetail({ human, members, recent, timeOptions, onOpen, onMention, o
   </ParticipantDetail>;
 }
 
-function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, timeout, remove, onOpen, onMention, onClose }: Readonly<{
-  agent: AgentMember; members: ChannelMembers; recent: readonly RecentEntry[]; joinedAt: string | undefined;
+function AgentDetail({ agent, members, recent, timeOptions, rename, timeout, remove, onOpen, onMention, onClose }: Readonly<{
+  agent: AgentMember; members: ChannelMembers; recent: readonly RecentEntry[];
   rename: ReactNode; timeout: ReactNode; remove: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
 }>) {
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
@@ -155,16 +147,13 @@ function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, ti
       {owner ? <button type="button" className="kh-d-owner" data-kh-human={owner.participantId} style={pillStyle}
         onClick={() => onOpen(owner.participantId)}>{pill}</button>
         : <span className="kh-d-owner" style={pillStyle}>{pill}</span>}</div>
-    <div className="kh-d-sec"><dl className="kh-d-kv">
-      <dt>Harness</dt><dd>{harnessName(agent)}</dd>
-      <dt>Owner</dt><dd>{agent.isViewerOwned ? 'You' : agent.ownerName}</dd>
-      {joinedAt ? <><dt>Joined</dt><dd>{timeLabel(joinedAt)}</dd></> : null}
-    </dl></div>
+    {/* Edit controls first and compact, so a phone needs no scroll (operator request): one-word labels, icon buttons. */}
+    {rename || timeout ? <div className="kh-d-sec kh-d-edit">{rename}{timeout}</div> : null}
+    {onMention || remove ? <div className="kh-d-act kh-d-icons">
+      {onMention ? <button type="button" className="kh-ib" aria-label="Mention" title="Mention" onClick={() => onMention(agent.name)}>@</button> : null}
+      {remove}
+    </div> : null}
     <Recent entries={recent} timeOptions={timeOptions} />
-    {onMention ? <div className="kh-d-act"><button type="button" className="pri" onClick={() => onMention(agent.name)}>@ Mention</button></div> : null}
-    {rename ? <div className="kh-d-sec"><span className="kh-d-lbl">Rename</span>{rename}</div> : null}
-    {timeout ? <div className="kh-d-sec"><span className="kh-d-lbl">Listener timeout</span>{timeout}</div> : null}
-    {remove ? <div className="kh-d-sec">{remove}</div> : null}
   </ParticipantDetail>;
 }
 
@@ -176,7 +165,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 }
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
-  humanParticipants, currentNames, renameAgent, modeFor, lockedFor, idleMuteFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+  humanParticipants, currentNames, renameAgent, modeFor, lockedFor, idleMuteFor, onSetMode, describeParticipant, recentActivity, renderTimeline, renderShare,
   renderAddAgent, creatorOwnerId, onRemoveHuman, onRemoveAgent, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1, channelColors,
   onSetChannelColors }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -278,7 +267,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   } else if (selectedMember?.kind === 'agent') {
     const focus = renameFocus?.participantId === selectedMember.participantId ? renameFocus : null;
     detail = <AgentDetail key={selectedMember.participantId} agent={selectedMember} members={members}
-      recent={recent(selectedMember.participantId)} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
+      recent={recent(selectedMember.participantId)}
       rename={selectedMember.isViewerOwned && renameAgent ? <RenameAgent key={focus?.request ?? 0}
         participantId={selectedMember.participantId} name={selectedMember.name} renameAgent={renameAgent} autoFocus={focus !== null} /> : null}
       timeout={selectedMember.isViewerOwned && onSetMode && idleMuteFor ? <ListenerTimeout agent={selectedMember}

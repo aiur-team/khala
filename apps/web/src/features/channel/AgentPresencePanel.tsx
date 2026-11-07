@@ -9,7 +9,7 @@ import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/n
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
 import { harnessDisplayName, harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, PaletteIcon, PencilIcon, XIcon } from '../../ui/khala/icons';
+import { AgentIcon, CheckIcon, PaletteIcon, PencilIcon, TrashIcon, XIcon } from '../../ui/khala/icons';
 import { MODE_COPY, ModeIcon, modeTip } from '../../ui/khala/ModeIcon';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
@@ -70,6 +70,7 @@ export function RenameAgent({ participantId, name, renameAgent, autoFocus = fals
     return () => cancelAnimationFrame(frame);
   }, [autoFocus]);
   const errorId = useId();
+  const inputId = useId();
   const [status, setStatus] = useState('');
   const [sending, setSending] = useState(false);
   // Aborts an in-flight rename when the pane closes or switches participant.
@@ -92,12 +93,13 @@ export function RenameAgent({ participantId, name, renameAgent, autoFocus = fals
     else setStatus(result.message);
   }
   return <form className="kh-d-rename" noValidate onSubmit={event => { event.preventDefault(); if (checked.ok && !sending) void submit(); }}>
+    <label className="kh-d-lbl" htmlFor={inputId}>Name</label>
     <div className="kh-row2">
-      <input className="kh-txt" aria-label={`Name for ${name}`} aria-describedby={message ? errorId : undefined}
+      <input id={inputId} className="kh-txt" aria-label={`Name for ${name}`} aria-describedby={message ? errorId : undefined}
         aria-invalid={checked.ok ? undefined : true} value={draft}
         onChange={event => { setDraft(event.target.value); setStatus(''); }} maxLength={AGENT_NAME_MAX} autoCapitalize="none" autoComplete="off"
         spellCheck={false} ref={input} />
-      <button type="submit" className="kh-btn pri" disabled={!checked.ok || sending}>{sending ? 'Renaming…' : 'Rename'}</button>
+      <button type="submit" className="kh-ib ok" aria-label="Rename" title="Rename" disabled={!checked.ok || sending}><CheckIcon /></button>
     </div>
     {message ? <p className="kh-d-rename-err" id={errorId} role="alert">{message}</p> : null}
   </form>;
@@ -182,10 +184,10 @@ export function ListenerTimeout({ agent, value, onChange }: Readonly<{
     setFailed(true);
   }
   return <>
+    <span className="kh-d-lbl" aria-hidden="true">Timeout</span>
     <Segmented label={`Listener timeout for ${agentLabel(agent)}`} value={String(pending ?? value)} options={TIMEOUTS}
       onChange={next => void choose(Number(next) as IdleMuteMinutes)} />
-    <p>Mutes {agentLabel(agent)} after this long with no human message. Agent messages don’t count.</p>
-    {failed ? <p className="kh-d-rename-err" role="alert">Couldn’t change the timeout. Try again.</p> : null}
+    {failed ? <p className="kh-d-rename-err" role="alert">Not saved</p> : null}
   </>;
 }
 
@@ -393,15 +395,15 @@ export function RemoveAgent({ agent, remove }: Readonly<{ agent: AgentMember; re
     const result = await remove(agent.participantId).catch(() => 'failed' as const);
     setSending(false);
     // On success the agent leaves the roster and the pane closes.
-    if (result !== 'removed') setError('Couldn’t remove. Try again.');
+    if (result !== 'removed') setError('Remove failed');
   }
-  if (!confirming) return <button type="button" className="kh-btn danger" onClick={() => setConfirming(true)}>Remove from channel</button>;
-  return <div role="group" aria-label={`Remove ${label}`}>
-    <p>Remove {label} from this channel? It loses access and won’t rejoin on its own.</p>
-    {error ? <p role="alert">{error}</p> : null}
-    <div className="kh-row2"><button type="button" className="kh-btn danger" disabled={sending} onClick={() => void confirm()}>{sending ? 'Removing…' : 'Remove'}</button>
-      <button type="button" className="kh-btn" onClick={() => { setConfirming(false); setError(''); }}>Cancel</button></div>
-  </div>;
+  if (!confirming) return <button type="button" className="kh-ib no" aria-label="Remove from channel" title="Remove from channel"
+    onClick={() => setConfirming(true)}><TrashIcon /></button>;
+  return <span className="kh-d-confirm" role="group" aria-label={`Remove ${label}`}>
+    <button type="button" className="kh-ib danger" aria-label="Remove" title="Remove" disabled={sending} onClick={() => void confirm()}><TrashIcon /></button>
+    <button type="button" className="kh-ib" aria-label="Cancel" title="Cancel" onClick={() => { setConfirming(false); setError(''); }}><XIcon /></button>
+    {error ? <span className="kh-d-rename-err" role="alert">{error}</span> : null}
+  </span>;
 }
 
 export type ChannelRosterProps = Readonly<{

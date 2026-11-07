@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
-import { ChannelRoster, ListenerTimeout, MemberAvatar, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
+import { ChannelRoster, ListenerTimeout, MemberAvatar, RemoveAgent, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers } from './members';
 
@@ -17,12 +17,20 @@ const members = (agents: readonly ChannelAgentView[]) => resolveMembers({ viewer
   humans: [], agents });
 
 describe('ListenerTimeout', () => {
-  it('offers the fixed timeouts with the current one checked, and says agent messages do not count', () => {
+  it('offers the fixed timeouts with the current one checked under a one-word label, no helper text', () => {
     const html = renderToStaticMarkup(<ListenerTimeout agent={members([scout]).agents[0]!} value={240} onChange={async () => 'sent'} />);
     expect(html).toContain('aria-label="Listener timeout for Scout"');
     expect([...html.matchAll(/data-v="(\d+)">([^<]+)</g)].map(match => [match[1], match[2]])).toEqual([['15', '15m'], ['60', '1h'], ['240', '4h'], ['1440', '24h'], ['0', 'Off']]);
     expect(html).toMatch(/aria-checked="true" class="on" data-v="240"/);
-    expect(html).toContain('Agent messages don’t count.');
+    expect(html).toContain('<span class="kh-d-lbl" aria-hidden="true">Timeout</span>');
+    expect(html).not.toContain('<p');
+  });
+});
+
+describe('RemoveAgent', () => {
+  it('is one icon-only button with a name and tooltip', () => {
+    const html = renderToStaticMarkup(<RemoveAgent agent={members([scout]).agents[0]!} remove={async () => 'removed'} />);
+    expect(html).toMatch(/^<button type="button" class="kh-ib no" aria-label="Remove from channel" title="Remove from channel"><svg [^>]*>.*<\/svg><\/button>$/);
   });
 });
 
@@ -145,7 +153,11 @@ describe('RenameAgent', () => {
     expect(html).not.toContain('aria-describedby');
     expect(html).not.toContain('aria-invalid');
     expect(html).not.toContain('role="alert"');
-    expect(html).toContain('class="kh-btn pri">Rename</button>');
+    // One-word visible label tied to the input; an icon-only save button.
+    const id = /<label class="kh-d-lbl" for="([^"]+)">Name<\/label>/.exec(html)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toContain(`<input id="${id}"`);
+    expect(html).toMatch(/<button type="submit" class="kh-ib ok" aria-label="Rename" title="Rename"><svg /);
   });
 
   it('links the rule to the field only while the name is invalid', () => {
@@ -155,7 +167,7 @@ describe('RenameAgent', () => {
     expect(describedBy).toBeTruthy();
     expect(html).toContain('aria-invalid="true"');
     expect(html).toContain(`<p class="kh-d-rename-err" id="${describedBy}" role="alert">At least 2 characters.</p>`);
-    expect(html).toContain('disabled="">Rename</button>');
+    expect(html).toMatch(/aria-label="Rename" title="Rename" disabled=""><svg /);
   });
 });
 

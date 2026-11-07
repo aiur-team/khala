@@ -51,9 +51,11 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       });
       await page.goto(origin + '/agent/confirm?joinId=j1');
       // Signed out, the page goes straight to sign-in and back; no button.
-      await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
       assert.equal(new URL(page.url()).pathname + new URL(page.url()).search, '/agent/confirm?joinId=j1');
-      assert.match(await page.locator('body').innerText(), /Helper \(Claude Code\) wants to join Launch\./);
+      await expect(page.getByRole('heading', { name: 'Helper joins Launch' })).toBeVisible();
+      // One flat card: just the agent line and the icon button (operator request).
+      assert.equal((await page.locator('.kh-fin-c').innerText()).replace(/\s+/g, ' ').trim(), 'Helper → joins Launch'); // "joins" is screen-reader only
       // A standalone page (§20): the card, with no owner shell or conversation list.
       await expect(page.locator('.kh-fin-c')).toBeVisible();
       assert.equal(await page.getByRole('complementary', { name: 'Channels' }).count(), 0);
@@ -65,9 +67,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await confirmPage.getByRole('button', { name: 'Toggle color theme' }).click();
       assert.equal(await confirmPage.getAttribute('data-theme'), toggled);
       assert.equal(await page.evaluate(() => localStorage.getItem('khala.theme')), toggled);
-      await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await page.getByRole('button', { name: 'Approve', exact: true }).click();
       await page.getByRole('link', { name: 'Open channel' }).waitFor();
-      await expect(page.getByText('Helper was invited to Launch.', { exact: true })).toBeVisible();
+      await expect(page.getByRole('status')).toHaveText('Joined');
       assert.equal(confirmations, 1);
       assert.equal(polls, 3);
       // No Matrix device: the page never takes the cross-tab device lock, so any tab or browser works.
