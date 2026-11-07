@@ -10,11 +10,14 @@ import { qwenInboundAllowed } from '../wake/qwen-socket';
 import { readWakeSettings } from '../wake/shared';
 import { claudeWatchCommand, monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
+import { KhalaClientError } from '../client';
+import { claimAgent, markReleased, supersededHere } from '../folder-agent';
 
 export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
   platform?: NodeJS.Platform;
   createClient?: typeof createKhalaAgentClient;
   createWaker?: typeof createCodexWaker;
+  supersedePollMs?: number;
 } = {}): ClientFactory {
   return ({ harness, sessionId, rejoinable }) => {
     const files = sessionFiles(harness, sessionId, env);
@@ -41,9 +44,27 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before
     // delegating any operation, so an expired join cannot reject a fresh one.
+    // A Claude agent is its folder: the newest session there takes it over and an older one stands down.
+    let superseded = false;
+    let supersedeTimer: ReturnType<typeof setInterval> | undefined;
+    let standingDown: Promise<void> | undefined;
+    const standDown = () => standingDown ??= (async () => {
+      superseded = true;
+      clearInterval(supersedeTimer);
+      await client.close().catch(() => {});
+      await waker?.stop();
+      await markReleased(files.dir);
+    })();
     let preparation: Promise<void> | undefined;
     const prepare = () => preparation ??= (async () => {
       await ensureStateDir(files.dir);
+      if (harness === 'claude') {
+        await claimAgent(files.dir);
+        supersedeTimer = setInterval(() => {
+          void supersededHere(files.dir).then(other => other ? standDown() : undefined).catch(() => {});
+        }, deps.supersedePollMs ?? 1_000);
+        supersedeTimer.unref();
+      }
       await removeStateFile(files.dir, 'join.json');
       const joinsDir = path.join(files.dir, 'joins');
       await ensureStateDir(joinsDir);
@@ -55,10 +76,14 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       await client.resume?.();
     })();
     void initialize().catch(() => {});
+    const live = async () => {
+      await initialize();
+      if (superseded) throw new KhalaClientError('not_connected', 'superseded', { reason: 'superseded' });
+    };
     return {
-      async join(link, label) { await initialize(); const joined = await client.join(link, label); return { ...joined, ...(joined.state === 'connected' ? { watcherHint: await watcherHint() } : {}) }; },
+      async join(link, label) { await live(); const joined = await client.join(link, label); return { ...joined, ...(joined.state === 'connected' ? { watcherHint: await watcherHint() } : {}) }; },
       async status(channel) {
-        await initialize();
+        await live();
         const status = await (channel === undefined ? client.status() : client.status(channel));
         let idleWake;
         try { idleWake = selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })); }
@@ -69,18 +94,21 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
           ? { ...withWake, watcherArmed: await monitorArmed(files), ...(hint ? { watcherHint: hint } : {}) } : withWake;
       },
       async read(limit, before, channel, filter) {
-        await initialize();
+        await live();
         const result = await (filter ? client.read(limit, before, channel, filter) : channel === undefined ? client.read(limit, before) : client.read(limit, before, channel));
         const wakeNotice = await wakeDisableNotice(files.dir);
         return { ...result, ...(wakeNotice ? { wakeNotice } : {}) };
       },
-      async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
-      async sendImage(file, caption, channel) { await initialize(); return client.sendImage(file, caption, channel); },
-      async downloadImage(eventId, channel) { await initialize(); return client.downloadImage(eventId, channel); },
-      async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
-      async leave(channel, reason) { await initialize(); return reason === undefined ? client.leave(channel) : client.leave(channel, reason); },
-      async setMode(mode, input, channel) { await initialize(); return client.setMode(mode, input, channel); },
+      async send(text, channel) { await live(); return channel === undefined ? client.send(text) : client.send(text, channel); },
+      async sendImage(file, caption, channel) { await live(); return client.sendImage(file, caption, channel); },
+      async downloadImage(eventId, channel) { await live(); return client.downloadImage(eventId, channel); },
+      async sendChannelEvent(content, channel) { await live(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
+      async leave(channel, reason) { await live(); return reason === undefined ? client.leave(channel) : client.leave(channel, reason); },
+      async setMode(mode, input, channel) { await live(); return client.setMode(mode, input, channel); },
       async close() {
+        clearInterval(supersedeTimer);
+        // A superseded client already closed; its status files now belong to the new owner.
+        if (standingDown) return standingDown;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([

@@ -56,7 +56,7 @@ no link to rejoin your saved channels, without asking your user, then arm it; if
 are single-use: for a local channel your user already authorized you to manage,
 run `khala local link "<name>"` and join its fresh `shareLink`; otherwise ask for
 a fresh local link. If a link returns `link_unavailable`, ask for a replacement.
-A new session must join before arming.
+A new session must join before arming. You are this folder's Khala agent, not this conversation's: any new chat in the same folder rejoins with a bare `join`. On `reason: "superseded"` a newer session here took over; stop using Khala and do not re-arm Monitor.
 `watcherArmed: false` is a reminder to arm it. Notifications contain counts only;
 use `read` for messages. If Monitor is unavailable, tell your user; the
 24-day Stop-hook wake remains a backup, armed only after a completed turn.

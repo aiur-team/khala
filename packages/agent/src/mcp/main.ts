@@ -10,6 +10,7 @@ import { resolveHarness, resolveSession } from './session-id';
 import { createKhalaTools } from './tools';
 import { createRealClientFactory } from './wiring';
 import { readStatus, sessionFiles } from '../state';
+import { supersededHere } from '../folder-agent';
 import { adapterFor } from '../harness';
 import type { ResolvedSession } from '../harness/session-sources';
 
@@ -112,7 +113,10 @@ export default async function main(argv: readonly string[]): Promise<number> {
           await Promise.race([
             (async () => {
               await client.close();
-              const status = await readStatus(sessionFiles(input.harness, input.sessionId, process.env));
+              const files = sessionFiles(input.harness, input.sessionId, process.env);
+              const status = await readStatus(files);
+              // A newer session in this folder took the agent over; its status is not ours to check.
+              if (input.harness === 'claude' && await supersededHere(files.dir)) return;
               if (status?.state !== 'disconnected' || status.detail !== 'closed') throw new Error('cleanup_not_closed');
             })(),
             new Promise<never>((_resolve, reject) => {

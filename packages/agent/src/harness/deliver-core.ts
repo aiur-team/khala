@@ -14,6 +14,7 @@ import { isWakeEntry, wakesAgent } from '../events/receive';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ProcessReader } from './proc';
 import { recordHookSession } from './session-sources';
+import { claudeAgentId, supersededHarness } from '../folder-agent';
 import { STOP_NUDGE, type HarnessAdapter } from './adapter';
 import { claudeTranscriptInterrupted, claudeTranscriptVersion, versionAtLeast } from './claude-transcript';
 
@@ -144,6 +145,12 @@ export function diagnostic(io: HookIO, code: string): void {
 }
 
 async function activeFiles(adapter: HarnessAdapter, sessionId: string | undefined, io: HookIO): Promise<SessionFiles | null> {
+  if (adapter.id === 'claude' && sessionId !== undefined) {
+    // A Claude agent is its folder; only the session that owns it now receives its deliveries.
+    const files = sessionFiles('claude', await claudeAgentId(io.env, sessionId), io.env);
+    try { if (!(await fs.stat(files.dir)).isDirectory()) return null; } catch { return null; }
+    return await supersededHarness(files.dir, io.pid, io.readProcess) ? null : files;
+  }
   const ids = new Set([sessionId, adapter.codec?.fallbackSession]);
   for (const id of ids) {
     if (id === undefined) continue;

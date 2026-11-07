@@ -8,6 +8,7 @@ import { wakesAgent } from '../src/events/receive';
 import { wakeStart } from '../src/inbox';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
+import { claudeAgentId, supersededHarness } from '../src/folder-agent';
 import { claudeTranscriptInterrupted } from '../src/harness/claude-transcript';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -84,8 +85,11 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     if (!['Stop', 'SessionStart'].includes(input?.hook_event_name) || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
     if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false)) return 0;
-    const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
+    const dir = resolveStateDir(adapterFor('claude')!.id as Harness,
+      await claudeAgentId(io.env, input.session_id), io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
+    // A newer session in this folder owns the agent; re-arming here would steal its watcher.
+    if (await supersededHarness(dir)) return 0;
     // `claude -p` (sdk-cli) waits for this hook before exiting, and an ended run has nothing to wake.
     if (io.env.CLAUDE_CODE_ENTRYPOINT === 'sdk-cli') return 0;
     if (input.hook_event_name === 'SessionStart') {
