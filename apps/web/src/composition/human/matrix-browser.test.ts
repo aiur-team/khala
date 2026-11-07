@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, Filter, SyncState, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, RoomMemberEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
-import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
+import { DecryptionFailureCode, EventShieldColour, EventShieldReason, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
 import { markMatrixRoomRead, memberPresence, hasReadEvent, subscribeTyping, sendTyping, memberSince, departedName, readChannelColors, setOwnArchived, viewerArchived, migrateLegacyArchives, setOwnChannelColors, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate, SYNC_TIMELINE_LIMIT } from './matrix-browser';
 
@@ -755,5 +755,43 @@ describe('departedName', () => {
     expect(departedName(sdk(leave({ membership: 'join', displayname: agent })), '!r', agent, 'agent')).toBe('Removed agent');
     expect(departedName(sdk(null), '!r', agent, 'agent')).toBe('Removed agent');
     expect(departedName(sdk(null), '!r', '@bob:hs', 'human')).toBe('Former member');
+  });
+});
+
+describe('device rotation (#1416)', () => {
+  const agent = '@agent-0123abcd-abc123:example.test';
+  const message = (id: string, device: string, key: string) => {
+    const event = new MatrixEvent({ event_id: id, type: 'm.room.message', sender: agent, origin_server_ts: 1,
+      content: { msgtype: 'm.text', body: id, device_id: device } });
+    vi.spyOn(event, 'getClaimedEd25519Key').mockReturnValue(key);
+    return event;
+  };
+  async function project(shieldReason: EventShieldReason | null) {
+    const decoded = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!decoded.ok) throw new Error('limits');
+    const roomId = '!room:example.test' as RoomId;
+    const crypto = {
+      // Only the agent's current device is listed; the old one was logged out when it rejoined.
+      getUserDeviceInfo: vi.fn(async () => new Map([[agent, new Map([['KH_AGENT_NEW', { deviceId: 'KH_AGENT_NEW', getFingerprint: () => 'new-key' }]])]])),
+      getEncryptionInfoForEvent: vi.fn(async () => ({ shieldColour: EventShieldColour.GREY, shieldReason })),
+    };
+    const client = { getRoom: () => null, getUserId: () => '@owner:example.test', getDeviceId: () => 'KH_WEB_1',
+      getAccessToken: () => 'token', decryptEventIfNeeded: vi.fn(), getCrypto: () => crypto } as unknown as MatrixClient;
+    const participant: ParticipantView = { participantId: 'agent_1' as never, ownerId: 'owner_1' as never,
+      kind: 'agent', displayName: 'Claude', deviceIds: [] };
+    const substrate = new MatrixSubstrate({ active: { client, generation: 1, principal: { verifiedEmail: 'o@example.test' } } } as never,
+      decoded.value, { resolve: vi.fn(async () => new Map([[agent, participant]])) });
+    return (substrate as unknown as { events: (events: readonly MatrixEvent[], roomId: RoomId) => Promise<readonly { kind: string; authorDeviceId?: string }[]> })
+      .events([message('$old', 'KH_AGENT_OLD', 'old-key'), message('$new', 'KH_AGENT_NEW', 'new-key')], roomId);
+  }
+
+  it('keeps projecting a channel whose earlier messages came from a since-deleted agent device', async () => {
+    const events = await project(EventShieldReason.UNKNOWN_DEVICE);
+    expect(events.map(event => [event.kind, event.authorDeviceId])).toEqual([['message', 'KH_AGENT_OLD'], ['message', 'KH_AGENT_NEW']]);
+  });
+
+  it('shows a placeholder, not a failed page, when the SDK reports a sender mismatch', async () => {
+    const events = await project(EventShieldReason.MISMATCHED_SENDER);
+    expect(events.map(event => event.kind)).toEqual(['undecryptable', 'message']);
   });
 });
