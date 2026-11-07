@@ -515,12 +515,15 @@ class MatrixRuntime {
                 crossSigningStarted = true;
                 // Cross-signing is optional maintenance, after sync and activation.
                 void ensureCrossSigning(crypto, session.userId,
-                  AbortSignal.any([signal, crossSigningAbort.signal])).then(() => {
-                  if (!crossSigningAbort.signal.aborted) {
-                    const stop = shareHistoryWithAddedAgents(client, crypto as CryptoApi & HistorySharer);
-                    crossSigningAbort.signal.addEventListener('abort', stop, { once: true });
-                  }
-                });
+                  AbortSignal.any([signal, crossSigningAbort.signal])).then(async result => {
+                  if (crossSigningAbort.signal.aborted) return;
+                  const stop = shareHistoryWithAddedAgents(client, crypto as CryptoApi & HistorySharer);
+                  crossSigningAbort.signal.addEventListener('abort', stop, { once: true });
+                  const { startDeviceLink } = await import('./device-link');
+                  const stopLink = await startDeviceLink(client, crypto as CryptoApi & Parameters<typeof startDeviceLink>[1], result);
+                  if (crossSigningAbort.signal.aborted) stopLink();
+                  else crossSigningAbort.signal.addEventListener('abort', stopLink, { once: true });
+                }).catch(() => undefined);
               }
             } catch (error) {
               stopped = true;
