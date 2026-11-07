@@ -33,6 +33,14 @@ it('falls back to HOME/.claude and ignores sessions without a user-set title', a
   expect(await sessionTitleName('claude', 'missing-session', { HOME: root })).toBeNull();
 });
 
+it('finds the title in HOME/.claude when an alternate CLAUDE_CONFIG_DIR (another account) has no titled transcript', async () => {
+  const alternate = path.join(root, 'accounts', 'work');
+  await claudeTranscript(jsonl({ type: 'custom-title', customTitle: 'PC - Khala', sessionId: id }), path.join(root, '.claude'));
+  expect(await sessionTitleName('claude', id, { HOME: root, CLAUDE_CONFIG_DIR: alternate })).toBe('PC-Khala');
+  await claudeTranscript(jsonl({ type: 'user', message: { role: 'user', content: 'hi' } }), alternate);
+  expect(await sessionTitleName('claude', id, { HOME: root, CLAUDE_CONFIG_DIR: alternate })).toBe('PC-Khala');
+});
+
 it('reads the newest Codex thread name for this thread from CODEX_HOME', async () => {
   await fs.writeFile(path.join(root, 'session_index.jsonl'), jsonl(
     { id, thread_name: 'old name', updated_at: '2026-10-01T00:00:00Z' },

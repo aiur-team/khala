@@ -90,9 +90,19 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
       if (login.status !== 200) return { kind: 'unavailable' };
       const loggedIn = await login.json() as { user_id?: unknown; device_id?: unknown; access_token?: unknown } | null;
       if (loggedIn?.user_id !== userId || loggedIn.device_id !== deviceId || typeof loggedIn.access_token !== 'string') return { kind: 'unavailable' };
-      // Registration sets the initial display name. Do not PUT the global
-      // profile here: Synapse asynchronously regenerates bare member events,
-      // erasing the inviter and listening mode on restored memberships.
+      // Registration names only a new account, and a Matrix join takes the global profile name, so a returning
+      // account would rejoin under its first name. Set it only while the account is in no room: Synapse regenerates
+      // bare member events on a profile PUT, erasing the inviter and listening mode on restored memberships.
+      if (registration.status === 400) {
+        try {
+          const headers = { authorization: `Bearer ${loggedIn.access_token}`, 'content-type': 'application/json' };
+          const joined = await request('/_matrix/client/v3/joined_rooms', { headers });
+          const rooms = joined.status === 200 ? (await joined.json() as { joined_rooms?: unknown } | null)?.joined_rooms : null;
+          if (Array.isArray(rooms) && rooms.length === 0) {
+            await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, { method: 'PUT', headers, body: JSON.stringify({ displayname: input.label }) });
+          }
+        } catch { /* Best effort: a stale name must not block the join. */ }
+      }
       return { kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId, deviceId, accessToken: loggedIn.access_token, roomId: input.roomId } };
     } catch { return { kind: 'unavailable' }; }
   } };
