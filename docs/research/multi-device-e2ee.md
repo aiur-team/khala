@@ -103,4 +103,5 @@ Ceremony: one tap on the new device, then a comparison of seven emoji on both de
 ### Verification
 
 - (a) Live: `tests/integration/agent/agent-history.spec.ts`. On a freshly wiped stack (C13: the owner's first device), three messages are sent, then an agent joins and `read` returns all three. The agent log shows `m.room_key_bundle` received and imported. The spec fails without the sharer: the agent marks the bundle pending, and "No key bundle found" is logged.
-- (b) Live: a two-device spec (approval, then earlier messages visible on the new device). See the #1420 PR.
+- (b) Live: `tests/integration/human/device-history.spec.ts`, on a freshly wiped stack. Device 1 sends three messages. Device 2 signs in and shows none of them, plus "Earlier messages are locked on this device". It asks for approval, device 1 approves, and both show the same emoji and confirm. Device 2 then shows all three messages. Device 1 is then closed, and an agent added from device 2 alone reads the three messages (#1419 from an approved later device). The prompt is `apps/web/src/composition/human/device-link.tsx`.
+- Not verified live: whether the pushed cross-signing private keys are imported, which would let an approved device approve further devices. The backup key push is verified by the restore.

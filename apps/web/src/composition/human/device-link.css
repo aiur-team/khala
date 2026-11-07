@@ -1,0 +1,7 @@
+/* Device approval prompt (#1420): a small card centred over the timeline, above the composer and clear of the sidebar and roster. */
+.kh-devlink { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 60; width: min(340px, calc(100vw - 32px)); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: .7rem; padding: 1rem; border-radius: 14px; background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg); }
+.kh-devlink-p { margin: 0; font-size: .9rem; }
+.kh-devlink .kh-btn { width: 100%; height: 40px; }
+.kh-devlink-emoji { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; margin: 0; padding: 0; list-style: none; font-size: .7rem; text-align: center; color: var(--muted); }
+.kh-devlink-emoji span { display: block; font-size: 1.6rem; }
