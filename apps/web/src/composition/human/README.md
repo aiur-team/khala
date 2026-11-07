@@ -88,7 +88,8 @@ open elsewhere. A signed-out visitor goes straight to sign-in and returns to the
 same link; a failed sign-in callback lands on "Sign-in expired. Try again", which
 returns there too. The control server invites the agent as its owner when the
 agent reports ready, so the tab may be closed after confirming. That server
-invite carries no MSC4268 encrypted-history bundle. **Open channel** loads the app.
+invite carries no keys: any open app tab of the owner sends the MSC4268 history
+bundle when it sees the invite (`shareHistoryWithAddedAgents`). **Open channel** loads the app.
 
 If connecting times out, **Retry** resumes status checks without confirming again.
 Reopening a confirmed link resumes polling.

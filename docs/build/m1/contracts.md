@@ -264,3 +264,4 @@ Cross-signing bootstrap without an interactive-auth (UIA) prompt succeeds only o
 - Live tests (KM-150, KM-151) run `pnpm stack:down --wipe && pnpm stack:up` before each run, so every run starts with fresh users.
 - KM-152 makes the operator's Firefox profiles the first production devices after the reset: `:9222` for the owner and `:9223` for the coworker. No other production sign-in may happen first.
 - A recovery-key prompt for later devices is M2 (deferred).
+- **Update 2026-11-07:** a later device becomes able to share history once another of the user's devices approves it by emoji comparison, which cross-signs it (P14 revised; `docs/research/multi-device-e2ee.md`, "History for later joiners"). Since #1298 the control server issues agent invites, so the owner's open browser sends the MSC4268 bundle when it sees the invite.
