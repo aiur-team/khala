@@ -77,7 +77,7 @@ the live U36 matrix check; no terminal typing fallback is installed.
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `join` and returns a confirmation link (`confirmUrl`).
-3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
+3. Open it and sign in if asked. Tap **Approve** (the check button). If you are not in the channel yet, the same button adds you too, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `join` with the same link until that join returns `connected`, then can read available channel history with `read` and reply with `send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
@@ -146,7 +146,7 @@ Call `status` to check the connection and unread count. The local status states 
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and choose **Confirm**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
+| `joining` | Open the confirmation link and tap **Approve**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
@@ -204,7 +204,7 @@ Developers running Khala from a source checkout follow the checkout sections of 
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `join` and returns a confirmation link (`confirmUrl`).
-3. Open it and sign in if asked. Choose **Confirm**, or **Join <channel> and add <agent>** if you are not in the channel yet: the same page adds you, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
+3. Open it and sign in if asked. Tap **Approve** (the check button). If you are not in the channel yet, the same button adds you too, provided the invite admits your account. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `join` with the same link until that join returns `connected`, then can read available channel history with `read` and reply with `send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
@@ -271,7 +271,7 @@ Call `status` to check the connection, unread count and your agent’s current `
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and choose **Confirm**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
+| `joining` | Open the confirmation link and tap **Approve**. With `detail: "confirmed_syncing"` it is already confirmed and connecting; wait for `connected`. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |

@@ -41,7 +41,15 @@
   .kh-d-x { width: 36px; height: 36px; }
 }
 
-/* The rename section (§22: today's rename flow, restyled). */
-.kh-d-rename { display: flex; flex-direction: column; gap: .5rem; }
-.kh-d-rename .kh-row2 .kh-btn { flex: 0 0 auto; }
+/* The agent edit block: one-word labels beside their inputs, icon buttons (§22, compacted). */
+.kh-d-edit { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .5rem .7rem; padding: .7rem; }
+.kh-d-rename { display: contents; }
+.kh-d-edit .kh-row2 { display: flex; gap: .3rem; align-items: center; min-width: 0; }
+.kh-d-edit .kh-txt { flex: 1; min-width: 0; }
+.kh-d-edit .kh-seg { justify-self: start; max-width: 100%; }
+.kh-d-edit .kh-d-rename-err { grid-column: 1 / -1; }
+.kh-d-icons { justify-content: center; align-items: center; }
+.kh-d-icons .kh-ib { flex: 0 0 auto; padding: 0; font-size: 1rem; font-weight: 700; }
+.kh-d-confirm { display: inline-flex; align-items: center; gap: .3rem; }
+.kh-d-confirm .kh-ib.danger { color: var(--block-ink); background: var(--block-soft); }
 .kh-d-rename-err { margin: 0; color: var(--block-ink); font-size: .78rem; overflow-wrap: anywhere; }

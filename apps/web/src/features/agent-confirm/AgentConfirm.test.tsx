@@ -1,4 +1,3 @@
-import opencodeLogo from '../../ui/khala/assets/opencode.svg';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
@@ -6,110 +5,69 @@ import { AgentConfirm } from './AgentConfirm';
 import type { AgentConfirmController, AgentConfirmSnapshot, AgentConfirmError } from './controller';
 
 const view: AgentJoinView = { joinId: 'j1', label: 'Helper', harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' };
-function render(snapshot: AgentConfirmSnapshot, email?: string) {
+function render(snapshot: AgentConfirmSnapshot) {
   const controller: AgentConfirmController = { getSnapshot: () => snapshot, subscribe: () => () => undefined,
     start: vi.fn(), confirm: vi.fn(), cancelAuto: vi.fn(), retry: vi.fn(), dispose: vi.fn() };
-  return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()}
-    {...(email ? { email } : {})} />);
+  return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()} />);
 }
+const all = [{ state: 'loading' }, { state: 'review', view }, { state: 'review', view: { ...view, access: 'auto' } },
+  { state: 'review', view: { ...view, access: 'join' } }, { state: 'connecting', view }, { state: 'done', view },
+  { state: 'error', code: 'not_finished', view }] satisfies AgentConfirmSnapshot[];
+const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const statuses = (html: string) => [...html.matchAll(/role="(?:status|alert)">(?:<svg.*?<\/svg>)?([^<]*)</g)].map(m => m[1]!);
+
 describe('AgentConfirm', () => {
-  it.each([['opencode', 'OpenCode'], ['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)']])(
-    'renders registry identity for %s', (harness, name) => {
-      // Wire contracts widen in U2; this tests the web rendering boundary independently.
-      const html = render({ state: 'review', view: { ...view, harness: harness as AgentJoinView['harness'] } });
-      expect(html).toContain(`Helper (${name}) wants to join Launch.`);
-      expect(html).toContain(`${name}</span>`);
-      if (harness === 'opencode') expect(html).toContain(renderToStaticMarkup(<img src={opencodeLogo} alt="" />));
-      if (harness === 'claude-code') expect(html).not.toContain('Claude Code');
-    });
-  it('shows the label, harness and channel for review', () => {
+  it('shows only who joins where and one Approve icon button for review', () => {
     const html = render({ state: 'review', view });
-    expect(html).toContain('Confirm agent');
-    expect(html).toContain('Helper (Claude Code) wants to join Launch.');
-    expect(html).toContain('>Confirm</button>');
-    expect(render({ state: 'review', view: { ...view, harness: 'codex' } })).toContain('Helper (Codex)');
+    expect(html).toContain('<h1 class="kh-fin-n">Helper <span aria-hidden="true">→</span><span class="kh-fin-sr">joins</span> Launch</h1>');
+    expect(html).toMatch(/<button type="button" class="kh-btn pri" aria-label="Approve" title="Approve"><svg /);
+    expect(text(html)).toBe('khala Helper → joins Launch'); // the wordmark, then the agent line
   });
-  it('never asks to keep the tab open: the server finishes the join', () => {
-    for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'connecting', view }, { state: 'done', view },
-      { state: 'error', code: 'not_finished', view }] satisfies AgentConfirmSnapshot[]) {
-      expect(render(snapshot)).not.toContain('Keep this tab open');
+  it('drops the eyebrow, harness chip, prose and account line in every state', () => {
+    for (const snapshot of all) {
+      const html = render(snapshot);
+      expect(html).not.toMatch(/kh-fin-eb|kh-mchip|Claude Code|Signed in as|wants to join|Approve joins|Keep this tab open/);
+      expect(html.match(/class="kh-spin"/g)?.length ?? 0).toBeLessThanOrEqual(1);
+      expect(html.match(/class="kh-fin-c"/g)).toHaveLength(1);
+      for (const status of statuses(html)) expect(status.trim().split(/\s+/).length).toBeLessThanOrEqual(3);
+      expect(html.match(/class="wm"/g)).toHaveLength(1);
     }
+  });
+  it.each<[AgentConfirmSnapshot, string]>([
+    [{ state: 'loading' }, 'Loading'],
+    [{ state: 'review', view: { ...view, access: 'auto' } }, 'Joining'],
+    [{ state: 'connecting', view }, 'Connecting'],
+    [{ state: 'connecting', view, slow: true }, 'Connecting'],
+  ])('shows one spinner with a short status (%#)', (snapshot, status) => {
+    expect(render(snapshot)).toContain(`<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">${status}</p>`);
+  });
+  it('keeps the auto-confirm Cancel as an icon button and no Approve', () => {
+    const html = render({ state: 'review', view: { ...view, access: 'auto' } });
+    expect(html).toMatch(/<button type="button" class="kh-btn" aria-label="Cancel" title="Cancel"><svg /);
+    expect(html).not.toContain('aria-label="Approve"');
+    expect(html).toContain('Helper');
+  });
+  it('offers a non-member one join-and-approve icon button', () => {
+    const html = render({ state: 'review', view: { ...view, access: 'join' } });
+    expect(html).toContain('aria-label="Join and approve"');
+    expect(html).not.toContain('aria-label="Approve"');
   });
   it('links to the encoded channel after success', () => {
     const html = render({ state: 'done', view });
-    expect(html).toContain('Helper was invited to Launch.');
-    expect(html).toContain('href="/channels/!r1%3Akhala.local">Open channel');
+    expect(html).toMatch(/<span class="kh-fin-ok" role="status"><svg [^>]*>.*?<\/svg>Joined<\/span>/);
+    expect(html).toMatch(/<a class="kh-btn pri" aria-label="Open channel" title="Open channel" href="\/channels\/!r1%3Akhala.local"><svg /);
   });
-  it.each<[AgentConfirmError, string, boolean]>([
-    ['not_member', 'You are not in this channel yet. Open the channel&#x27;s invite link, then ask your agent to run join again.', false],
-    ['wrong_account', 'This invite is for a different account. Sign in with the invited account and open this link again.', false],
-    ['invite_unavailable', 'The invite link your agent used no longer works. Ask someone in the channel for a new link and give it to your agent.', false],
-    ['not_found', 'This confirmation link is not valid.', false],
-    ['expired', 'This request expired. Ask your agent to run join again.', false],
-    ['already_confirmed_by_other', 'Another member already confirmed this agent.', false],
-    ['not_picked_up', 'Your agent did not pick up the confirmation. Check that it is still running, then ask it to run join again.', false],
-    ['not_finished', 'Your agent started connecting but did not finish. Ask it to run join again.', false],
-    ['unavailable', 'Khala is unavailable right now. Try again.', true],
-    ['signed_out', 'You are signed out. Sign in to continue.', false],
-  ])('renders %s with appropriate retry', (code, copy, retry) => {
+  it.each<[AgentConfirmError, string]>([
+    ['not_member', 'Not a member'], ['wrong_account', 'Wrong account'], ['invite_unavailable', 'Invite expired'],
+    ['not_found', 'Invalid link'], ['expired', 'Request expired'], ['already_confirmed_by_other', 'Already confirmed'],
+    ['not_picked_up', 'Agent not responding'], ['not_finished', 'Join incomplete'], ['unavailable', 'Khala unavailable'],
+    ['signed_out', 'Signed out'],
+  ])('renders %s briefly with the right action', (code, copy) => {
     const html = render({ state: 'error', code });
-    expect(html).toContain(`role="alert">${copy}`);
-    expect(html.includes('>Retry</button>')).toBe(retry);
-    expect(html.includes('>Sign in</button>')).toBe(code === 'signed_out');
-    expect(html).not.toMatch(/\b(room|chat)\b/i);
-  });
-  it('renders review as the agent-finish card', () => {
-    const html = render({ state: 'review', view: { ...view, label: 'Claude' } });
-    expect(html).toMatch(/<div class="khala-app kh-agent-confirm" data-theme="(dark|light)"><div class="kh-brand">/);
-    expect(html).toContain('<section class="kh-fin kh-fin--page" aria-label="Confirm agent"><div class="kh-fin-c"><span class="kh-fin-eb">Khala</span>');
-    expect(html).toMatch(/<span class="kh-mchip" aria-hidden="true"><img src="[^"]+" alt=""\/>Claude Code<\/span><h1 class="kh-fin-n">Claude<\/h1>/);
-    expect(html).toContain('<p class="kh-fin-p" aria-hidden="true">wants to join <b>Launch</b></p>');
-    expect(html).toContain('<button type="button" class="kh-btn pri">Confirm</button>');
-  });
-  it.each<[AgentJoinView['state'], boolean]>([['pending', false], ['confirmed', false], ['claimed', false], ['claimed', true]])(
-    'shows only a spinner and one steady word while %s (slow: %s)', (state, slow) => {
-      const html = render({ state: 'connecting', view: { ...view, state }, ...(slow ? { slow: true as const } : {}) });
-      expect(html).toContain('<span class="kh-spin" aria-hidden="true"></span><p class="kh-fin-p" role="status">Connecting</p></div>');
-      expect(html).not.toMatch(/Waiting|is connecting|Confirming|longer than usual/);
-    });
-  it('renders done with a check line and a primary Open channel link', () => {
-    const html = render({ state: 'done', view });
-    expect(html).toMatch(/<span class="kh-fin-ok"><svg [^>]*>.*?<\/svg>Helper was invited to Launch\.<\/span>/);
-    expect(html).toContain('<a class="kh-btn pri" href="/channels/!r1%3Akhala.local">Open channel</a>');
-  });
-  it('renders a retryable error as an alert with Retry', () => {
-    expect(render({ state: 'error', code: 'unavailable', view })).toContain(
-      '<p class="kh-fin-p kh-fin-err" role="alert">Khala is unavailable right now. Try again.</p><button type="button" class="kh-btn">Retry</button>');
-  });
-  it('titles a viewless error without the chip', () => {
-    const html = render({ state: 'error', code: 'not_found' });
-    expect(html).toContain('<h1 class="kh-fin-n">Agent confirmation</h1>');
-    expect(html).not.toContain('kh-mchip');
-  });
-  it('has no close button and keeps Bungee to the wordmark', () => {
-    for (const snapshot of [{ state: 'loading' }, { state: 'review', view }, { state: 'connecting', view }, { state: 'done', view },
-      { state: 'error', code: 'not_finished', view }] satisfies AgentConfirmSnapshot[]) {
-      const html = render(snapshot);
-      expect(html).not.toContain('kh-fin-x');
-      expect(html.match(/class="wm"/g)).toHaveLength(1);
-      expect(html).toMatch(/<h1 class="kh-fin-n">/);
-    }
-  });
-  it('offers one join-and-add button to a non-member the invite admits, naming the account', () => {
-    const html = render({ state: 'review', view: { ...view, access: 'join' } }, 'ada@example.test');
-    expect(html).toContain('You are not in this channel yet. Confirming adds you and your agent.');
-    expect(html).toContain('>Join Launch and add Helper</button>');
-    expect(html).not.toContain('>Confirm</button>');
-    expect(html).toContain('Signed in as ada@example.test');
-    expect(render({ state: 'error', code: 'wrong_account' }, 'ada@example.test')).toContain('Signed in as ada@example.test');
-    expect(render({ state: 'review', view })).not.toContain('Signed in as');
-  });
-  it('names the agent and offers Cancel while a no-click confirm is pending', () => {
-    const html = render({ state: 'review', view: { ...view, access: 'auto' } }, 'ada@example.test');
-    expect(html).toContain('Adding Helper to Launch now. Approve joins is off.');
-    expect(html).toContain('>Cancel</button>');
-    expect(html).not.toContain('>Confirm</button>');
-    expect(html).toContain('Signed in as ada@example.test');
+    expect(html).toContain(`<p class="kh-fin-p kh-fin-err" role="alert">${copy}</p>`);
+    expect(html.includes('aria-label="Retry"')).toBe(code === 'unavailable');
+    expect(html.includes('aria-label="Sign in"')).toBe(code === 'signed_out');
+    expect(html).not.toContain('<h1');
   });
   it('escapes agent-controlled labels', () => {
     expect(render({ state: 'review', view: { ...view, label: '<script>bad</script>' } })).toContain('&lt;script&gt;');

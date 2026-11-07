@@ -87,7 +87,7 @@ function Harness() {
       }}
       onRemoveAgent={async participantId => { publish(snapshot.agents.filter(agent => agent.participantId !== participantId)); return 'removed'; }}
       humanParticipants={humans} describeParticipant={describeParticipant}
-      modeFor={participantId => modes[participantId] ?? 'sync'}
+      modeFor={participantId => modes[participantId] ?? 'sync'} idleMuteFor={() => 240}
       onSetMode={async (participantId, mode) => {
         window.__modeRequests.push({ participantId, mode });
         if (!params.has('offline')) setTimeout(() => setModes(current => ({ ...current, [participantId]: mode })), 300);
@@ -104,7 +104,6 @@ function Harness() {
       recentActivity={participantId => participantId === 'agent_scout'
         ? [{ id: 'e2', at: '2026-10-01T16:52:00Z', body: 'The release build is green.' }, { id: 'e1', at: '2026-10-01T16:40:00Z', body: 'Starting the build.' }]
         : []}
-      agentJoinedAt={participantId => participantId === 'agent_scout' ? '2026-10-01T16:30:00Z' : undefined}
       onMention={label => setDraft(current => insertMention(current, label))}
       onRosterOpen={() => setChipsClosed(count => count + 1)}
       onBack={() => { document.title = 'back'; }}

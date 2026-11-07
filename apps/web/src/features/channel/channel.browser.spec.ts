@@ -164,10 +164,18 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     const detail = page.getByRole('complementary', { name: 'Scout details' });
     await detail.waitFor();
     assert.equal(await detail.locator('.kh-d-owner').textContent(), 'SCYour agent');
-    assert.equal(await detail.locator('.kh-d-kv dt').allTextContents().then(items => items.join(',')), 'Harness,Owner,Joined');
+    // Compact edit block: one-word labels, icon-only buttons with names and tooltips.
+    assert.equal(await detail.locator('.kh-d-edit .kh-d-lbl').allTextContents().then(items => items.join(',')), 'Name,Timeout');
+    assert.equal(await detail.locator('label.kh-d-lbl').getAttribute('for'), await detail.getByLabel('Name for Scout').getAttribute('id'));
+    for (const name of ['Rename', 'Mention', 'Remove from channel']) {
+      const button = detail.getByRole('button', { name, exact: true });
+      assert.equal(await button.textContent().then(text => text!.replace('@', '').trim()), '', name + ' is icon-only');
+      assert.equal(await button.getAttribute('title'), name);
+    }
+    assert.equal(await detail.locator('.kh-d-kv').count(), 0);
     assert.equal(await detail.locator('.kh-d-log > div').count(), 2);
     assert.equal(await detail.locator('.kh-d-log time').first().getAttribute('datetime'), '2026-10-01T16:52:00Z');
-    await detail.getByRole('button', { name: '@ Mention' }).click();
+    await detail.getByRole('button', { name: 'Mention' }).click();
     assert.equal(await page.getByLabel('Message').inputValue(), '@Scout ');
     await detail.getByLabel('Name for Scout').fill('Dolan');
     await detail.getByRole('button', { name: 'Rename' }).click();
@@ -443,6 +451,15 @@ test('the agent pane removes the viewer’s own agent, and anyone’s only for t
     assert.equal(await builder.getByRole('button', { name: 'Remove from channel' }).count(), 0);
     await builder.getByRole('button', { name: 'Close details' }).click();
     const scout = await open('Scout');
+    // On a phone every edit control is on screen without scrolling the pane.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const pane = page.locator('.kh-d-in');
+    for (const control of [pane.getByLabel('Name for Scout'), pane.getByRole('radiogroup', { name: 'Listener timeout for Scout' }),
+      pane.getByRole('button', { name: 'Remove from channel' })]) {
+      const box = await control.boundingBox();
+      assert.ok(box && box.y >= 0 && box.y + box.height <= 844, 'edit control fits a phone screen');
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
     await scout.getByRole('button', { name: 'Remove from channel' }).click();
     await scout.getByRole('button', { name: 'Cancel' }).click();
     await scout.getByRole('button', { name: 'Remove from channel' }).click();

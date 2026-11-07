@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { IdentityPort, IdentityState } from '@khala/contracts/messaging/index';
-import { AgentConfirm, AgentConfirmFrame } from '../../features/agent-confirm/AgentConfirm';
+import { AgentConfirm, AgentConfirmFrame, RetryButton } from '../../features/agent-confirm/AgentConfirm';
 import { createAgentConfirmController } from '../../features/agent-confirm/controller';
 import type { AgentJoinPort } from '../../features/agent-confirm/ports';
 import type { ProfilePort } from '../../features/profile/ports';
@@ -51,9 +51,8 @@ export function AgentConfirmPage({ identity, agentJoin, profile, routes, joinId,
   }
   if (state?.kind === 'unavailable') {
     return <AgentConfirmFrame {...frame}>
-      <h1 className="kh-fin-n">Agent confirmation</h1>
-      <p className="kh-fin-p kh-fin-err" role="alert">Khala is unavailable right now. Try again.</p>
-      <button type="button" className="kh-btn" onClick={() => setAttempt(value => value + 1)}>Retry</button>
+      <p className="kh-fin-p kh-fin-err" role="alert">Khala unavailable</p>
+      <RetryButton onClick={() => setAttempt(value => value + 1)} />
     </AgentConfirmFrame>;
   }
   const pending = <AgentConfirmFrame {...frame}><SigningIn /></AgentConfirmFrame>;
@@ -61,13 +60,13 @@ export function AgentConfirmPage({ identity, agentJoin, profile, routes, joinId,
   // A new user picks a username first; the URL stays, so saving lands back here.
   return <ProfileProvider key={state.principal.ownerId} ports={{ profile }}>
     <UsernameGate pending={pending} {...frame}>
-      <Confirm agentJoin={agentJoin} joinId={joinId} routes={routes} navigateExternal={navigateExternal} email={state.principal.verifiedEmail} {...frame} />
+      <Confirm agentJoin={agentJoin} joinId={joinId} routes={routes} navigateExternal={navigateExternal} {...frame} />
     </UsernameGate>
   </ProfileProvider>;
 }
 
 function Confirm({ agentJoin, joinId, routes, navigateExternal, ...frame }: Readonly<{
-  agentJoin: AgentJoinPort; joinId: string; routes: HumanRouteCodec; navigateExternal: (url: string) => void; email: string;
+  agentJoin: AgentJoinPort; joinId: string; routes: HumanRouteCodec; navigateExternal: (url: string) => void;
   theme: ThemeChoice; onThemeChange: (theme: ThemeChoice) => void; homeHref: string;
 }>) {
   const controller = useMemo(() => createAgentConfirmController({ joinId, port: agentJoin }), [agentJoin, joinId]);
