@@ -11,7 +11,8 @@ export const LISTENING_MODE_MEMBER_KEY = 'com.khala.listening_mode' as const;
 /** Listener timeout choices in minutes (0 is Off): no human message for this long mutes the agent. */
 export const IDLE_MUTE_CHOICES = [15, 60, 240, 1440, 0] as const;
 export type IdleMuteMinutes = typeof IDLE_MUTE_CHOICES[number];
-export const DEFAULT_IDLE_MUTE_MIN: IdleMuteMinutes = 60;
+// Off unless the owner opts a channel in: an Executor channel must never go quiet on its own (Kevin, 2026-11-21).
+export const DEFAULT_IDLE_MUTE_MIN: IdleMuteMinutes = 0;
 /** `locked` and `idleMuteMin` (each sent only when the owner changes it): the lock stops the agent changing
  * its own mode with set_mode; the listener timeout mutes it after that many minutes without a human message. */
 export type ListeningModeCommandContent = Readonly<{ v: 1; agent: string; mode: ListeningMode; locked?: boolean; idleMuteMin?: IdleMuteMinutes }>;

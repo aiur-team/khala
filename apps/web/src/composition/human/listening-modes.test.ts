@@ -84,22 +84,22 @@ describe('listening mode on Matrix', () => {
     expect(locked.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.mode_locks', {});
   });
 
-  it('saves a listener timeout privately (only away from the 1 hr default), then sends it with the command', async () => {
+  it('saves a listener timeout privately (only away from the Off default), then sends it with the command', async () => {
     const timeouts = (saved: Record<string, unknown>) => {
       const sdk = client({});
       const room = vi.mocked(sdk.getRoom).getMockImplementation()!(roomId)!;
       vi.mocked(sdk.getRoom).mockReturnValue({ ...room, getAccountData: (type: string) => type === 'com.khala.idle_mute' ? { getContent: () => saved } : undefined } as never);
       return sdk;
     };
-    expect(readIdleMute(timeouts({}), roomId, '@a:x')).toBe(60);
+    expect(readIdleMute(timeouts({}), roomId, '@a:x')).toBe(0);
     expect(readIdleMute(timeouts({ '@a:x': 15 }), roomId, '@a:x')).toBe(15);
-    expect(readIdleMute(timeouts({ '@a:x': 7 }), roomId, '@a:x')).toBe(60);
+    expect(readIdleMute(timeouts({ '@a:x': 7 }), roomId, '@a:x')).toBe(0);
     const sdk = timeouts({ '@b:x': 0 });
-    await expect(sendListeningMode(sdk, roomId, '@a:x', 'sync', 'txn_t', undefined, 0)).resolves.toBe('sent');
-    expect(sdk.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.idle_mute', { '@b:x': 0, '@a:x': 0 });
-    expect(sdk.sendEvent).toHaveBeenCalledWith(roomId, 'com.khala.listening_mode.v1', { v: 1, agent: '@a:x', mode: 'sync', idleMuteMin: 0 }, 'txn_t');
+    await expect(sendListeningMode(sdk, roomId, '@a:x', 'sync', 'txn_t', undefined, 60)).resolves.toBe('sent');
+    expect(sdk.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.idle_mute', { '@b:x': 0, '@a:x': 60 });
+    expect(sdk.sendEvent).toHaveBeenCalledWith(roomId, 'com.khala.listening_mode.v1', { v: 1, agent: '@a:x', mode: 'sync', idleMuteMin: 60 }, 'txn_t');
     const reset = timeouts({ '@a:x': 15 });
-    await sendListeningMode(reset, roomId, '@a:x', 'sync', 'txn_d', undefined, 60);
+    await sendListeningMode(reset, roomId, '@a:x', 'sync', 'txn_d', undefined, 0);
     expect(reset.setRoomAccountData).toHaveBeenCalledWith(roomId, 'com.khala.idle_mute', {});
   });
 
