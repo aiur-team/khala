@@ -99,7 +99,8 @@ it("does not nudge for pings that arrived while muted, and keeps them as backlog
 });
 it('keeps the owner listener timeout across mode changes; it only lowers, and never past a lock or archive', async () => {
   const hour = 60 * 60_000;
-  expect(await readModeState(files)).toMatchObject({ idleMuteMin: 60, ownerSetAt: 0 });
+  expect(await readModeState(files)).toMatchObject({ idleMuteMin: 0, ownerSetAt: 0 });
+  expect(idleMuteDue(await readModeState(files), 0, now().getTime() - 100 * hour, now().getTime())).toBe(false);
   await applyListeningMode(files, 'steer', { ...meta, idleMuteMin: 15 }, now);
   await applyListeningMode(files, 'async', { changedBy: 'agent', reason: 'quiet' }, now);
   const state = await readModeState(files);

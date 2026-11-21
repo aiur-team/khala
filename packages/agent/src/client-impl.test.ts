@@ -727,7 +727,7 @@ describe('agent-initiated listening mode', () => {
     expect(session.publishListeningMode).toHaveBeenLastCalledWith(credentials.roomId, 'sync', expect.any(AbortSignal));
     expect(session.sendChannelEvent).not.toHaveBeenCalled();
   });
-  it('mutes after the listener timeout without a human message; agent chatter never resets it, an owner raise does, Off disables it', async () => {
+  it('never mutes by default; once the owner opts in, mutes after the listener timeout without a human message; agent chatter never resets it, an owner raise does, Off disables it', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const start = now().getTime();
     let t = start;
@@ -743,19 +743,25 @@ describe('agent-initiated listening mode', () => {
       at(80); handler!({ ...message('$agent', '@agent-peer:s'), ts: t });
       await beat();
       expect((await client.status()).listeningMode).toBe('sync');
+      // Off by default: no timeout until the owner opts this channel in.
       at(91); await beat();
+      expect((await client.status()).listeningMode).toBe('sync');
+      at(92); owner('$on', { mode: 'sync', idleMuteMin: 60 }); await beat();
+      at(151); await beat();
+      expect((await client.status()).listeningMode).toBe('sync');
+      at(153); await beat();
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('mute'));
       expect(session.publishListeningMode).toHaveBeenLastCalledWith(credentials.roomId, 'mute', expect.any(AbortSignal));
       expect(notices()).toEqual(['Maker-PC switched to mute: no human message for 1 hr']);
       // An owner raise restarts the clock; the owner's 15 min choice applies from then.
-      at(100); owner('$raise', { mode: 'steer', idleMuteMin: 15 });
+      at(160); owner('$raise', { mode: 'steer', idleMuteMin: 15 });
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('steer'));
-      at(114); await beat();
+      at(174); await beat();
       expect((await client.status()).listeningMode).toBe('steer');
-      at(116); await beat();
+      at(176); await beat();
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('mute'));
       expect(notices().at(-1)).toBe('Maker-PC switched to mute: no human message for 15 min');
-      at(120); owner('$off', { mode: 'sync', idleMuteMin: 0 });
+      at(180); owner('$off', { mode: 'sync', idleMuteMin: 0 });
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('sync'));
       at(5000); await beat();
       expect((await client.status()).listeningMode).toBe('sync');

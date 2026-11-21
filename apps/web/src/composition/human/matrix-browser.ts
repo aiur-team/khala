@@ -836,7 +836,7 @@ export function readModeLocked(client: Pick<MatrixClient, 'getRoom'>, roomId: st
   return client.getRoom(roomId)?.getAccountData(MODE_LOCKS_ACCOUNT_DATA_TYPE)?.getContent()[userId] === true;
 }
 
-/** The listener timeout the viewer set for agent `userId` in `roomId`, from their private room account data; 1 hr by default. */
+/** The listener timeout the viewer set for agent `userId` in `roomId`, from their private room account data; Off by default. */
 export function readIdleMute(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): IdleMuteMinutes {
   const saved = client.getRoom(roomId)?.getAccountData(IDLE_MUTE_ACCOUNT_DATA_TYPE)?.getContent()[userId];
   return IDLE_MUTE_CHOICES.find(choice => choice === saved) ?? DEFAULT_IDLE_MUTE_MIN;
