@@ -34,6 +34,13 @@ function run(args: string[], env: Record<string, string> = {}, input = '') {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
+function runMinimalPath(args: string[], env: Record<string, string> = {}) {
+  return spawnSync(launcher, args, {
+    encoding: 'utf8',
+    env: { HOME: root, CLAUDE_PLUGIN_DATA: data, PATH: '/bin', ...env },
+  });
+}
+
 it('prefers KHALA_BIN, then the pinned copy, then the pinned version through npx, never another khala on PATH', async () => {
   await script(path.join(fakeBin, 'npx'), echo('npx'));
   await script(path.join(fakeBin, 'npm'), 'echo "$*" >> "$NPM_LOG"');
@@ -93,4 +100,23 @@ it('skips the install under KHALA_BIN', async () => {
   expect(run(['--ensure-installed'], { KHALA_BIN: '/bin/true', NPM_LOG: path.join(root, 'npm.log') }).status).toBe(0);
   await sleep(200);
   await expect(fs.stat(path.join(root, 'npm.log'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('finds npx in mise shims when hooks have a minimal PATH', async () => {
+  const shims = path.join(root, '.local/share/mise/shims');
+  await script(path.join(shims, 'node'), 'exit 0');
+  await script(path.join(shims, 'npx'), echo('mise-npx'));
+  const result = runMinimalPath(['hook', 'deliver']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`mise-npx:-y ${manifest.name}@${manifest.version} hook deliver`);
+});
+
+it('prints an actionable error when neither PATH nor known locations contain Node', async () => {
+  const result = runMinimalPath(['hook', 'deliver'], {
+    HOME: root,
+    PATH: '/bin',
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain('khala: cannot find node/npx on PATH=/bin');
+  expect(result.stderr).toContain('install node or set KHALA_BIN');
 });

@@ -13,15 +13,46 @@
 # KHALA_PACKAGE and KHALA_VERSION are written by packages/agent/scripts/sync-release.mjs
 # from packages/agent/npm/package.json; do not edit them by hand.
 KHALA_PACKAGE=khala-cli
-KHALA_VERSION=0.4.24
+KHALA_VERSION=0.4.25
 
 data="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/khala/claude-plugin}"
 dir="$data/npm-$KHALA_VERSION"
 
+# Hooks can run with a stripped PATH even when Node came from a version manager.
+# Search PATH first, then the common shim and install locations used by those managers.
+find_command() {
+  name="$1"
+  found=$(command -v "$name" 2>/dev/null) && { printf '%s\n' "$found"; return 0; }
+  found=$(command -v node 2>/dev/null) && {
+    node_dir=$(dirname "$found")
+    [ -x "$node_dir/$name" ] && { printf '%s\n' "$node_dir/$name"; return 0; }
+  }
+  for candidate in \
+    "$HOME/.local/share/mise/shims/$name" \
+    "$HOME/.local/share/mise/installs/node"/*/bin/"$name" \
+    "$HOME/.asdf/shims/$name" \
+    "$HOME/.asdf/installs/nodejs"/*/bin/"$name" \
+    "$HOME/.nvm/current/bin/$name" \
+    "$HOME/.nvm/versions/node"/*/bin/"$name" \
+    "$HOME/.volta/bin/$name" \
+    /opt/homebrew/bin/"$name" /usr/local/bin/"$name"; do
+    [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+npm_path() { find_command npm; }
+npx_path() { find_command npx; }
+
+missing_node() {
+  echo "khala: cannot find node/npx on PATH=$PATH; install node or set KHALA_BIN" >&2
+  exit 127
+}
+
 if [ "${1:-}" = "--ensure-installed" ]; then
   [ -n "${KHALA_BIN:-}" ] && exit 0
   [ -x "$dir/bin/khala" ] && exit 0
-  command -v npm >/dev/null 2>&1 || exit 0
+  npm=$(npm_path) || exit 0
   mkdir -p "$data" || exit 0
   lock="$data/.install-$KHALA_VERSION.lock"
   # A lock older than 10 minutes belongs to an install that died.
@@ -39,7 +70,8 @@ fi
 if [ "${1:-}" = "--install-locked" ]; then
   tmp="$data/.tmp-$KHALA_VERSION-$$"
   rm -rf "$tmp"
-  if npm install --global --prefix "$tmp" --no-audit --no-fund --loglevel=error \
+  npm=$(npm_path) || { rmdir "$data/.install-$KHALA_VERSION.lock"; exit 0; }
+  if "$npm" install --global --prefix "$tmp" --no-audit --no-fund --loglevel=error \
       "$KHALA_PACKAGE@$KHALA_VERSION" && "$tmp/bin/khala" --version; then
     mv "$tmp" "$dir" || rm -rf "$tmp"
   else
@@ -64,4 +96,5 @@ if [ -x "$dir/bin/khala" ]; then exec "$dir/bin/khala" "$@"; fi
 # A session that never ran SessionStart on this version (plugin updated mid-session) or
 # whose copy was removed: install it now, and run the same pinned version meanwhile.
 "$0" --ensure-installed </dev/null >/dev/null 2>&1
-exec npx -y "$KHALA_PACKAGE@$KHALA_VERSION" "$@"
+npx=$(npx_path) || missing_node
+exec "$npx" -y "$KHALA_PACKAGE@$KHALA_VERSION" "$@"
