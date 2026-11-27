@@ -172,10 +172,10 @@ export function DeviceLinkPrompt({ link }: Readonly<{ link: DeviceLink }>) {
       </>;
     }
   })();
-  return <section className="kh-devlink" role="dialog" aria-label="Device approval">{body}</section>;
+  return <section className={`kh-devlink${state.kind === 'locked' ? ' kh-devlink-locked' : ''}`} role="dialog" aria-label="Device approval">{body}</section>;
 }
 
-/** Starts device approval for this signed-in device and shows its prompt over the app. */
+/** Starts device approval for this signed-in device. */
 export async function startDeviceLink(client: LinkClient, crypto: LinkCrypto, crossSigning: CrossSigningResult): Promise<() => void> {
   const link = await createDeviceLink(client, crypto, crossSigning);
   const host = document.createElement('div');

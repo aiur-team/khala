@@ -50,6 +50,26 @@ describe('device approval (#1420)', () => {
     expect(crypto.resetKeyBackup).not.toHaveBeenCalled();
   });
 
+  it('keeps the locked-history action in normal layout flow and dismissible', async () => {
+    const { client, crypto } = setup();
+    const link = await createDeviceLink(client as never, crypto, 'foreign');
+    const html = renderToStaticMarkup(<DeviceLinkPrompt link={link} />);
+    expect(html).toContain('kh-devlink-locked');
+    expect(html).toContain('Earlier messages are locked on this device.');
+    expect(html).toContain('Not now');
+  });
+
+  it('retains the separate incoming-device approval prompt', async () => {
+    const { client, crypto } = setup();
+    const { asRequest } = request(false);
+    const link = await createDeviceLink(client as never, crypto, 'present');
+    client.emit(CryptoEvent.VerificationRequestReceived, asRequest);
+    const html = renderToStaticMarkup(<DeviceLinkPrompt link={link} />);
+    expect(html).toContain('A new device signed in as you wants to read your earlier messages.');
+    expect(html).toContain('Approve');
+    expect(html).toContain('Not mine');
+  });
+
   it('a locked device asks for approval, starts SAS when ready and shows the emoji', async () => {
     const { client, crypto } = setup();
     const { req, verifier, asRequest } = request(true);
