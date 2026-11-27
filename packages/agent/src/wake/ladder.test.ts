@@ -157,6 +157,32 @@ it('in Sync wakes only for a person or a message that names the agent; Steer wak
   loop.notify();
   await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
 });
+it('wakes for a peer-agent mention in async after the listener timeout', async () => {
+  await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
+  await writeJsonAtomic(ctx.files.status, { state: 'connected', displayName: 'Scout', updatedAt: 'now' });
+  await writeJsonAtomic(ctx.files.mode, { mode: 'async' });
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 1));
+  await appendEntries(ctx.files, [{ eventId: 'peer-ping', roomId: 'room', ts: 'now', sender: 'bot', senderLabel: 'Bot',
+    senderKind: 'agent', body: '@Scout please review', kind: 'message' }]);
+  const wake = vi.fn();
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
+    drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  loop.notify();
+  await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
+});
+it('does not wake for ordinary peer chatter in async after the listener timeout', async () => {
+  await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
+  await writeJsonAtomic(ctx.files.mode, { mode: 'async' });
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 1));
+  await appendEntries(ctx.files, [{ eventId: 'peer-chat', roomId: 'room', ts: 'now', sender: 'bot', senderLabel: 'Bot',
+    senderKind: 'agent', body: 'CI is green', kind: 'message' }]);
+  const wake = vi.fn();
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
+    drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  loop.notify();
+  await new Promise(resolve => setTimeout(resolve, 70));
+  expect(wake).not.toHaveBeenCalled();
+});
 it('in Steer still wakes for an agent message that does not name it', async () => {
   await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
   await writeJsonAtomic(ctx.files.mode, { mode: 'steer' });

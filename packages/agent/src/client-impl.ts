@@ -112,7 +112,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   }
 
   /** The owner's listener timeout: with no human message (agent chatter does not count) for the chosen time, the agent
-   * mutes itself through set_mode, which respects the lock and archive, publishes the mode and posts the notice. */
+   * lowers itself to async through set_mode, which respects the lock and archive, publishes the mode and posts the notice.
+   * Direct mentions still wake it in async. */
   async function idleMute(attempt: Attempt): Promise<void> {
     const { files, credentials } = attempt;
     if (!files || !credentials) return;
@@ -124,7 +125,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     attempt.lastHumanAt ??= (await readEntries(files)).reduce((newest, entry) => isHumanMessage(entry) ? Math.max(newest, Date.parse(entry.ts)) : newest, 0);
     if (!due(attempt.lastHumanAt)) return;
     const span = state.idleMuteMin % 60 ? `${state.idleMuteMin} min` : `${state.idleMuteMin / 60} hr`;
-    await client.setMode('mute', { trigger: 'self', reason: `no human message for ${span}` }, credentials.roomId);
+    await client.setMode('async', { trigger: 'self', reason: `no human message for ${span}` }, credentials.roomId);
   }
 
   /** Delivery hooks run in other processes; the read receipt for what they delivered goes from here. */
