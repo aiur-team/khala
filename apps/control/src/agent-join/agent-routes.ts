@@ -1,8 +1,10 @@
 import { isHarnessId } from '@khala/contracts/m1/harness';
-import { agentConfirmPagePath, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, decodeAgentRejoinRequest, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import { rejoinApprovalKey, rejoinIdentity, validRejoinApproval } from './rejoin';
+import { safeRead } from '../invitations/internal';
 import { type ControlStore, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
-import { consumeJoinBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, sealInvite, type JoinRecord } from './store';
+import { consumeJoinBudget, consumeRejoinIdentityBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, sealInvite, type JoinRecord } from './store';
 export { AGENT_JOIN_PATH } from '@khala/contracts/m1/agent-join';
 export const AGENT_JOIN_POLL_PATH = '/api/agent/join/poll';
 export const AGENT_JOIN_READY_PATH = '/api/agent/join/ready';
@@ -68,6 +70,34 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const result: AgentJoinCreated = { ...(current?.kind === 'found' && current.record.state === 'confirmed' ? { autoConfirmed: true } : {}), joinId, pollSecret, confirmUrl: deps.origin + agentConfirmPagePath(joinId), expiresAt: record.expiresAt };
     return json(result, 201);
   });
+  const rejoin = guarded('POST', async request => {
+    if (await consumeJoinBudget(deps, request.headers.get('x-nf-client-connection-ip') ?? 'unknown') === 'limited') return error('rate_limited', 429);
+    if (request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json') return error('invalid_link', 400);
+    let body: unknown;
+    try { body = await request.json(); } catch { return error('invalid_link', 400); }
+    const decoded = decodeAgentRejoinRequest(body);
+    if (!decoded.ok) return error('invalid_link', 400);
+    const r = decoded.value;
+    const now = deps.clock();
+    const identityRecord: JoinRecord = { joinId: 'AAAAAAAAAAAAAAAAAAAAAA', pollSecretHash: '0'.repeat(64), roomId: r.roomId,
+      channelName: '', label: r.label, harness: r.harness, sessionId: r.sessionId, rejoinSecretHash: hashPollSecret(r.rejoinSecret),
+      state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString() };
+    const identity = rejoinIdentity(identityRecord);
+    if (!identity) return error('rejoin_unavailable', 404);
+    if (await consumeRejoinIdentityBudget(deps, identity) === 'limited') return error('rate_limited', 429);
+    const approval = await safeRead(deps.store, rejoinApprovalKey(identity));
+    if (approval.kind !== 'record' || !validRejoinApproval(approval.record.value) || approval.record.value.revoked) return error('rejoin_unavailable', 404);
+    const joinId = Buffer.from(deps.random(16)).toString('base64url');
+    const pollSecret = Buffer.from(deps.random(32)).toString('base64url');
+    const record: JoinRecord = { ...identityRecord, joinId, channelName: await deps.roomName(approval.record.value.ownerId, r.roomId as RoomId) ?? 'Untitled channel',
+      pollSecretHash: hashPollSecret(pollSecret) };
+    if (await deps.joins.create(record) !== 'created') return error('rejoin_unavailable', 404);
+    if (!deps.autoConfirm || !await deps.autoConfirm(joinId)) return error('rejoin_unavailable', 404);
+    const current = await deps.joins.read(joinId);
+    if (current.kind !== 'found' || current.record.state !== 'confirmed') return error('rejoin_unavailable', 404);
+    const result: AgentJoinCreated = { autoConfirmed: true, joinId, pollSecret, confirmUrl: deps.origin + agentConfirmPagePath(joinId), expiresAt: record.expiresAt };
+    return json(result, 201);
+  });
   const poll = guarded('GET', async request => {
     const auth = await authenticate(request);
     if (!auth) return error('not_found', 404);
@@ -103,5 +133,5 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     }
     return error('unavailable', 503);
   });
-  return { create, poll, ready };
+  return { create, rejoin, poll, ready };
 }

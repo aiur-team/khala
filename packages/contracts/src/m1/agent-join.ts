@@ -7,6 +7,7 @@ export type Harness = HarnessId;
 
 // POST /api/agent/join            (no auth; rate-limited per IP)
 export type AgentJoinRequest = { link: string; harness: Harness; label: string; sessionId?: string; rejoinSecret?: string };   // label 1..40 chars, validateAgentName rules
+export type AgentRejoinRequest = { roomId: string; harness: Harness; sessionId: string; rejoinSecret: string; label: string };
 export type AgentJoinCreated = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; autoConfirmed?: true }; // 201
 // errors: 400 invalid_link | invalid_label | invalid_harness ; 404 link_unavailable ; 429 rate_limited
 
@@ -57,6 +58,16 @@ const ERROR_CODES = ['invalid_link', 'invalid_label', 'invalid_harness', 'link_u
 export type AgentJoinErrorCode = typeof ERROR_CODES[number];
 export type AgentJoinError = { error: AgentJoinErrorCode };
 export const AGENT_JOIN_PATH = '/api/agent/join';
+export const AGENT_REJOIN_PATH = '/api/agent/rejoin';
+export function decodeAgentRejoinRequest(input: unknown): Decoded<AgentRejoinRequest> {
+  return decodeWith(() => {
+    const r = object(input, '', ['roomId', 'harness', 'sessionId', 'rejoinSecret', 'label']);
+    if (!validAgentSessionId(r.field('sessionId'))) fail(r.at('sessionId'), 'invalid_value');
+    if (!validAgentRejoinSecret(r.field('rejoinSecret'))) fail(r.at('rejoinSecret'), 'invalid_value');
+    return { roomId: readRoomId(r.field('roomId'), r.at('roomId')), harness: readHarness(r.field('harness'), r.at('harness')),
+      sessionId: r.field('sessionId') as string, rejoinSecret: r.field('rejoinSecret') as string, label: readAgentLabel(r.field('label'), r.at('label')) };
+  });
+}
 export const agentJoinPollPath = (id: string): string => `/api/agent/join/poll?joinId=${encodeURIComponent(id)}`;
 export const agentJoinReadyPath = (id: string): string => `/api/agent/join/ready?joinId=${encodeURIComponent(id)}`;
 export const humanAgentJoinPath = (id: string): string => `/api/human/agent-join?joinId=${encodeURIComponent(id)}`;

@@ -176,6 +176,29 @@ export async function consumeJoinBudget(deps: JoinStoreDeps, ip: string): Promis
   } catch { return 'allowed'; }
 }
 
+export async function consumeRejoinIdentityBudget(deps: JoinStoreDeps, identity: string): Promise<'allowed' | 'limited'> {
+  try {
+    const windowMs = 60 * 60_000;
+    const window = Math.floor(deps.clock() / windowMs);
+    const key = `agent-rejoin-rate/${hashPollSecret(identity).slice(0, 32)}/${window}`;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const read = await safeRead(deps.store, key);
+      if (read.kind === 'unavailable') return 'allowed';
+      const value = read.kind === 'record' ? read.record.value : null;
+      const count = value && typeof value === 'object' && !Array.isArray(value) && 'count' in value
+        && typeof value.count === 'number' && Number.isSafeInteger(value.count) && value.count >= 0 ? value.count : 0;
+      if (count >= 10) return 'limited';
+      const result = await writeAndResolve(deps.store, { key,
+        expectedRevision: read.kind === 'record' ? read.record.revision : null,
+        operationId: `agent-rejoin.rate-${window}.increment.${Buffer.from(deps.random(8)).toString('hex')}`,
+        next: { value: { count: count + 1 }, expiresAt: new Date((window + 1) * windowMs + 60_000).toISOString() },
+      });
+      if (result.kind !== 'conflict') return 'allowed';
+    }
+    return 'allowed';
+  } catch { return 'allowed'; }
+}
+
 export async function resolveJoinLink(input: Readonly<{ link: string; origin: string; store: ControlStore; secret: string; clock: () => number }>): Promise<
   { kind: 'ok'; roomId: RoomId; creatorOwnerId: OwnerId; inviteRef: string } | { kind: 'invalid_link' | 'link_unavailable' | 'unavailable' }> {
   let parsed: URL;

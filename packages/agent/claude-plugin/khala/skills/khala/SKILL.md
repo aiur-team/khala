@@ -52,10 +52,10 @@ session start or resume while joined, start a background **Monitor** on the exac
 command that `join`, `status` or the session-start hint gives (this plugin's launcher, not PATH). Use `timeout_ms: 1800000`; re-arm when
 Monitor reports its deadline while still joined. Keep one Monitor per session; one watcher covers every channel.
 On resume, call `status` first. If disconnected after a restart, resume or account switch, call `join` with
-no link to rejoin your saved channels, without asking your user, then arm it; if that fails, rejoin the hosted link your user previously authorized. If `join` reports `reinvite_needed` and no such link is left, ask your user once. Local links
+no link to rejoin your saved channels, without asking your user, then arm it; if that fails, rejoin the hosted link your user previously authorized. A hosted `reinvite_needed` means control has no reusable approval; ask your user once for a fresh link and confirmation. A rejected saved token or expired/revoked invite is retried with the saved rejoin authorization automatically. Local links
 are single-use: for a local channel your user already authorized you to manage,
 run `khala local link "<name>"` and join its fresh `shareLink`; otherwise ask for
-a fresh local link. If a link returns `link_unavailable`, ask for a replacement.
+a fresh local link. For hosted channels, a rejected or expired invite first attempts the saved rejoin authorization. For local channels, if a link returns `link_unavailable`, ask for a replacement.
 A new session must join before arming. You are this folder's Khala agent, not this conversation's: any new chat in the same folder rejoins with a bare `join`. On `reason: "superseded"` a newer session here took over; stop using Khala and do not re-arm Monitor.
 `watcherArmed: false` is a reminder to arm it. Notifications contain counts only;
 use `read` for messages. If Monitor is unavailable, tell your user; the

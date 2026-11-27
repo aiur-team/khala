@@ -55,7 +55,7 @@ async function post(url: URL, origin: string, body: unknown, deps: FetchDeps, po
   } catch { return fail('network'); }
 }
 
-export async function requestJoin(input: { link: string; harness: HarnessId; label: string; sessionId?: string; rejoinSecret?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
+export async function requestJoin(input: { link: string; harness: HarnessId; label: string; sessionId?: string; rejoinSecret?: string; roomId?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
   const parsed = parseChannelLink(input.link);
   if (!parsed) throw new KhalaClientError('invalid_link', 'invalid_link');
   if (!isHarnessId(input.harness)) fail('invalid_harness');
@@ -68,6 +68,14 @@ export async function requestJoin(input: { link: string; harness: HarnessId; lab
   let response = await post(url, origin, rejoin ? { ...base, sessionId: input.sessionId, rejoinSecret: input.rejoinSecret } : base, deps);
   let body = await json(response);
   let code = serverCode(body);
+  if (response.status === 404 && code === 'link_unavailable' && input.sessionId && input.rejoinSecret && input.roomId) {
+    const rejoinResponse = await post(new URL('/api/agent/rejoin', origin), origin,
+      { roomId: input.roomId, harness: input.harness, label: label.name, sessionId: input.sessionId, rejoinSecret: input.rejoinSecret }, deps);
+    body = await json(rejoinResponse);
+    code = serverCode(body);
+    if (rejoinResponse.status === 404 && code === 'rejoin_unavailable') throw new KhalaClientError('link_unavailable', 'reinvite_needed');
+    response = rejoinResponse;
+  }
   // Release-order compatibility: control planes and machine-wide helpers released before rejoin
   // reject any extra join field with 400 invalid_link, before consuming the link. Retry once with
   // the original three-field body, which costs only the rejoin (a fresh "-N" member). A server that

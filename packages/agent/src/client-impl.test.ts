@@ -1588,7 +1588,21 @@ it('leaves a channel while restoration is requesting authorization without recre
   await client.close(); await restoration;
   await expect(fs.stat(channelFiles(f.files, '!A:local').dir)).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as const)('forgets local restoration after terminal helper response %i', async (status, detail) => {
+it('rejoins a local channel through its saved authorization after helper token expiry', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  f.api.requestJoin.mockClear();
+  vi.mocked(f.controls[0]!.session.waitForInvite).mockRejectedValueOnce(Object.assign(new Error('helper rejected credentials'), { status: 401 }));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
+  await client.resume!();
+  const directory = channelFiles(f.files, '!A:local').dir;
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledOnce(), { timeout: 5000 });
+  await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'connected', detail: 'crypto_reset' }));
+  expect(f.api.requestJoin).toHaveBeenCalledOnce();
+  expect(f.api.requestJoin).toHaveBeenCalledWith(expect.objectContaining({ roomId: '!A:local', rejoinSecret: expect.any(String) }), expect.anything());
+  expect(JSON.stringify(await readStateFile(directory, 'status.json'))).not.toContain('SECRET');
+  expect(await readStateFile(f.files.dir, 'rejoin.json')).not.toBeNull();
+});
+it.each([[403, 'removed'], [404, 'channel_deleted']] as const)('forgets local restoration after terminal helper response %i', async (status, detail) => {
   const f = await multiClient(['A']); await f.join(0); await client.close();
   vi.mocked(f.controls[0]!.session.waitForInvite).mockRejectedValueOnce(Object.assign(new Error('helper rejected credentials'), { status }));
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
@@ -1698,20 +1712,28 @@ it('logs out the old device before starting a replacement after a corrupt store 
   vi.resetModules();
 });
 
-it('wipes a token revoked while offline before automatic rejoin can renew it', async () => {
+it('resets a revoked token and restores from the saved rejoin authorization', async () => {
   const f = await multiClient(['A']);
   delete (f.controls[0]!.creds as AgentCredentials).transport;
   await f.join(0); await client.close();
   const channelDir = channelFiles(f.files, f.controls[0]!.creds.roomId).dir;
+  expect(await readStateFile(channelDir, 'resume.json')).not.toHaveProperty('localCredentials');
   await fs.writeFile(path.join(channelDir, 'crypto.json'), JSON.stringify(f.controls[0]!.creds), { mode: 0o600 });
   f.api.requestJoin.mockClear();
+  f.api.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+  f.api.pollJoin.mockResolvedValueOnce(f.controls[0]!.creds);
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
     joinApi: f.api, startSession: f.start, fetch: vi.fn(async () => Response.json({ errcode: 'M_UNKNOWN_TOKEN' }, { status: 401 })) });
   await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).channels?.[0]).toMatchObject({ state: 'disconnected', detail: 'unauthorized' }));
-  expect(f.api.requestJoin).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledOnce(), { timeout: 5000 });
+  await vi.waitFor(async () => expect((await client.status()).channels?.[0]?.state).not.toBe('joining'));
+  expect((await client.status()).channels?.[0]).toMatchObject({ state: 'connected', agentUserId: f.controls[0]!.creds.userId, detail: 'crypto_reset' });
+  expect(f.api.requestJoin).toHaveBeenCalledOnce();
   expect(await readStateFile(channelDir, 'crypto.json')).toBeNull();
-  expect(await readStateFile(channelDir, 'resume.json')).toBeNull();
+  expect(await readStateFile(channelDir, 'resume.json')).not.toBeNull();
+  expect(await readStateFile(f.files.dir, 'rejoin.json')).not.toBeNull();
+  expect(JSON.stringify(await readStateFile(channelDir, 'status.json'))).not.toContain('SECRET');
+  expect(JSON.stringify(await readStateFile(f.files.dir, 'status.json'))).not.toContain('SECRET');
 });
 
 it.each(['reject', 'timeout'] as const)('retries a replayed mode command after publish %s without checkpointing it', async failure => {
