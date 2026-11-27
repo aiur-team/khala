@@ -49,6 +49,7 @@ function channelLabel(name: string): string {
 export async function watchSession(files: SessionFiles, io: {
   write: (line: string) => void;
   signal: AbortSignal;
+  untilMessage?: boolean;
   harness?: string;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
@@ -75,7 +76,7 @@ export async function watchSession(files: SessionFiles, io: {
   const stop = (exit = 0, reason = 'stopped') => {
     if (done) return;
     done = true; code = exit; for (const w of watchers) w.close(); clearInterval(timer);
-    if (!qwen || exit !== 0) io.stderr?.(`khala watch: stopped (${reason}). Do not re-arm.`);
+    if ((!qwen || exit !== 0) && !(io.untilMessage && exit === 0)) io.stderr?.(`khala watch: stopped (${reason}). Do not re-arm.`);
     finish();
   };
   let lastHeartbeat = 0;
@@ -92,6 +93,7 @@ export async function watchSession(files: SessionFiles, io: {
     const initialSession = await readJson<{ userId: string; roomId: string }>(files.session);
     if (!['connected', 'send_failed'].includes(status?.state ?? '')
       || (!initialSession && !(await listChannels(files)).length)) {
+      if (io.untilMessage) io.stderr?.('khala watch: not joined; run khala join before waiting for a message.');
       stop(2, status?.detail ?? status?.state ?? 'session_missing'); return 2;
     }
     storage = await monitorStorage(files);
@@ -161,7 +163,7 @@ export async function watchSession(files: SessionFiles, io: {
           && messages.some(entry => wakesAgent(entry, latestMode, latestStatus?.displayName))) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
-          if (qwen) { stop(); return; }
+          if (qwen || io.untilMessage) { stop(); return; }
         }
         // Observation is independent of delivery and may live in private temporary storage.
         // Recheck identity before persisting so leaving A never writes into another join.
@@ -260,20 +262,23 @@ export function claudeWatchCommand(sessionId: string, env: NodeJS.ProcessEnv): s
   return `${root ? `'${path.join(root, 'bin', 'khala').replaceAll("'", "'\\''")}'` : 'khala'} watch --harness claude --session ${sessionId}`;
 }
 
-export const WATCH_USAGE = 'usage: khala watch [--harness <id>] [--session <id>]';
+export const WATCH_USAGE = 'usage: khala watch [--until-message] [--harness <id>] [--session <id>]';
 
 export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
   const invalid = (reason: string) => { console.error(`khala: ${reason}\n${WATCH_USAGE}`); return 1; };
+  const untilMessage = argv.includes('--until-message');
+  if (argv.filter(arg => arg === '--until-message').length > 1) return invalid('invalid_arguments');
+  const args = argv.filter(arg => arg !== '--until-message');
   // Explicit session id also works when Claude does not export its id to Monitor.
-  if (argv.length !== 0 && !(argv.length === 2 && ['--session', '--harness'].includes(argv[0]!))
-    && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) return invalid('invalid_arguments');
+  if (args.length !== 0 && !(args.length === 2 && ['--session', '--harness'].includes(args[0]!))
+    && !(args.length === 4 && args[0] === '--harness' && args[2] === '--session')) return invalid('invalid_arguments');
   const { resolveHarness, resolveSessionId } = await import('./mcp/session-id');
   const { adapterFor } = await import('./harness');
-  const harness = resolveHarness(argv, process.env);
+  const harness = resolveHarness(args, process.env);
   if (harness === 'invalid' || !adapterFor(harness)?.codec) return invalid('invalid_harness');
-  const index = argv.indexOf('--session');
-  const id = index === -1 ? await resolveSessionId(harness, undefined, process.env) : argv[index + 1];
+  const index = args.indexOf('--session');
+  const id = index === -1 ? await resolveSessionId(harness, undefined, process.env) : args[index + 1];
   if (!id) return invalid('session_unknown');
   if (!SESSION_ID_PATTERN.test(id)) return invalid('invalid_session_id');
   const files = sessionFiles(harness, id, process.env);
@@ -286,6 +291,6 @@ export default async function run(argv: readonly string[]): Promise<number> {
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness, env: process.env, stderr: line => { process.stderr.write(line + '\n'); } }); }
+  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness, env: process.env, untilMessage, stderr: line => { process.stderr.write(line + '\n'); } }); }
   finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
 }

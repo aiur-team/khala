@@ -51,6 +51,9 @@ After `join` succeeds (or that channel’s `status` entry becomes connected), an
 session start or resume while joined, start a background **Monitor** on the exact `khala watch`
 command that `join`, `status` or the session-start hint gives (this plugin's launcher, not PATH). Use `timeout_ms: 1800000`; re-arm when
 Monitor reports its deadline while still joined. Keep one Monitor per session; one watcher covers every channel.
+For a background Bash wait that should exit when the first waking message arrives, run the same command with
+`--until-message` instead of Monitor. It waits without a deadline, prints one count-only notification, then exits;
+run it again after each exit while still joined. Use Monitor when you need a persistent watch.
 On resume, call `status` first. If disconnected after a restart, resume or account switch, call `join` with
 no link to rejoin your saved channels, without asking your user, then arm it; if that fails, rejoin the hosted link your user previously authorized. If `join` reports `reinvite_needed` and no such link is left, ask your user once. Local links
 are single-use: for a local channel your user already authorized you to manage,
