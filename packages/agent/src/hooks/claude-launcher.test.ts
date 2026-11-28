@@ -17,6 +17,7 @@ beforeEach(async () => {
   data = path.join(root, 'data');
   fakeBin = path.join(root, 'fake-bin');
   await fs.mkdir(fakeBin);
+  await script(path.join(fakeBin, 'node'), 'exit 0');
 });
 afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
 
@@ -32,6 +33,13 @@ function run(args: string[], env: Record<string, string> = {}, input = '') {
     env: { HOME: root, CLAUDE_PLUGIN_DATA: data, PATH: [path.dirname(launcher), fakeBin, '/usr/bin', '/bin'].join(':'), ...env },
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function runMinimalPath(args: string[], env: Record<string, string> = {}) {
+  return spawnSync(launcher, args, {
+    encoding: 'utf8',
+    env: { HOME: root, CLAUDE_PLUGIN_DATA: data, PATH: '/bin', ...env },
+  });
 }
 
 it('prefers KHALA_BIN, then the pinned copy, then the pinned version through npx, never another khala on PATH', async () => {
@@ -93,4 +101,43 @@ it('skips the install under KHALA_BIN', async () => {
   expect(run(['--ensure-installed'], { KHALA_BIN: '/bin/true', NPM_LOG: path.join(root, 'npm.log') }).status).toBe(0);
   await sleep(200);
   await expect(fs.stat(path.join(root, 'npm.log'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('runs npx from a mise install when hooks have a minimal PATH', async () => {
+  const installBin = path.join(root, '.local/share/mise/installs/node/x/bin');
+  await script(path.join(installBin, 'node'), 'script="$1"; shift; exec /bin/sh "$script" "$@"');
+  const npx = path.join(installBin, 'npx');
+  await fs.writeFile(npx, `#!/usr/bin/env node\n${echo('mise-npx')}\n`, { mode: 0o755 });
+  const result = runMinimalPath(['hook', 'deliver']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`mise-npx:-y ${manifest.name}@${manifest.version} hook deliver`);
+});
+
+it('puts installed Node on PATH for the background npm install', async () => {
+  const installBin = path.join(root, '.local/share/mise/installs/node/x/bin');
+  await script(path.join(installBin, 'node'), 'script="$1"; shift; exec /bin/sh "$script" "$@"');
+  const npm = path.join(installBin, 'npm');
+  await fs.writeFile(npm, `#!/usr/bin/env node\n${[
+    'prefix=""; spec=""',
+    'while [ $# -gt 0 ]; do case "$1" in --prefix) prefix="$2"; shift;; -*) ;; *) spec="$1";; esac; shift; done',
+    'echo "$spec" >> "$NPM_LOG"',
+    'mkdir -p "$prefix/bin" && printf \'#!/bin/sh\\necho installed:$*\\n\' > "$prefix/bin/khala" && chmod +x "$prefix/bin/khala"',
+  ].join('\n')}\n`, { mode: 0o755 });
+  const env = { NPM_LOG: path.join(root, 'npm.log') };
+  expect(runMinimalPath(['--ensure-installed'], env).status).toBe(0);
+  const pinned = path.join(data, `npm-${manifest.version}`, 'bin/khala');
+  for (let i = 0; i < 100 && !await fs.stat(pinned).catch(() => null); i++) await sleep(50);
+  expect(await fs.readFile(env.NPM_LOG, 'utf8')).toBe(`${manifest.name}@${manifest.version}\n`);
+  expect(runMinimalPath(['--version'])).toMatchObject({ status: 0, stdout: 'installed:--version\n' });
+});
+
+it('prints an actionable error when neither PATH nor known locations contain Node', async () => {
+  const result = runMinimalPath(['hook', 'deliver'], {
+    HOME: root,
+    PATH: '',
+    KHALA_TEST_NODE_SEARCH_ROOTS: '',
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain('khala: cannot find node/npx on PATH=');
+  expect(result.stderr).toContain('install node or set KHALA_BIN');
 });
