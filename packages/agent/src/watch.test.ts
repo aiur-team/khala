@@ -115,8 +115,8 @@ it.each([
 });
 it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after exit', async () => {
   const bin = fileURLToPath(new URL('../bin/khala.mjs', import.meta.url));
-  const launch = () => {
-    const child = spawn(process.execPath, [bin, 'watch', '--harness', 'claude', '--session', 'session'], {
+  const launch = (extra: string[] = []) => {
+    const child = spawn(process.execPath, [bin, 'watch', '--harness', 'claude', '--session', 'session', ...extra], {
       env: { ...process.env, XDG_STATE_HOME: root }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     children.push(child);
@@ -142,6 +142,37 @@ it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after e
   await writeStatus(files, 'disconnected');
   await expect(resumed.closed).resolves.toBe(2);
 }, 20_000);
+it('until-message waits for the first waking inbox append, prints one line, and exits', async () => {
+  const bin = fileURLToPath(new URL('../bin/khala.mjs', import.meta.url));
+  const child = spawn(process.execPath, [bin, 'watch', '--until-message', '--harness', 'claude', '--session', 'session'], {
+    env: { ...process.env, XDG_STATE_HOME: root }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  children.push(child);
+  let output = '', error = '';
+  child.stdout!.on('data', chunk => { output += chunk; });
+  child.stderr!.on('data', chunk => { error += chunk; });
+  const closed = new Promise<number | null>((resolve, reject) => { child.on('close', resolve); child.on('error', reject); });
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true), { timeout: 5_000 });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  expect(child.exitCode).toBeNull();
+  expect(output).toBe('');
+  await appendEntries(files, [entry(1)]);
+  await expect(closed).resolves.toBe(0);
+  expect(output).toBe('khala: 1 new message in #ecosystem (1 mentions you)\n');
+  expect(error).not.toContain('khala watch: stopped');
+}, 10_000);
+it('until-message reports a clear error when the session is not joined', async () => {
+  await writeStatus(files, 'disconnected');
+  const bin = fileURLToPath(new URL('../bin/khala.mjs', import.meta.url));
+  const child = spawn(process.execPath, [bin, 'watch', '--until-message', '--harness', 'claude', '--session', 'session'], {
+    env: { ...process.env, XDG_STATE_HOME: root }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  children.push(child);
+  let error = '';
+  child.stderr!.on('data', chunk => { error += chunk; });
+  await new Promise<void>((resolve, reject) => { child.once('close', code => code === 2 ? resolve() : reject(new Error(`unexpected exit ${code}`))); child.once('error', reject); });
+  expect(error).toContain('khala watch: not joined; run khala join before waiting for a message.');
+}, 10_000);
 it('renews without replaying unread messages and notices new events after renewal', async () => {
   await armed();
   await appendEntries(files, [entry(1)]);
