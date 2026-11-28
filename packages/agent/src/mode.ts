@@ -5,13 +5,14 @@ import { readJson, StateError, writeJsonAtomic, type SessionFiles } from './stat
 
 /** The owner-chosen mode, whether the owner archived the channel or locked the mode, their listener timeout,
  * and when the owner last set the mode (ms). */
-export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean; locked: boolean; idleMuteMin: IdleMuteMinutes; ownerSetAt: number }> {
+export async function readModeState(files: SessionFiles): Promise<{ mode: ListeningMode; archived: boolean; locked: boolean; idleMuteMin: IdleMuteMinutes; ownerSetAt: number; ownerEventId?: string }> {
   const content = await readJson<unknown>(files.mode);
   const record = typeof content === 'object' && content !== null ? content as Record<string, unknown> : {};
   const decoded = decodeListeningMode(record.mode);
   const idle = IDLE_MUTE_CHOICES.find(choice => choice === record.idleMuteMin) ?? DEFAULT_IDLE_MUTE_MIN;
   const ownerSetAt = record.changedBy === 'owner' && typeof record.updatedAt === 'string' ? Date.parse(record.updatedAt) || 0 : 0;
-  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true, locked: record.locked === true, idleMuteMin: idle, ownerSetAt };
+  return { mode: decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE, archived: record.archived === true, locked: record.locked === true, idleMuteMin: idle, ownerSetAt,
+    ...(record.changedBy === 'owner' && typeof record.eventId === 'string' ? { ownerEventId: record.eventId } : {}) };
 }
 /** The listener timeout is due once `idleMuteMin` passed since the newest of the last human message, the owner's
  * last mode change and the join (all ms). It only lowers: never for mute, an archived or locked mode, or Off (0). */

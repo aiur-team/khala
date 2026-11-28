@@ -291,6 +291,19 @@ describe("async pings and mute", () => {
     await deliverCore(prompt, adapterFor("codex")!, io);
     expect(stdout).toBe("");
   });
+  it("delivers and nudges a peer-agent mention after the listener timeout lowers the mode to async", async () => {
+    await setMode("async");
+    await writeJsonAtomic(files.status, { state: "connected", displayName: "Scout", updatedAt: instant.toISOString() });
+    await appendEntries(files, [{ eventId: "$peer-chat", roomId: "!room", ts: instant.toISOString(),
+      sender: "@peer-agent:s", senderLabel: "Peer", senderKind: "agent", kind: "message", body: "ordinary peer chatter" }]);
+    await appendEntries(files, [{ eventId: "$peer-ping", roomId: "!room", ts: instant.toISOString(),
+      sender: "@peer-agent:s", senderLabel: "Peer", senderKind: "agent", kind: "message", body: "@Scout please check this" }]);
+    await deliverCore(prompt, adapterFor("codex")!, io);
+    expect(stdout).toContain(STOP_NUDGE);
+    expect(stdout).not.toContain("please check this");
+    expect(stdout).not.toContain("ordinary peer chatter");
+    expect(await readCursor(files)).toMatchObject({ deliveredCount: 0, nudgedCount: 3 });
+  });
   it("stays silent for ordinary traffic in async", async () => {
     await setMode("async");
     await ping("$plain", "ordinary chatter");
