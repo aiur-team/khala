@@ -488,7 +488,7 @@ describe('screens: agent confirm page', { concurrency: 1 }, () => {
           // The design's card names "Release retro"; the same label keeps the comparison on layout, not copy.
           await mockConfirm(page, 'Release retro');
           await page.goto(url);
-          await page.getByRole('button', { name: 'Confirm', exact: true }).waitFor();
+          await page.getByRole('button', { name: 'Approve', exact: true }).waitFor();
           // The harness page has no font link; the app entry's (index.html) renders the design faces.
           await page.addStyleTag({ url: GOOGLE_FONTS });
           await page.evaluate(() => document.fonts.ready);
@@ -694,7 +694,7 @@ describe('fonts', { concurrency: 1 }, () => {
         const page = await context.newPage();
         await mockConfirm(page);
         await page.goto(url);
-        await page.getByRole('button', { name: 'Confirm', exact: true }).waitFor();
+        await page.getByRole('button', { name: 'Approve', exact: true }).waitFor();
         assertFonts('agent confirm', await page.evaluate(walkFonts), { wordmark: true, googleLink: false });
       } finally {
         await context.close();
