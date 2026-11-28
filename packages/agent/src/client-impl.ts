@@ -10,7 +10,7 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, mentions, toEventInboxEntry, wakesAgent } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
-import { KhalaClientError, type KhalaAgentClient, type ReadFilter } from './client';
+import { KhalaClientError, type KhalaAgentClient, type ReadFilter, type SetModeInput } from './client';
 import { readActivity, usageLimited } from './activity';
 import { advanceCursor, appendInbox, readCursor, readEntries, unread, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
@@ -38,6 +38,9 @@ type Attempt = {
   failure?: KhalaClientError; files?: SessionFiles; status: StatusFile; appends: Promise<void>; acceptEventKey: ReturnType<typeof createEventKeyFilter>;
   cryptoReset?: boolean; readReceipt?: string; typingSince?: number | undefined; lastHumanAt?: number; unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
 };
+const IDLE_TIMEOUT_GUARD = Symbol('idle-timeout-guard');
+type IdleTimeoutGuard = { state: Awaited<ReturnType<typeof readModeState>>; lastHumanAt: number; joinedAt: number };
+type GuardedSetModeInput = SetModeInput & { [IDLE_TIMEOUT_GUARD]?: IdleTimeoutGuard };
 function safeError(error: unknown): KhalaClientError {
   return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error',
     error instanceof StateError ? error.code : undefined);
@@ -112,7 +115,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   }
 
   /** The owner's listener timeout: with no human message (agent chatter does not count) for the chosen time, the agent
-   * mutes itself through set_mode, which respects the lock and archive, publishes the mode and posts the notice. */
+   * lowers itself to async through set_mode, which respects the lock and archive, publishes the mode and posts the notice.
+   * Direct mentions still wake it in async. */
   async function idleMute(attempt: Attempt): Promise<void> {
     const { files, credentials } = attempt;
     if (!files || !credentials) return;
@@ -124,7 +128,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     attempt.lastHumanAt ??= (await readEntries(files)).reduce((newest, entry) => isHumanMessage(entry) ? Math.max(newest, Date.parse(entry.ts)) : newest, 0);
     if (!due(attempt.lastHumanAt)) return;
     const span = state.idleMuteMin % 60 ? `${state.idleMuteMin} min` : `${state.idleMuteMin / 60} hr`;
-    await client.setMode('mute', { trigger: 'self', reason: `no human message for ${span}` }, credentials.roomId);
+    const input: GuardedSetModeInput = { trigger: 'self', reason: `no human message for ${span}`,
+      [IDLE_TIMEOUT_GUARD]: { state, lastHumanAt: attempt.lastHumanAt, joinedAt: joined } };
+    await client.setMode('async', input, credentials.roomId);
   }
 
   /** Delivery hooks run in other processes; the read receipt for what they delivered goes from here. */
@@ -969,7 +975,15 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const refuse = (reason: string) => new KhalaClientError('mode_refused', undefined, { reason });
       const run = attempt.appends.then(async (): Promise<{ channel: string; previous: ListeningMode; mode: ListeningMode; changed?: true }> => {
         if (!current(attempt)) throw new KhalaClientError('not_connected');
-        const { mode: previous, archived, locked } = await readModeState(files);
+        const currentMode = await readModeState(files);
+        const { mode: previous, archived, locked } = currentMode;
+        const idleGuard = (input as GuardedSetModeInput)[IDLE_TIMEOUT_GUARD];
+        if (idleGuard && (currentMode.mode !== idleGuard.state.mode || currentMode.idleMuteMin !== idleGuard.state.idleMuteMin
+          || currentMode.ownerSetAt !== idleGuard.state.ownerSetAt || currentMode.ownerEventId !== idleGuard.state.ownerEventId
+          || attempt.lastHumanAt !== idleGuard.lastHumanAt
+          || !idleMuteDue(currentMode, idleGuard.lastHumanAt, idleGuard.joinedAt, now().getTime()))) {
+          return { channel: attempt.status.channelName ?? credentials.roomId, previous, mode: previous };
+        }
         // The owner's archive and lock win; an async-only harness cannot listen more closely than async.
         if (archived) throw refuse('archived');
         if (locked) throw refuse('locked');
