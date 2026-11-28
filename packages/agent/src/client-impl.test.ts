@@ -756,6 +756,9 @@ describe('agent-initiated listening mode', () => {
       // An owner raise restarts the clock; the owner's 15 min choice applies from then.
       at(160); owner('$raise', { mode: 'steer', idleMuteMin: 15 });
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('steer'));
+      await vi.waitFor(async () => expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({
+        mode: 'steer', changedBy: 'owner', idleMuteMin: 15, updatedAt: new Date(t).toISOString(),
+      }));
       at(174); await beat();
       expect((await client.status()).listeningMode).toBe('steer');
       at(176); await beat();
@@ -763,6 +766,9 @@ describe('agent-initiated listening mode', () => {
       expect(notices().at(-1)).toBe('Maker-PC switched to async: no human message for 15 min');
       at(180); owner('$off', { mode: 'sync', idleMuteMin: 0 });
       await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('sync'));
+      await vi.waitFor(async () => expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({
+        mode: 'sync', changedBy: 'owner', idleMuteMin: 0, updatedAt: new Date(t).toISOString(),
+      }));
       at(5000); await beat();
       expect((await client.status()).listeningMode).toBe('sync');
     } finally { vi.useRealTimers(); }
