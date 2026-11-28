@@ -135,6 +135,7 @@ it('prints an actionable error when neither PATH nor known locations contain Nod
   const result = runMinimalPath(['hook', 'deliver'], {
     HOME: root,
     PATH: '',
+    KHALA_TEST_NODE_SEARCH_ROOTS: '',
   });
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain('khala: cannot find node/npx on PATH=');

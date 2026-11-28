@@ -27,6 +27,20 @@ find_command() {
     node_dir=$(dirname "$found")
     [ -x "$node_dir/$name" ] && { printf '%s\n' "$node_dir/$name"; return 0; }
   }
+  if [ "${KHALA_TEST_NODE_SEARCH_ROOTS+x}" = x ]; then
+    saved_ifs=$IFS
+    IFS=:
+    for search_root in $KHALA_TEST_NODE_SEARCH_ROOTS; do
+      candidate="$search_root/$name"
+      [ -x "$candidate" ] && {
+        IFS=$saved_ifs
+        printf '%s\n' "$candidate"
+        return 0
+      }
+    done
+    IFS=$saved_ifs
+    return 1
+  fi
   for candidate in \
     "$HOME/.local/share/mise/installs/node"/*/bin/"$name" \
     "$HOME/.local/share/mise/shims/$name" \
