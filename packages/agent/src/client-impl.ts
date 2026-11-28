@@ -82,6 +82,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   const workspace = path.resolve(options.env?.PWD ?? process.cwd());
   const secretHash = () => rejoinSecret === undefined ? '' : createHash('sha256').update(rejoinSecret).digest('hex');
   const attempts = new Map<string, Attempt>();
+  const cryptoResetLinks = new Set<string>();
   const channels = new Map<string, Attempt>();
   const stored = new Map<string, ChannelRef>();
   const roomSlots = new Set<string>();
@@ -595,6 +596,20 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (current(attempt)) {
         attempt.joined = false;
         const localStatus = attempt.restore?.localCredentials && typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
+        if (localStatus === 401 && attempt.restore) {
+          const fallbackRestore = { ...attempt.restore };
+          delete fallbackRestore.localCredentials;
+          await writeStateFile(attempt.files!.dir, 'resume.json', fallbackRestore);
+          await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
+          attempt.cryptoReset = true;
+          cryptoResetLinks.add(attempt.link);
+          await cleanup(attempt, false);
+          await setStatus(attempt, 'joining');
+          attempt.controller.abort();
+          attempts.delete(attempt.link);
+          setTimeout(() => { if (!closed) void join(attempt.link, attempt.label, fallbackRestore).catch(() => {}); }, 0);
+          return;
+        }
         const failure = localStatus === 401 || localStatus === 403 || localStatus === 404
           ? new KhalaClientError('not_connected', localStatus === 401 ? 'unauthorized' : localStatus === 403 ? 'removed' : 'channel_deleted') : safeError(error);
         const inviteTimeout = error instanceof Error && error.message === 'invite_timeout';
@@ -640,6 +655,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const attempt: Attempt = { link, label, ...(restore ? { restore, files: channelFiles(filesForDir(dir), restore.roomId) } : {}), created: { origin: '', joinId: '', pollSecret: '', confirmUrl: '', expiresAt: '' },
           controller: new AbortController(), task: Promise.resolve(), joined: false,
           status: { state: 'joining', updatedAt: now().toISOString() }, appends: Promise.resolve(), acceptEventKey: createEventKeyFilter() };
+        if (cryptoResetLinks.delete(link)) attempt.cryptoReset = true;
         if (restore) attempt.status = { ...(await readStateFile<StatusFile>(attempt.files!.dir, 'status.json')), state: 'joining', updatedAt: now().toISOString() };
         attempts.set(link, attempt);
         if (restore) { channels.set(channelKey(restore.roomId), attempt); await setStatus(attempt, 'joining'); }
@@ -650,7 +666,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
               await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
               attempt.cryptoReset = true;
             }
-            if (state === 'revoked') throw new KhalaClientError('not_connected', 'unauthorized');
+            if (state === 'revoked') {
+              await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
+              attempt.cryptoReset = true;
+            }
             if (state === 'unavailable') throw new KhalaClientError('not_connected', 'link_unavailable');
           }
           const signal = restore ? AbortSignal.any([attempt.controller.signal, AbortSignal.timeout(10_000)]) : attempt.controller.signal;
@@ -661,7 +680,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             if (signal.aborted) releaseAbort();
           });
           const request = restore?.localCredentials ? Promise.resolve({ ...attempt.created, origin: new URL(link).origin, autoConfirmed: true as const })
-            : api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, { ...(options.env ? { env: options.env } : {}), ...(restore ? { fetch: (input, init) => (options.fetch ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }) } : fetchDeps) });
+            : api.requestJoin({ link, harness: options.harness, label, ...(restore ? { roomId: restore.roomId } : {}), ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, { ...(options.env ? { env: options.env } : {}), ...(restore ? { fetch: (input, init) => (options.fetch ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }) } : fetchDeps) });
           const created = await Promise.race([request, aborted]).finally(() => { if (releaseAbort) signal.removeEventListener('abort', releaseAbort); });
           if (closed) throw new KhalaClientError('not_connected');
           if (restore && created.autoConfirmed !== true) {

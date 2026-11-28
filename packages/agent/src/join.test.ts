@@ -94,6 +94,15 @@ it('sanitizes network errors on both POSTs without retrying', async () => {
   expect(requestDeps.calls).toHaveLength(1);
   expect(readyDeps.calls).toHaveLength(1);
 });
+it('uses the linkless rejoin route when the saved invitation is unavailable', async () => {
+  const deps = fake(reply(404, { error: 'link_unavailable' }), reply(201, { ...created, autoConfirmed: true }));
+  const result = await requestJoin({ ...input, roomId: credentials.roomId, sessionId: 'session-1', rejoinSecret: 'x'.repeat(43) }, deps);
+  expect(result).toMatchObject({ ...created, autoConfirmed: true, origin });
+  expect(deps.calls.map(call => [call.url, call.method])).toEqual([
+    [`${origin}/api/agent/join`, 'POST'], [`${origin}/api/agent/rejoin`, 'POST'],
+  ]);
+  expect(deps.calls[1]!.body).toEqual(JSON.stringify({ roomId: credentials.roomId, harness: 'claude', label: 'Claude', sessionId: 'session-1', rejoinSecret: 'x'.repeat(43) }));
+});
 it.each([
   { confirmUrl: 'https://other.test/agent/confirm?joinId=j_7Qx' },
   { confirmUrl: `${origin}/wrong` }, { confirmUrl: 'bad' }, { joinId: '' },

@@ -7,6 +7,7 @@ import { createJoinStore } from './store';
 import { createProductionAgentProvisioner } from './production-provisioner';
 import { createAgentRenameHandler, AGENT_RENAME_PATH } from './rename-routes';
 import { createAgentJoinAgentHandlers, AGENT_JOIN_PATH, AGENT_JOIN_POLL_PATH, AGENT_JOIN_READY_PATH } from './agent-routes';
+import { AGENT_REJOIN_PATH } from '@khala/contracts/m1/agent-join';
 import { createAgentJoinHumanHandlers, AGENT_JOIN_HUMAN_VIEW_PATH, AGENT_JOIN_HUMAN_CONFIRM_PATH, AGENT_JOIN_HUMAN_STATUS_PATH } from './human-routes';
 
 /** Bind request-scoped handlers lazily; discovery performs no adapter I/O. */
@@ -38,6 +39,7 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
     route(AGENT_SESSION_STATUS_PATH, 'GET', active => active.sessionStatus),
     route(AGENT_RENAME_PATH, 'POST', active => active.rename),
     route(AGENT_JOIN_PATH, 'POST', active => active.agent.create),
+    route(AGENT_REJOIN_PATH, 'POST', active => active.agent.rejoin),
     route(AGENT_JOIN_POLL_PATH, 'GET', active => active.agent.poll),
     route(AGENT_JOIN_READY_PATH, 'POST', active => active.agent.ready),
     route(AGENT_JOIN_HUMAN_VIEW_PATH, 'GET', active => active.human.view),

@@ -6,6 +6,7 @@ import { createControlStore, type BlobsStoreLike } from '../runtime/control-stor
 import { createDigests } from '../invitations/internal';
 import { createJoinStore, hashPollSecret, joinKey, openInvite, sealCredentials, type JoinRecord } from './store';
 import { createAgentJoinAgentHandlers } from './agent-routes';
+import { rejoinApprovalKey, rejoinIdentity, validRejoinApproval } from './rejoin';
 const origin = 'https://khala.test';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
@@ -146,6 +147,62 @@ it('limits creates before parsing their bodies', async () => {
   const f = await fixture();
   for (let i = 0; i < 10; i++) expect((await f.handlers.create(f.createRequest('{'))).status).toBe(400);
   const response = await f.handlers.create(f.createRequest()); expect(response.status).toBe(429); expect(await response.json()).toEqual({ error: 'rate_limited' });
+});
+it('returns the same refusal for a wrong secret and an unknown rejoin identity', async () => {
+  const f = await fixture();
+  const request = (sessionId: string, rejoinSecret: string) => new Request(`${origin}/api/agent/rejoin`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: credentials.roomId, harness: 'codex', sessionId, rejoinSecret, label: 'Agent' }),
+  });
+  const wrongSecret = await f.handlers.rejoin(request('thread-1', 'S'.repeat(43)));
+  const unknownSession = await f.handlers.rejoin(request('thread-2', 'T'.repeat(43)));
+  expect(wrongSecret.status).toBe(404);
+  expect(await wrongSecret.json()).toEqual({ error: 'rejoin_unavailable' });
+  expect(unknownSession.status).toBe(404);
+  expect(await unknownSession.json()).toEqual({ error: 'rejoin_unavailable' });
+});
+it('rate limits rejoin by IP and by registered identity', async () => {
+  const byIp = await fixture();
+  const malformed = () => new Request(`${origin}/api/agent/rejoin`, { method: 'POST', headers: {
+    'content-type': 'text/plain', 'x-nf-client-connection-ip': '198.51.100.10',
+  }, body: '{}' });
+  for (let index = 0; index < 10; index++) expect((await byIp.handlers.rejoin(malformed())).status).toBe(400);
+  expect((await byIp.handlers.rejoin(malformed())).status).toBe(429);
+
+  const byIdentity = await fixture();
+  const request = (index: number) => new Request(`${origin}/api/agent/rejoin`, { method: 'POST', headers: {
+    'content-type': 'application/json', 'x-nf-client-connection-ip': `198.51.100.${index + 20}`,
+  }, body: JSON.stringify({ roomId: credentials.roomId, harness: 'codex', sessionId: 'rate-test', rejoinSecret: 'R'.repeat(43), label: 'Agent' }) });
+  for (let index = 0; index < 10; index++) expect((await byIdentity.handlers.rejoin(request(index))).status).toBe(404);
+  expect((await byIdentity.handlers.rejoin(request(10))).status).toBe(429);
+});
+it('auto-confirms a rejoin from the registered identity without requiring an invite', async () => {
+  const f = await fixture();
+  const rejoinSecret = 'S'.repeat(43), sessionId = 'thread-1';
+  const identity = rejoinIdentity({ ...f.record, roomId: credentials.roomId, harness: 'codex', sessionId, rejoinSecretHash: hashPollSecret(rejoinSecret) });
+  if (!identity) throw Error('missing rejoin identity');
+  await f.store.compareAndSet({ key: rejoinApprovalKey(identity), expectedRevision: null, operationId: 'grant-rejoin',
+    next: { value: { v: 1, ownerId: 'owner', ownerLabel: 'Agent', generation: 0 }, expiresAt: null } });
+  const grant = await f.store.read(rejoinApprovalKey(identity));
+  expect(grant).toMatchObject({ kind: 'record', record: { value: { v: 1, ownerId: 'owner', ownerLabel: 'Agent', generation: 0 } } });
+  if (grant.kind === 'record') expect(validRejoinApproval(grant.record.value)).toBe(true);
+  const autoConfirm = vi.fn(async (joinId: string) => {
+    const read = await f.joins.read(joinId);
+    if (read.kind !== 'found') return false;
+    return (await f.joins.replace(joinId, read.revision, { ...read.record, ownerId: 'owner', agentUserId: credentials.userId,
+      state: 'confirmed', sealedCredentials: sealCredentials(secret, joinId, credentials) }, 'confirm')).kind === 'applied';
+  });
+  let tick = Date.parse('2026-10-01T12:00:00.000Z');
+  const handlers = createAgentJoinAgentHandlers({ ...f.deps, clock: () => tick++, autoConfirm });
+  const response = await handlers.rejoin(new Request(`${origin}/api/agent/rejoin`, { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ roomId: credentials.roomId, harness: 'codex', sessionId, rejoinSecret, label: 'Agent' }) }));
+  expect(response.status).toBe(201);
+  expect(autoConfirm).toHaveBeenCalledOnce();
+  const result = await response.json() as AgentJoinCreated;
+  expect(result.autoConfirmed).toBe(true);
+  const record = await f.joins.read(result.joinId);
+  expect(record.kind).toBe('found');
+  if (record.kind === 'found') expect(record.record).not.toHaveProperty('sealedInvite');
 });
 it('uses the channel-name fallback and handles ready write failures', async () => {
   const f = await fixture('claimed');
