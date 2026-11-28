@@ -28,8 +28,8 @@ find_command() {
     [ -x "$node_dir/$name" ] && { printf '%s\n' "$node_dir/$name"; return 0; }
   }
   for candidate in \
-    "$HOME/.local/share/mise/shims/$name" \
     "$HOME/.local/share/mise/installs/node"/*/bin/"$name" \
+    "$HOME/.local/share/mise/shims/$name" \
     "$HOME/.asdf/shims/$name" \
     "$HOME/.asdf/installs/nodejs"/*/bin/"$name" \
     "$HOME/.nvm/current/bin/$name" \
@@ -43,6 +43,12 @@ find_command() {
 
 npm_path() { find_command npm; }
 npx_path() { find_command npx; }
+
+setup_node_path() {
+  node_path=$(find_command node || find_command nodejs) || return 1
+  PATH="${node_path%/*}:$PATH"
+  export PATH
+}
 
 missing_node() {
   echo "khala: cannot find node/npx on PATH=$PATH; install node or set KHALA_BIN" >&2
@@ -70,6 +76,7 @@ fi
 if [ "${1:-}" = "--install-locked" ]; then
   tmp="$data/.tmp-$KHALA_VERSION-$$"
   rm -rf "$tmp"
+  setup_node_path || { rmdir "$data/.install-$KHALA_VERSION.lock"; exit 0; }
   npm=$(npm_path) || { rmdir "$data/.install-$KHALA_VERSION.lock"; exit 0; }
   if "$npm" install --global --prefix "$tmp" --no-audit --no-fund --loglevel=error \
       "$KHALA_PACKAGE@$KHALA_VERSION" && "$tmp/bin/khala" --version; then
@@ -96,5 +103,6 @@ if [ -x "$dir/bin/khala" ]; then exec "$dir/bin/khala" "$@"; fi
 # A session that never ran SessionStart on this version (plugin updated mid-session) or
 # whose copy was removed: install it now, and run the same pinned version meanwhile.
 "$0" --ensure-installed </dev/null >/dev/null 2>&1
+setup_node_path || missing_node
 npx=$(npx_path) || missing_node
 exec "$npx" -y "$KHALA_PACKAGE@$KHALA_VERSION" "$@"
