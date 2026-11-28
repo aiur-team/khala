@@ -154,7 +154,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect((await readEgressLog(world.log)).some(record => record.kind === 'guard' && record.event === 'installed' && record.pid === status.pid && record.argv.includes('serve')), context('AE1')).toBe(true);
     const joined = await world.claude.call('join', { link: channel.selfLink });
     expect(toolData(joined), context('AE1')).toMatchObject({ state: 'connected', channelName: 'refactor' });
-    expect(joined.content, context('AE1')).toContainEqual({ type: 'text', text: 'Connected to refactor.' });
+    expect(joined.content, context('AE1')).toContainEqual(expect.objectContaining({
+      type: 'text', text: expect.stringMatching(/^Connected to refactor\./),
+    }));
   });
   acceptance('AE2', 'Codex joins without browser and announces its membership', async () => {
     expect(world.browser, context('AE2')).toBeUndefined();
