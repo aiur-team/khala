@@ -134,9 +134,9 @@ it('puts installed Node on PATH for the background npm install', async () => {
 it('prints an actionable error when neither PATH nor known locations contain Node', async () => {
   const result = runMinimalPath(['hook', 'deliver'], {
     HOME: root,
-    PATH: '/bin',
+    PATH: '',
   });
   expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain('khala: cannot find node/npx on PATH=/bin');
+  expect(result.stderr).toContain('khala: cannot find node/npx on PATH=');
   expect(result.stderr).toContain('install node or set KHALA_BIN');
 });
